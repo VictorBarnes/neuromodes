@@ -1,2 +1,2 @@
-# NSB_utils_python
+# nsbtools
 Python utilities for the Neural Systems and Behavior Lab
