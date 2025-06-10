@@ -2,10 +2,9 @@ import numpy as np
 
 
 def check_orthogonal_matrix(matrix, tol=1e-6): 
-	return (check_orthogonal_vectors(matrix, colvar=True,  tol=tol) and 
+    return (check_orthogonal_vectors(matrix, colvar=True,  tol=tol) and 
             check_orthogonal_vectors(matrix, colvar=False, tol=tol))
 	
-
 def check_orthogonal_vectors(matrix, colvar=True, tol=1e-6):
     """
     Check if a set of vectors in a matrix (rows or columns) are orthogonal.
@@ -52,5 +51,7 @@ def check_normal(matrix, axis=0, tol=1e-6):
     bool
         True if all column norms are close to 1 within the given tolerance, False otherwise.
     """
+    
     matrix = np.array(matrix)
-    return np.allclose(np.linalg.norm(matrix, axis=axis), 1.0, atol=tol):
+
+    return np.allclose(np.linalg.norm(matrix, axis=axis), 1.0, atol=tol)
