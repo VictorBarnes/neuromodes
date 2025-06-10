@@ -6,9 +6,9 @@ from scipy.ndimage import zoom
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from surfplot import Plot
 
-def plot_brain(surf, data, labels=None, layout="row", views=["lateral", "medial"], clim_q=None, 
-               cmap="viridis", cbar=False, cbar_label=None, cbar_kws=None, label_kws=None,
-               outline=False, zoom=1.25, ax=None):
+def plot_brain(surf, data, layout="row", views=["lateral", "medial"], color_range="individual", 
+               cmap="viridis", cbar=False, cbar_label=None, cbar_kws=None, labels=None, 
+               label_kws=None, outline=False, zoom=1.25, ax=None):
     """
     Plot brain surface data on a given surface mesh.
 
@@ -18,15 +18,17 @@ def plot_brain(surf, data, labels=None, layout="row", views=["lateral", "medial"
         Path to the surface file.
     data : array-like
         Data to be plotted on the surface. Can be 1D or 2D.
-    labels : list of str, optional
-        List of labels for each subplot, by default None.
     layout : str, optional
         Layout of the subplots, either "row" or "col", by default "row".
     views : list of str, optional
         List of views to display, by default ["lateral", "medial"].
-    clim_q : tuple of float, optional
-        Percentile values to set the color limits, by default None.
-    cmap : str, optional
+    color_range : tuple of float, str, or None, optional
+        Defines the color limits for the colormap. Can be:
+        - A tuple (vmin, vmax) to apply the same color scale across all maps.
+        - "group" to compute global (min, max) across all data columns and apply uniformly.
+        - "individual" (or None) to compute limits separately for each brain map.
+        By default, color range is determined individually per map.
+    cmap : matplotlib colormap name or object, optional
         Colormap to use for the data, by default "viridis".
     cbar : bool, optional
         Whether to display a colorbar, by default False.
@@ -34,10 +36,14 @@ def plot_brain(surf, data, labels=None, layout="row", views=["lateral", "medial"
         Label for the colorbar, by default None.
     cbar_kws : dict, optional
         Additional keyword arguments for the colorbar, by default None.
+    labels : list of str, optional
+        List of labels for each subplot, by default None.
     label_kws : dict, optional
         Additional keyword arguments for the labels, by default None.
     outline : bool, optional
         Whether to outline the data, by default False. Useful for parcellations.
+    zoom : float, optional
+        Zoom factor for the brain plot, by default 1.25.
     ax : matplotlib.axes.Axes or list of Axes, optional
         Axis or list of axes to plot on. If None, a new figure is created.
 
@@ -47,7 +53,7 @@ def plot_brain(surf, data, labels=None, layout="row", views=["lateral", "medial"
         The resulting figure if a new one is created, otherwise None.
     """
     
-    cbar_kws_ = dict(pad=0.01, fontsize=15, shrink=1, decimals=2) if cbar_kws is None else cbar_kws.copy()
+    cbar_kws_ = dict(pad=0.01, fontsize=20, aspect=25, shrink=1, decimals=2, location="bottom") if cbar_kws is None else cbar_kws.copy()
     label_kws_ = dict(fontsize=10) if label_kws is None else label_kws.copy()
     
     data = np.squeeze(data)
@@ -74,20 +80,24 @@ def plot_brain(surf, data, labels=None, layout="row", views=["lateral", "medial"
                 raise ValueError("Multiple brains require a list of axes.")
             axs = [ax]
     
+    # Set the color range
+    if isinstance(color_range, str) and color_range == "group":
+        color_range = (np.nanmin(data), np.nanmax(data))
+    elif isinstance(color_range, str) and color_range == "individual":
+        color_range = None
+
     # To plot multiple brains we need to save each figure to a temporary file then load it into the axes
     with tempfile.TemporaryDirectory() as temp_dir:
         for i, ax in enumerate(axs):
             # Use surfplot to plot the data
             p = Plot(surf_lh=surf, views=views, size=(500, 250), zoom=zoom)
-            color_range = [np.nanpercentile(data[:, i], clim_q[0]), np.nanpercentile(data[:, i], clim_q[1])] if clim_q else None
-            p.add_layer(data=data[:, i], cmap=cmap, cbar=cbar, color_range=color_range)
+            p.add_layer(data=data[:, i], cmap=cmap, cbar=cbar, color_range=color_range, cbar_label=cbar_label)
             if outline:
                 p.add_layer(data[:, i], as_outline=True, cmap="gray", cbar=False, color_range=(1, 2))
             temp_file = f"{temp_dir}/figure_{i}.png"
             fig = p.build(cbar_kws=cbar_kws_)
-            if cbar:
-                fig.get_axes()[1].set_xlabel(cbar_label, fontsize=cbar_kws_["fontsize"], labelpad=5)
             plt.close(fig)
+            
             # Save the surfplot figure
             fig.savefig(temp_file, bbox_inches='tight')
             # Load the figure into the axes
