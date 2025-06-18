@@ -3,9 +3,10 @@ name = "nsbtools"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 dependencies = [
     "brainspace>=0.1.20",
+    "dotenv>=0.9.9",
     "joblib>=1.4.2",
     "lapy>=1.1.0",
     "matplotlib>=3.7.5",
