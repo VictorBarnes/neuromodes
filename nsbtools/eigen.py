@@ -42,11 +42,15 @@ def _check_surf(surf):
 
 class EigenSolver(Solver):
     """
-    Class to solve the eigenvalue problem for the Laplace-Beltrami operator on a surface mesh.
-    The class allows for the calculation of eigenvalues and eigenmodes, as well as the simulation
-    of BOLD signals using a balloon model.
+    EigenSolver class for spectral analysis and simulation on surface meshes.
+
+    This class computes the Laplace-Beltrami operator on a triangular mesh, and supports spatial 
+    heterogeneity and various normalization/scaling options. It provides methods for calculating 
+    eigen-decompositions and eigen-reconstructions of data, and for simulating neural or BOLD 
+    activity using the Neural Field Theory wave model and Balloon-Windkessel model.
     """
-    def __init__(self, surf, medmask=None, hetero=None, nmodes=100, alpha=0, r=28.9, gamma=0.116, 
+
+    def __init__(self, surf, medmask=None, hetero=None, n_modes=100, alpha=1.0, beta=1.0, r=28.9, gamma=0.116, 
                  scaling="sigmoid", q_norm=None, lump=False, smoothit=10, normalize=False, 
                  verbose=False):
         """
@@ -61,8 +65,14 @@ class EigenSolver(Solver):
             A boolean mask to exclude certain points from the surface mesh. Default is None.
         hetero : numpy.ndarray, optional
             A heterogeneity map to scale the Laplace-Beltrami operator. Default is None.
+        n_modes : int, optional
+            Number of eigenmodes to compute. Default is 100.
         alpha : float, optional
-            Scaling factor for the heterogeneity map. Default is 0.
+            Scaling factor for the heterogeneity map. Only used if `hetero` is not None. Default is 
+            1.0.
+        beta : float, optional
+            Exponent for the sigmoid scaling of the heterogeneity map. Only used if `hetero` is not 
+            None. Default is 1.0.
         r : float, optional
             Axonal length scale for wave propagation. Default is 28.9.
         gamma : float, optional
@@ -81,10 +91,11 @@ class EigenSolver(Solver):
         verbose : bool, optional
             Whether to print verbose output during initialization. Default is False.
         """
-        self.nmodes = nmodes
+        self.nmodes = n_modes
         self._r = r
         self._gamma = gamma
-        self.alpha = alpha
+        self.alpha = alpha if hetero is not None else 0
+        self.beta = beta if hetero is not None else 0
         self.scaling = scaling
         self.q_norm = q_norm
         self.verbose = verbose
@@ -131,10 +142,11 @@ class EigenSolver(Solver):
     def hetero(self, hetero):
         # Handle None case by setting to ones
         if hetero is None:
-            if self.alpha != 0:
+            if self.alpha != 0 or self.beta != 0:
                 # TODO: raise warning instead of print
-                print("Warning: Setting `alpha` to 0 because `hetero` is None.")
+                print("Warning: Setting `alpha` and `beta` to 0 because `hetero` is None.")
                 self.alpha = 0
+                self.beta = 0
             self._hetero = np.ones(self.surf.n_points)
         else:
             # Ensure hetero is valid
@@ -146,7 +158,7 @@ class EigenSolver(Solver):
                 raise ValueError("Heterogeneity map must not contain NaNs or Infs.")
 
             # Scale the heterogeneity map
-            hetero = self.scale_hetero(hetero=hetero, alpha=self.alpha, scaling=self.scaling, q_norm=self.q_norm)
+            hetero = self.scale_hetero(hetero=hetero, alpha=self.alpha, beta=self.beta, scaling=self.scaling, q_norm=self.q_norm)
 
             # Check the heterogeneity does not result in non-physiological wave speeds
             self.check_hetero(hetero=hetero, r=self.r, gamma=self.gamma)
@@ -180,7 +192,7 @@ class EigenSolver(Solver):
                              " using a smaller alpha value.")
 
     @staticmethod
-    def scale_hetero(hetero=None, alpha=1.0, scaling="sigmoid", q_norm=None):
+    def scale_hetero(hetero=None, alpha=1.0, beta=1.0, scaling="sigmoid", q_norm=None):
         """
         Scales a heterogeneity map using specified normalization and scaling functions.
         
@@ -217,7 +229,7 @@ class EigenSolver(Solver):
         if scaling == "exponential":
             hetero = np.exp(alpha * hetero)
         elif scaling == "sigmoid":
-            hetero = 2 / (1 + np.exp(-alpha * hetero))
+            hetero = (2 / (1 + np.exp(-alpha * hetero)))**beta
         else:
             raise ValueError("Invalid scaling function. Must be 'exponential' or 'sigmoid'.")
 
