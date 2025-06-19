@@ -1,7 +1,7 @@
 [project]
 name = "nsbtools"
 version = "0.1.0"
-description = "Add your description here"
+description = "Neuroimaging tools developed by the Neural Systems and Behavious lab"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
