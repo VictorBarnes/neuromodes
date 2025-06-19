@@ -53,8 +53,9 @@ def plot_brain(surf, data, layout="row", views=["lateral", "medial"], color_rang
         The resulting figure if a new one is created, otherwise None.
     """
     
-    cbar_kws_ = dict(pad=0.01, fontsize=20, aspect=25, shrink=1, decimals=2, location="bottom") if cbar_kws is None else cbar_kws.copy()
-    label_kws_ = dict(fontsize=10) if label_kws is None else label_kws.copy()
+    # Validate inputs
+    cbar_kws_ = {**dict(pad=0.01, fontsize=20, aspect=25, shrink=1, decimals=2, location="bottom"), **(cbar_kws or {})}
+    label_kws_ = {**dict(fontsize=20), **(label_kws or {})}
     
     data = np.squeeze(data)
     if np.ndim(data) == 1 or np.shape(data)[1] == 1:
