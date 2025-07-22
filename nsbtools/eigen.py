@@ -8,6 +8,7 @@ from pathlib import Path
 from lapy import Solver, TriaMesh
 from lapy.utils._imports import import_optional_dependency
 from scipy.stats import zscore
+from scipy.integrate import solve_ivp
 from sklearn.preprocessing import QuantileTransformer
 from brainspace.vtk_interface.wrappers import BSPolyData
 from brainspace.mesh.mesh_operations import mask_points
@@ -153,12 +154,19 @@ class EigenSolver(Solver):
             if not isinstance(hetero, np.ndarray):
                 raise ValueError("Heterogeneity map must be a numpy array or None")
             if len(hetero) != self.surf.n_points:
-                raise ValueError("Heterogeneity map must have the same number of elements as the number of vertices in the surface template.")
+                raise ValueError("Heterogeneity map must have the same number of elements as the "
+                                 "number of vertices in the surface template.")
             if np.isnan(hetero).any() or np.isinf(hetero).any():
                 raise ValueError("Heterogeneity map must not contain NaNs or Infs.")
 
             # Scale the heterogeneity map
-            hetero = self.scale_hetero(hetero=hetero, alpha=self.alpha, beta=self.beta, scaling=self.scaling, q_norm=self.q_norm)
+            hetero = self.scale_hetero(
+                hetero=hetero, 
+                alpha=self.alpha, 
+                beta=self.beta,
+                scaling=self.scaling, 
+                q_norm=self.q_norm
+            )
 
             # Check the heterogeneity does not result in non-physiological wave speeds
             self.check_hetero(hetero=hetero, r=self.r, gamma=self.gamma)
@@ -358,14 +366,16 @@ class EigenSolver(Solver):
         Parameters
         ----------
         data : array-like
-            The input data array of shape (n_verts, n_data), where n_verts is the number of vertices and 
-            n_data is the number of data points.
+            The input data array of shape (n_verts, n_data), where n_verts is the number of vertices 
+            and n_data is the number of data points.
         evecs : array-like
-            The eigenmodes array of shape (n_verts, n_modes), where n_modes is the number of eigenmodes.
+            The eigenmodes array of shape (n_verts, n_modes), where n_modes is the number of 
+            eigenmodes.
         method : str, optional
             The method used for eigen-decomposition. Default is 'matrix'.
         modesq : array-like, optional
-            The sequence of modes to be used for reconstruction. Default is None, which uses all modes.
+            The sequence of modes to be used for reconstruction. Default is None, which uses all 
+            modes.
         mass : array-like, optional
             The mass matrix used for the eigen-decomposition when method is 'orthogonal'. Default is 
             None.
@@ -374,8 +384,8 @@ class EigenSolver(Solver):
         metric : str, optional
             The metric used for calculating reconstruction accuracy. Default is "pearsonr".
         return_all : bool, optional
-            Whether to return the reconstructed timepoints when data_type is "timeseries". Default is 
-            False.
+            Whether to return the reconstructed timepoints when data_type is "timeseries". Default 
+            is False.
 
         Returns
         -------
@@ -389,8 +399,8 @@ class EigenSolver(Solver):
             The functional connectivity reconstructed data array of shape (n_verts, n_verts, nq). 
             Returned only if data_type is "timeseries".
         fc_recon_score : numpy.ndarray, optional
-            The functional connectivity correlation coefficients array of shape (nq,). Returned only if 
-            data_type is "timeseries".
+            The functional connectivity correlation coefficients array of shape (nq,). Returned only
+            if data_type is "timeseries".
         """
 
         if np.shape(data)[0] != np.shape(evecs)[0]:
@@ -410,7 +420,7 @@ class EigenSolver(Solver):
             modesq = np.arange(1, np.shape(evecs)[1] + 1)
         nq = len(modesq)
 
-        # If data is timeseries, calculate the FC of the original data and initialize the output arrays
+        # If data is timeseries, calculate the FC of the original data and initialize output arrays
         if data_type == "timeseries":
             triu_inds = np.triu_indices(n_verts, k=1)
             fc_orig = np.corrcoef(data)[triu_inds]
@@ -439,7 +449,10 @@ class EigenSolver(Solver):
                     recon_score[i, :] = 0
                 else:
                     if metric == "pearsonr":
-                        recon_score[i, :] = [np.corrcoef(data[:, j], np.squeeze(recon[:, i, j]))[0, 1] for j in range(n_data)]
+                        recon_score[i, :] = [
+                            np.corrcoef(data[:, j], np.squeeze(recon[:, i, j]))[0, 1] 
+                            for j in range(n_data)
+                        ]
                     elif metric == "mse":
                         recon_score[i, :] = np.mean((data - np.squeeze(recon[:, i, :]))**2, axis=0)
                     else:
@@ -457,7 +470,10 @@ class EigenSolver(Solver):
                     fc_recon_score[i] = 0
                 else:
                     if return_all:
-                        recon_score[i, :] = [np.corrcoef(data[:, j], np.squeeze(recon[:, i, j]))[0, 1] for j in range(n_data)]
+                        recon_score[i, :] = [
+                            np.corrcoef(data[:, j], np.squeeze(recon[:, i, j]))[0, 1] 
+                            for j in range(n_data)
+                        ]
 
                     if metric == "pearsonr":
                         fc_recon_score[i] = np.corrcoef(
@@ -465,7 +481,9 @@ class EigenSolver(Solver):
                             np.arctanh(np.squeeze(fc_recon[:, :, i][triu_inds]))
                         )[0, 1]
                     elif metric == "mse":
-                        fc_recon_score[i] = np.mean((fc_orig - np.squeeze(fc_recon[:, :, i][triu_inds]))**2)
+                        fc_recon_score[i] = np.mean(
+                            (fc_orig - np.squeeze(fc_recon[:, :, i][triu_inds]))**2
+                        )
                     else:
                         raise ValueError("Invalid metric; must be 'pearsonr' or 'mse'")
                     
@@ -478,9 +496,11 @@ class EigenSolver(Solver):
             return beta, recon, recon_score
 
 
-    def simulate_waves(self, ext_input=None, dt=0.1, nt=1000, tsteady=0, eig_method="orthogonal", seed=None, bold_out=False):
+    def simulate_waves(self, ext_input=None, dt=0.1, nt=1000, tsteady=0, eig_method="orthogonal", 
+                       pde_method="fourier", seed=None, bold_out=False):
         """
-        Simulate neural activity or BOLD signals on the surface mesh using the eigenmode decomposition.
+        Simulate neural activity or BOLD signals on the surface mesh using the eigenmode 
+        decomposition.
 
         Parameters
         ----------
@@ -492,7 +512,8 @@ class EigenSolver(Solver):
         nt : int, optional
             Number of time points to simulate (excluding steady-state period). Default is 1000.
         tsteady : float, optional
-            Duration of steady-state period (in milliseconds) before simulation starts. Default is 0.
+            Duration of steady-state period (in milliseconds) before simulation starts. Default is 
+            0.
         eig_method : str, optional
             Method for eigen-decomposition. Either "orthogonal" or "matrix". Default is 
             "orthogonal".
@@ -527,40 +548,49 @@ class EigenSolver(Solver):
             ext_input = gen_random_input(self.surf.n_points, len(self.t), seed=seed)
         # Ensure the external input has the correct shape
         if ext_input.shape != (self.surf.n_points, len(self.t)):
-            raise ValueError(f"External input shape {ext_input.shape} does not have the correct shape ({self.surf.n_points}, {len(self.t)}).")
-
-        # Append time vector with negative values to have a zero center (for Fourier transform)
-        t_append = np.arange(-self.tmax, self.tmax + self.dt, self.dt)
-        t0_ind = np.argmin(np.abs(t_append - 0))
+            raise ValueError(f"External input shape {ext_input.shape} does not have the correct "
+                              "shape ({self.surf.n_points}, {len(self.t)}).")
 
         # Mode decomposition of external input
         input_coeffs = self.decompose(ext_input, self.evecs, method=eig_method, mass=self.mass)
-        # Append external input coefficients for negative time values
-        input_coeffs_append = np.zeros((self.nmodes, len(t_append)))
-        input_coeffs_append[:, t0_ind:] = input_coeffs
 
         # Initialize simulated activity vector
         mode_coeffs = np.zeros((self.nmodes, input_coeffs.shape[1]))
         for mode_ind in range(self.nmodes):
-            input_coeffs_i = input_coeffs_append[mode_ind, :]
+            input_coeffs_i = input_coeffs[mode_ind, :]
             eval = self.evals[mode_ind]
 
             # Calculate the neural activity for the mode
-            neural = model_wave_mode(
-                t=t_append, 
-                mode_coeff=input_coeffs_i, 
-                dt=self.dt, 
-                r=self.r, 
-                gamma=self.gamma, 
-                eval=eval
-            )
+            if pde_method == "fourier":
+                neural = model_wave_fourier(
+                    mode_coeff=input_coeffs_i, 
+                    dt=self.dt, 
+                    r=self.r, 
+                    gamma=self.gamma, 
+                    eval=eval
+                )
+            elif pde_method == "ode":            
+                neural = solve_wave_ode(
+                    mode_coeff=input_coeffs_i, 
+                    t=self.t,
+                    gamma=self.gamma,
+                    r=self.r,
+                    lambdaj=eval
+                )
+            else:
+                raise ValueError("Invalid PDE method; must be 'fourier' or 'ode'.")
             
             # If bold_out is True, calculate the BOLD signal using the balloon model
             if bold_out:
-                neural[:t0_ind] = 0  # Set negative time values to zero
-                bold = model_balloon_mode(t=t_append, mode_coeff=neural, dt=self.dt)
-
-            mode_coeffs[mode_ind, :] = neural[t0_ind:] if not bold_out else bold[t0_ind:]
+                if pde_method == "fourier":
+                    bold = model_balloon_fourier(mode_coeff=neural, dt=self.dt)
+                elif pde_method == "ode":
+                    bold = model_balloon_ode(mode_coeff=neural, t=self.t)
+                else:
+                    raise ValueError("Invalid PDE method; must be 'fourier' or 'ode'.")
+                mode_coeffs[mode_ind, :] = bold
+            else:
+                mode_coeffs[mode_ind, :] = neural
 
         # Combine the mode activities to get the total simulated activity
         sim_activity = self.evecs @ mode_coeffs
@@ -609,7 +639,7 @@ def gen_random_input(n_points, n_timepoints, seed=None):
     return np.random.randn(n_points, n_timepoints)
 
 
-def model_wave_mode(t, mode_coeff, dt, r, gamma, eval):
+def model_wave_fourier(mode_coeff, dt, r, gamma, eval):
     """
     Simulates the time evolution of a wave model based on one mode using a frequency-domain 
     approach. This method applies a Fourier transform to the input mode coefficients, computes 
@@ -618,8 +648,6 @@ def model_wave_mode(t, mode_coeff, dt, r, gamma, eval):
 
     Parameters
     ----------
-    t : np.ndarray
-        Array of time points corresponding to the input mode coefficients.
     mode_coeff : np.ndarray
         Array of mode coefficients at each time representing the input signal to the model.
     dt : float
@@ -635,28 +663,114 @@ def model_wave_mode(t, mode_coeff, dt, r, gamma, eval):
     -------
     out : ndarray
         The real part of the time-domain response of the mode at the specified time points.
-    """
     
-    nt = len(t)
-    omega_samp = 1 / np.mean(dt) * 2 * np.pi
-    jvec = np.arange(nt)
-    omega = omega_samp * 1 / nt * (jvec - nt / 2)
+    Notes
+    -----
+    We use ifft (not fft) on the zero-padded input to obtain the correct frequency-domain 
+    representation for a causal system (i.e., one where the input is zero for t < 0). This matches 
+    the analytic solution for the time evolution of a damped wave equation with a causal input (see 
+    e.g. convolution with a Green's function). Using fft here would not yield the correct result for
+    this setup.
+    
+    The sequence is:
+      1. Zero-pad input for t < 0 (causality)
+      2. Take ifft to get the frequency-domain representation for this causal signal
+      3. Apply the frequency response (transfer function)
+      4. Use fft to return to the time domain (with appropriate shifts)
+    
+    This approach is standard in some signal processing and physics literature for causal systems.
+    """
 
-    # Calculate the -1 vectors needed for the Fourier transform
-    omega_m = (-1) ** np.arange(1, len(omega) + 1)
-    # Perform the Fourier transform
-    mode_coeff_f = omega_m * np.fft.fft(omega_m * mode_coeff)
+    nt = len(mode_coeff) - 1
+    t_full = np.arange(-nt * dt, nt * dt + dt, dt)  # Symmetric time vector
+    nt_full = len(t_full)
 
-    # Calculate the frequency response of the system
-    out_fft = gamma**2 * mode_coeff_f / (-omega**2 - 2j*omega*gamma + gamma**2 * (1 + r**2 * eval))
+    # Pad input with zeros on negative side to ensure causality (system is only driven for t >= 0)
+    # This is required for the correct Green's function solution of the damped wave equation.
+    mode_coeff_padded = np.concatenate([np.zeros(nt), mode_coeff])
 
-    # Calculate inverse Fourier transform
-    out = np.real(omega_m * np.fft.ifft(omega_m * out_fft))
+    # Frequencies for full signal
+    omega = 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(nt_full, d=dt))
 
-    return out
+    # Apply inverse Fourier transform to get frequency-domain representation of the causal signal.
+    mode_coeff_f = np.fft.fftshift(np.fft.ifft(mode_coeff_padded))
+
+    # Compute transfer function
+    denom = -omega**2 - 2j * omega * gamma + gamma**2 * (1 + r**2 * eval)
+    H = gamma**2 / denom
+
+    # Apply frequency response
+    out_fft = H * mode_coeff_f
+
+    # Inverse transform: use fft (not ifft) to return to the time domain, matching above convention
+    out_full = np.real(np.fft.fft(np.fft.ifftshift(out_fft)))
+
+    # Return only the non-negative time part (t >= 0)
+    return out_full[nt:]
 
 
-def model_balloon_mode(t, mode_coeff, dt):       
+def solve_wave_ode(mode_coeff, t, gamma, r, lambdaj):
+    """
+    Solves the damped wave ODE for one eigenmode j.
+
+    Parameters
+    ----------
+    mode_coeff : array_like
+        Input drive to the system with the same length as t (written as qj in equation below.)
+    t : array_like
+        Time points (must be increasing).
+    gamma : float
+        Damping coefficient.
+    r : float
+        Spatial length scale.
+    lambdaj : float
+        Eigenvalue for the j-th mode.
+
+    Returns
+    -------
+    np.ndarray
+        Time evolution of phi_j(t), solution to the wave equation.
+    
+    Notes
+    -----
+    The equation is derived from the damped wave equation:
+    d^2 phi_j / dt^2 + 2 * gamma * d phi_j / dt + gamma^2 * (1 + r^2 * lambdaj) * phi_j = gamma^2 * qj
+    
+    Rearranging gives us the first-order system
+        dx1/dt = x2
+        dx2/dt = -2 * gamma * x2 - gamma^2 * (1 + r**2 * lambdaj) * x1 + gamma**2 * qval
+    """
+
+    lambdaj = float(lambdaj)  # Ensure lambdaj is a float
+
+    def q_interp_safe(t_):
+        val = np.interp(t_, t, mode_coeff)
+        return val.item() if isinstance(val, np.ndarray) else val
+
+    def wave_rhs(t_, y):
+        x1, x2 = y  # both should be scalars
+        qval = q_interp_safe(t_)  # should be scalar
+
+        dx1dt = x2
+        dx2dt = -2 * gamma * x2 - gamma**2 * (1 + r**2 * lambdaj) * x1 + gamma**2 * qval
+
+        return [dx1dt, dx2dt]
+
+    y0 = [0.0, 0.0]
+
+    sol = solve_ivp(
+        wave_rhs,
+        t_span=(t[0], t[-1]),
+        y0=y0,
+        t_eval=t,
+        method='RK45',
+        rtol=1e-6,
+        atol=1e-9
+    )
+
+    return sol.y[0]  # Return phi_j(t)
+
+def model_balloon_fourier(mode_coeff, dt):       
     """
     Simulates the hemodynamic response of one mode using the balloon model in the frequency 
     domain. This method applies a frequency-domain implementation of the balloon model to a 
@@ -664,8 +778,6 @@ def model_balloon_mode(t, mode_coeff, dt):
 
     Parameters
     ----------
-    t : np.ndarray
-        Array of time points corresponding to the input mode coefficients.
     mode_coeff : np.ndarray
         Array of mode coefficients representing the input signal to the model.
     dt : float
@@ -675,6 +787,22 @@ def model_balloon_mode(t, mode_coeff, dt):
     -------
     np.ndarray
         The real part of the time-domain response of the mode at the specified time points.
+
+    Notes
+    -----
+    We use ifft (not fft) on the zero-padded input to obtain the correct frequency-domain 
+    representation for a causal system (i.e., one where the input is zero for t < 0). This matches 
+    the analytic solution for the time evolution of a damped wave equation with a causal input (see 
+    e.g. convolution with a Green's function). Using fft here would not yield the correct result for
+    this setup.
+    
+    The sequence is:
+      1. Zero-pad input for t < 0 (causality)
+      2. Take ifft to get the frequency-domain representation for this causal signal
+      3. Apply the frequency response (transfer function)
+      4. Use fft to return to the time domain (with appropriate shifts)
+    
+    This approach is standard in some signal processing and physics literature for causal systems.
     """
 
     # Default independent model parameters
@@ -698,15 +826,19 @@ def model_balloon_mode(t, mode_coeff, dt):
     k3 = 0.48
     beta = (rho + (1 - rho) * np.log(1 - rho)) / rho
 
-    nt = len(t)
-    omega_samp = 1 / np.mean(dt) * 2 * np.pi
-    jvec = np.arange(nt)
-    omega = omega_samp * 1 / nt * (jvec - nt / 2)
+    # --- Use the same causal Fourier procedure as model_wave_fourier ---
+    # Zero-pad input for t < 0 (causality)
+    nt = len(mode_coeff) - 1
+    t_full = np.arange(-nt * dt, nt * dt + dt, dt)  # Symmetric time vector
+    nt_full = len(t_full)
 
-    # Calculate the -1 vectors needed for the Fourier transform
-    omega_m = (-1) ** np.arange(1, len(omega) + 1)
-    # Perform the Fourier transform
-    mode_coeff_fft = omega_m * sp.fft.fft(omega_m * mode_coeff)
+    mode_coeff_padded = np.concatenate([np.zeros(nt), mode_coeff])
+
+    # Frequencies for full signal
+    omega = 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(nt_full, d=dt))
+
+    # Apply inverse Fourier transform to get frequency-domain representation of the causal signal.
+    mode_coeff_f = np.fft.fftshift(np.fft.ifft(mode_coeff_padded))
 
     # Calculate the frequency response of the system
     phi_hat_Fz = 1 / (-(omega + 1j * 0.5 * kappa) ** 2 + w_f ** 2)
@@ -714,12 +846,77 @@ def model_balloon_mode(t, mode_coeff, dt):
                                 - (k1 + k2) * (alpha + beta - 1 
                                 - 1j * tau * alpha * beta * omega)) / ((1 - 1j * tau * omega)
                                 *(1 - 1j * tau * alpha * omega))
-    
     phi_hat = phi_hat_yF * phi_hat_Fz
-    out_fft = phi_hat * mode_coeff_fft
 
-    # Calculate inverse Fourier transform
-    out = np.real(omega_m * sp.fft.ifft(omega_m * out_fft))
+    # Apply frequency response
+    out_fft = phi_hat * mode_coeff_f
 
-    return out
-      
+    # Inverse transform: use fft (not ifft) to return to the time domain, matching above convention
+    out_full = np.real(np.fft.fft(np.fft.ifftshift(out_fft)))
+
+    # Return only the non-negative time part (t >= 0)
+    return out_full[nt:]
+
+def model_balloon_ode(mode_coeff, t):
+    """
+    Simulates the hemodynamic response of one mode using the balloon model in the time domain (ODE 
+    approach). This function numerically integrates the balloon model ODEs for a given input mode 
+    time course.
+
+    Parameters
+    ----------
+    mode_coeff : np.ndarray
+        Array of mode coefficients representing the input signal to the model (neural activity, same 
+        length as t).
+    t : np.ndarray
+        Array of time points (must be increasing, same length as mode_coeff).
+
+    Returns
+    -------
+    np.ndarray
+        The BOLD signal time course for the mode at the specified time points.
+    """
+    from scipy.integrate import solve_ivp
+    # Balloon model parameters (canonical values)
+    kappa = 0.65   # signal decay rate [s^-1]
+    gamma_h = 0.41 # rate of elimination [s^-1]
+    tau = 0.98     # hemodynamic transit time [s]
+    alpha = 0.32   # Grubb's exponent [unitless]
+    rho = 0.34     # resting oxygen extraction fraction [unitless]
+    V0 = 0.02      # resting blood volume fraction [unitless]
+    E0 = rho       # resting oxygen extraction fraction
+    TE = 0.04      # echo time [s]
+    k1 = 7 * E0
+    k2 = 2
+    k3 = 2 * E0 - 0.2
+
+    # ODE system: y = [s, f, v, q]
+    # s: vasodilatory signal, f: blood inflow, v: blood volume, q: deoxyhemoglobin content
+    def balloon_rhs(t_, y):
+        s, f, v, q = y
+        # Interpolate neural input at current time
+        u = np.interp(t_, t, mode_coeff)
+        dsdt = u - kappa * s - gamma_h * (f - 1)
+        dfdt = s
+        dvdt = (f - v ** (1 / alpha)) / tau
+        dqdt = (f * (1 - (1 - E0) ** (1 / f)) / E0 - q * v ** (1 / alpha - 1) / v) / tau
+        return [dsdt, dfdt, dvdt, dqdt]
+
+    # Initial conditions: resting state
+    y0 = [0.0, 1.0, 1.0, 1.0]
+
+    sol = solve_ivp(
+        balloon_rhs,
+        t_span=(t[0], t[-1]),
+        y0=y0,
+        t_eval=t,
+        method='RK45',
+        rtol=1e-6,
+        atol=1e-9
+    )
+
+    s, f, v, q = sol.y
+    # BOLD signal (standard formula)
+    bold = V0 * (k1 * (1 - q) + k2 * (1 - q / v) + k3 * (1 - v))
+    
+    return bold
