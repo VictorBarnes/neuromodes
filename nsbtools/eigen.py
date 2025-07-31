@@ -575,7 +575,7 @@ class EigenSolver(Solver):
                     t=self.t,
                     gamma=self.gamma,
                     r=self.r,
-                    lambdaj=eval
+                    eval=eval
                 )
             else:
                 raise ValueError("Invalid PDE method; must be 'fourier' or 'ode'.")
@@ -666,19 +666,18 @@ def model_wave_fourier(mode_coeff, dt, r, gamma, eval):
     
     Notes
     -----
-    We use ifft (not fft) on the zero-padded input to obtain the correct frequency-domain 
-    representation for a causal system (i.e., one where the input is zero for t < 0). This matches 
-    the analytic solution for the time evolution of a damped wave equation with a causal input (see 
-    e.g. convolution with a Green's function). Using fft here would not yield the correct result for
-    this setup.
-    
+    This function uses a frequency-domain method to simulate the damped wave response of a causal 
+    input. To ensure causality (i.e., the input is zero for t < 0), the input is zero-padded on the 
+    negative time axis and transformed using `ifft`, which mimics the forward Fourier transform of a 
+    causal signal. The system's frequency response (transfer function) is then applied, and `fft` is 
+    used to return to the time domain. This approach is standard for simulating linear 
+    time-invariant causal systems and is equivalent to convolution with a Green's function.
+
     The sequence is:
       1. Zero-pad input for t < 0 (causality)
       2. Take ifft to get the frequency-domain representation for this causal signal
       3. Apply the frequency response (transfer function)
       4. Use fft to return to the time domain (with appropriate shifts)
-    
-    This approach is standard in some signal processing and physics literature for causal systems.
     """
 
     nt = len(mode_coeff) - 1
@@ -709,22 +708,22 @@ def model_wave_fourier(mode_coeff, dt, r, gamma, eval):
     return out_full[nt:]
 
 
-def solve_wave_ode(mode_coeff, t, gamma, r, lambdaj):
+def solve_wave_ode(mode_coeff, t, gamma, r, eval):
     """
     Solves the damped wave ODE for one eigenmode j.
 
     Parameters
     ----------
     mode_coeff : array_like
-        Input drive to the system with the same length as t (written as qj in equation below.)
+        Input drive to the system with the same length as t (written as qj in equation below).
     t : array_like
         Time points (must be increasing).
     gamma : float
         Damping coefficient.
     r : float
         Spatial length scale.
-    lambdaj : float
-        Eigenvalue for the j-th mode.
+    eval : float
+        Eigenvalue for the j-th mode (written as lambdaj in equation below).
 
     Returns
     -------
@@ -741,22 +740,24 @@ def solve_wave_ode(mode_coeff, t, gamma, r, lambdaj):
         dx2/dt = -2 * gamma * x2 - gamma^2 * (1 + r**2 * lambdaj) * x1 + gamma**2 * qval
     """
 
-    lambdaj = float(lambdaj)  # Ensure lambdaj is a float
+    eval = float(eval)  # Ensure eval is a float
 
     def q_interp_safe(t_):
+        """Safely interpolate the driving term at time t_."""
         val = np.interp(t_, t, mode_coeff)
         return val.item() if isinstance(val, np.ndarray) else val
 
     def wave_rhs(t_, y):
+        """Right-hand side of the wave equation in first-order form."""
         x1, x2 = y  # both should be scalars
         qval = q_interp_safe(t_)  # should be scalar
 
         dx1dt = x2
-        dx2dt = -2 * gamma * x2 - gamma**2 * (1 + r**2 * lambdaj) * x1 + gamma**2 * qval
+        dx2dt = -2 * gamma * x2 - gamma**2 * (1 + r**2 * eval) * x1 + gamma**2 * qval
 
         return [dx1dt, dx2dt]
 
-    y0 = [0.0, 0.0]
+    y0 = [float(mode_coeff), 0.0]
 
     sol = solve_ivp(
         wave_rhs,
@@ -790,19 +791,18 @@ def model_balloon_fourier(mode_coeff, dt):
 
     Notes
     -----
-    We use ifft (not fft) on the zero-padded input to obtain the correct frequency-domain 
-    representation for a causal system (i.e., one where the input is zero for t < 0). This matches 
-    the analytic solution for the time evolution of a damped wave equation with a causal input (see 
-    e.g. convolution with a Green's function). Using fft here would not yield the correct result for
-    this setup.
-    
+    This function uses a frequency-domain method to simulate the damped wave response of a causal 
+    input. To ensure causality (i.e., the input is zero for t < 0), the input is zero-padded on the 
+    negative time axis and transformed using `ifft`, which mimics the forward Fourier transform of a 
+    causal signal. The system's frequency response (transfer function) is then applied, and `fft` is 
+    used to return to the time domain. This approach is standard for simulating linear 
+    time-invariant causal systems and is equivalent to convolution with a Green's function.
+
     The sequence is:
       1. Zero-pad input for t < 0 (causality)
       2. Take ifft to get the frequency-domain representation for this causal signal
       3. Apply the frequency response (transfer function)
       4. Use fft to return to the time domain (with appropriate shifts)
-    
-    This approach is standard in some signal processing and physics literature for causal systems.
     """
 
     # Default independent model parameters
@@ -876,7 +876,6 @@ def model_balloon_ode(mode_coeff, t):
     np.ndarray
         The BOLD signal time course for the mode at the specified time points.
     """
-    from scipy.integrate import solve_ivp
     # Balloon model parameters (canonical values)
     kappa = 0.65   # signal decay rate [s^-1]
     gamma_h = 0.41 # rate of elimination [s^-1]
