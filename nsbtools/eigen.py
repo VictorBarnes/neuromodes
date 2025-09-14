@@ -203,7 +203,7 @@ class EigenSolver(Solver):
         self.evals, emodes = self.eigs(k=self.nmodes)
 
         assert not np.isnan(self.evals).any(), "Eigenvalues contain NaNs."
-        if self.evals[0] < 1e-6:
+        if abs(self.evals[0]) > 1e-6:
             warnings.warn(f"First eigenvalue is {self.evals[0]}, expected to be 0 (< 1e-6 with "
                           "precision error).")
 
