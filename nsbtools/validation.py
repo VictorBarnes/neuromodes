@@ -1,57 +1,116 @@
 import numpy as np
 
-
-def check_orthogonal_matrix(matrix, tol=1e-6): 
-    return (check_orthogonal_vectors(matrix, colvar=True,  tol=tol) and 
-            check_orthogonal_vectors(matrix, colvar=False, tol=tol))
-	
-def check_orthogonal_vectors(matrix, colvar=True, tol=1e-6):
+def check_orthonormal_matrix(matrix, tol=1e-6):
     """
-    Check if a set of vectors in a matrix (rows or columns) are orthogonal.
+    Check if a matrix is orthonormal, i.e., its rows and columns are both orthogonal and normalized.
+
+    Parameters
+    ----------
+    matrix : array_like
+        The matrix to be checked for orthonormality.
+    tol : float, optional
+        The tolerance value for checking orthogonality and normalization. Default is 1e-6.
+
+    Returns
+    -------
+    bool
+        True if the matrix is orthonormal, False otherwise.
+
+    Raises
+    ------
+    TypeError
+        If the input cannot be converted to a numpy array.
+    AssertionError
+        If the input does not meet the dimensionality or value requirements.
+    """
+    return (check_orthogonal_vectors(matrix, tol=tol) and
+           check_normalized_vectors(matrix, tol=tol) and
+           check_orthogonal_vectors(matrix, colvec=False, tol=tol) and
+           check_normalized_vectors(matrix, colvec=False, tol=tol))
+
+def check_orthogonal_vectors(matrix, colvec=True, tol=1e-6):
+    """
+    Check if a set of real-valued vectors in a matrix (rows or columns) are orthogonal.
 
     Parameters
     ----------
     matrix : array_like
         The set of vectors to be checked for orthogonality.
-    colvar : bool, optional
-        If True, check the columns of the matrix. If False, check the rows. Default is True.
+    colvec : bool, optional
+        If True, vectors are the matrix's columns. If False, they are the matrix's rows. Default is True.
     tol : float, optional
         The tolerance value for checking orthogonality. Default is 1e-6.
 
     Returns
     -------
     bool
-        True if the matrix is orthogonal, False otherwise.
+        True if the vectors are orthogonal, False otherwise.
+
+    Raises
+    ------
+    TypeError
+        If the input cannot be converted to a numpy array.
+    AssertionError
+        If the input does not meet the dimensionality or value requirements.
     """
 
-    matrix = np.array(matrix)
+    try:
+        matrix = np.array(matrix)
+    except Exception:
+        raise TypeError("Input must be convertible to a numpy array.")
     
-    # If colvar is False, need to check rows instead of cols
-    if colvar is False:
+    # Ensure that vectors are along columns
+    if not colvec:
         matrix = matrix.T
-    
-    # Check if matrix product is close to identity
-    return np.allclose(matrix.T @ matrix, np.eye(np.shape(matrix)[1]), atol=tol)
 
-def check_normal(matrix, axis=0, tol=1e-6):
+    assert matrix.ndim == 2, "Input array must be 2-dimensional."
+    assert matrix.shape[0] > 1 and matrix.shape[1] > 1, "Input array must contain at least two vectors."
+    assert np.isrealobj(matrix), "Input array must contain only real values."
+
+    # For an orthogonal set of vectors, the Gram matrix's off-diagonal elements should be zero
+    gram = matrix.T @ matrix
+    diag = np.diag(gram)
+    off_diag = gram - np.diagflat(diag)
+
+    return np.allclose(off_diag, 0, atol=tol)
+
+def check_normalized_vectors(matrix, colvec=True, tol=1e-6):
     """
-    Check if the columns of a matrix are normalized.
+    Check if a set of real-valued vectors in a matrix (rows or columns) have unit magnitude.
 
     Parameters
     ----------
     matrix : array_like
         The input matrix.
-    axis : int, optional
-        The axis along which to calculate the norm. By default, axis=0.
+    colvec : bool, optional
+        If True, vectors are the matrix's columns. If False, they are the matrix's rows. Default is True.
     tol : float, optional
-        The tolerance for comparing the column norms to 1. By default, tol=1e-6.
+        The tolerance for comparing the magnitudes to 1. By default, tol=1e-6.
 
     Returns
     -------
     bool
-        True if all column norms are close to 1 within the given tolerance, False otherwise.
+        True if all vector magnitudes are close to 1 within the given tolerance, False otherwise.
+
+    Raises
+    ------
+    TypeError
+        If the input cannot be converted to a numpy array.
+    AssertionError
+        If the input does not meet the dimensionality or value requirements.
     """
     
-    matrix = np.array(matrix)
+    try:
+        matrix = np.array(matrix)
+    except Exception:
+        raise TypeError("Input must be convertible to a numpy array.")
 
-    return np.allclose(np.linalg.norm(matrix, axis=axis), 1.0, atol=tol)
+    # Ensure that vectors are along columns
+    if not colvec:
+        matrix = matrix.T
+
+    assert matrix.ndim < 3, "Input array must be 1- or 2-dimensional."
+    assert matrix.shape[0] > 1, "Input array must contain vectors, not single values."
+    assert np.isrealobj(matrix), "Input array must contain only real values."
+
+    return np.allclose(np.linalg.norm(matrix, axis=0), 1.0, atol=tol)

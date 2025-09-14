@@ -1,28 +1,4 @@
 import numpy as np
-from pathlib import Path
-from dotenv import load_dotenv
-
-
-def load_project_env(marker_file=".env", override=True):
-    """
-    Walk upward from the location of this script to find a .env file, and load its contents into 
-    the environment.
-
-    Parameters
-    ----------
-    marker_file : str, optional
-        The name of the marker file to look for. Default is ".env".
-    override : bool, optional
-        If True, override existing environment variables with the same name. Default is True.
-    """
-
-    current = Path(Path.cwd()).resolve()
-    for parent in [current] + list(current.parents):
-        env_path = parent / marker_file
-        if env_path.exists():
-            load_dotenv(dotenv_path=env_path, override=override)
-            return  # Exit after loading
-    raise FileNotFoundError(f"Could not find {marker_file} in any parent directory.")
 
 def unmask(data, medmask, val=np.nan):
     """
@@ -76,10 +52,14 @@ def unparcellate(data, parc, val=np.nan):
         The reconstructed full array, where each vertex is assigned the value from
         the corresponding parcel in `data`, or `val` if it does not belong to any parcel.
     """
-    out = np.full(len(parc), val)
-    for i in range(len(parc)):
-        if parc[i] > 0:
-            out[i] = data[parc[i] - 1]
-    
-    return out
 
+    unique_parcels = np.unique(parc)
+    unique_parcels = unique_parcels[unique_parcels != 0]
+    if len(data) != len(unique_parcels):
+        raise ValueError("Data length must match the number of non-zero parcels.")
+
+    out = np.full(len(parc), val)
+    for idx, parcel_id in enumerate(unique_parcels):
+        out[parc == parcel_id] = data[idx]
+
+    return out

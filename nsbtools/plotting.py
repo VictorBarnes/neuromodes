@@ -27,6 +27,7 @@ def plot_brain(surf, data, layout="row", views=["lateral", "medial"], color_rang
         - A tuple (vmin, vmax) to apply the same color scale across all maps.
         - "group" to compute global (min, max) across all data columns and apply uniformly.
         - "individual" (or None) to compute limits separately for each brain map.
+        - "individual_centered" to compute limits centered around zero for each brain map.
         By default, color range is determined individually per map.
     cmap : matplotlib colormap name or object, optional
         Colormap to use for the data, by default "viridis".
@@ -54,7 +55,8 @@ def plot_brain(surf, data, layout="row", views=["lateral", "medial"], color_rang
     """
     
     # Validate inputs
-    cbar_kws_ = {**dict(pad=0.01, fontsize=20, aspect=25, shrink=1, decimals=2, location="bottom"), **(cbar_kws or {})}
+    cbar_kws_ = {**dict(pad=0.01, fontsize=20, aspect=25, shrink=1, decimals=2, location="bottom"),
+                 **(cbar_kws or {})}
     label_kws_ = {**dict(fontsize=20), **(label_kws or {})}
     
     data = np.squeeze(data)
@@ -87,14 +89,20 @@ def plot_brain(surf, data, layout="row", views=["lateral", "medial"], color_rang
     elif isinstance(color_range, str) and color_range == "individual":
         color_range = None
 
-    # To plot multiple brains we need to save each figure to a temporary file then load it into the axes
+    # To plot multiple brain maps, save each figure to a temporary file then load it into the axes
     with tempfile.TemporaryDirectory() as temp_dir:
         for i, ax in enumerate(axs):
+            if isinstance(color_range, str) and color_range == "individual_centered":
+                max_abs = np.nanmax(np.abs(data[:, i]))
+                color_range = (-max_abs, max_abs)
+
             # Use surfplot to plot the data
             p = Plot(surf_lh=surf, views=views, size=(500, 250), zoom=zoom)
-            p.add_layer(data=data[:, i], cmap=cmap, cbar=cbar, color_range=color_range, cbar_label=cbar_label)
+            p.add_layer(data=data[:, i], cmap=cmap, cbar=cbar, color_range=color_range,
+                        cbar_label=cbar_label, zero_transparent=False)
             if outline:
-                p.add_layer(data[:, i], as_outline=True, cmap="gray", cbar=False, color_range=(1, 2))
+                p.add_layer(data[:, i], as_outline=True, cmap="gray", cbar=False,
+                            color_range=(1, 2), zero_transparent=False)
             temp_file = f"{temp_dir}/figure_{i}.png"
             fig = p.build(cbar_kws=cbar_kws_)
             plt.close(fig)
@@ -112,16 +120,48 @@ def plot_brain(surf, data, layout="row", views=["lateral", "medial"], color_rang
                 if layout == "row":
                     ax.set_title(labels[i], pad=0, fontsize=label_kws_["fontsize"])
                 elif layout == "col":
-                    ax.set_ylabel(labels[i], labelpad=0, rotation=0, ha="right", fontsize=label_kws_["fontsize"])
+                    ax.set_ylabel(labels[i], labelpad=0, rotation=0, ha="right",
+                                  fontsize=label_kws_["fontsize"])
     
     return fig if ax is None else None
 
-# TODO: add annot option to plot the values of each cell
-def plot_heatmap(data, ax=None, center=None, cmap="viridis", cbar=False, square=True, downsample=None):
+def plot_heatmap(data, ax=None, center=None, cmap="viridis", cbar=False, square=True,
+                 downsample=1, annot=False, fmt=".1f"):
+    """
+    Plot a heatmap of the data with optional colorbar and annotations.
+
+    Parameters
+    ----------
+    data : 2D array-like
+        The data to be plotted as a heatmap.
+    ax : matplotlib.axes.Axes, optional
+        The axes on which to plot the heatmap. If None, the current axes are used.
+    center : float, optional
+        Center value for colormap scaling. If None, the colormap is not centered.
+    cmap : str or matplotlib.colors.Colormap, optional
+        Colormap to be used for the heatmap. Default is "viridis".
+    cbar : bool, optional
+        Whether to display a colorbar beside the heatmap. Default is False.
+    square : bool, optional
+        If True, set the aspect ratio of the plot to be equal, so the cells are square-shaped.
+        Default is True.
+    downsample : float, optional
+        Factor by which to downsample the data before plotting. Should be between 0 and 1.
+    annot : bool, optional
+        Whether to annotate each cell with its value. Default is False.
+    fmt : str, optional
+        String format for the annotations. Default is ".1f" (one decimal place).
+
+    Returns
+    -------
+    matplotlib.axes.Axes
+        The axes on which the heatmap is plotted.
+    """
+
     if ax is None:
         ax = plt.gca()
 
-    if downsample is not None and 0 < downsample < 1:
+    if 0 < downsample < 1:
         data = zoom(data, zoom=downsample, order=1) # bilinear interpolation
 
     vmin = np.min(data)
@@ -144,6 +184,19 @@ def plot_heatmap(data, ax=None, center=None, cmap="viridis", cbar=False, square=
     # Invert the y axis to show the plot in matrix form
     ax.invert_yaxis()
 
+    # Annotate each cell with its value
+    if annot:
+        norm = mesh.norm  # get the normalization used by pcolormesh
+        for i in range(data.shape[0]):
+            for j in range(data.shape[1]):
+                # Use black or white text depending on background luminance
+                val = data[i, j]
+                r, g, b = cmap(norm(val))[:3]
+                luminance = 0.299 * r + 0.587 * g + 0.114 * b
+                text_color = 'white' if luminance < 0.5 else 'black'
+                ax.text(j + 0.5, i + 0.5, format(val, fmt), ha='center', va='center',
+                        color=text_color)
+
     # Create a colorbar with the same height as the heatmap
     if cbar:
         divider = make_axes_locatable(ax)
@@ -161,4 +214,3 @@ def plot_heatmap(data, ax=None, center=None, cmap="viridis", cbar=False, square=
         ax.set_aspect("equal")
 
     return ax
-

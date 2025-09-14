@@ -1,58 +1,37 @@
 import os
-import pathlib
+import warnings
 import importlib
 import numpy as np
-import scipy as sp
 from joblib import Memory
 from pathlib import Path
+import nibabel as nib
+import trimesh
 from lapy import Solver, TriaMesh
-from lapy.utils._imports import import_optional_dependency
 from scipy.stats import zscore
 from scipy.integrate import solve_ivp
-from sklearn.preprocessing import QuantileTransformer
-from brainspace.vtk_interface.wrappers import BSPolyData
-from brainspace.mesh.mesh_operations import mask_points
-from brainspace.mesh.mesh_io import read_surface
-from brainspace.mesh.mesh_elements import get_cells, get_points
-from nsbtools.utils import load_project_env
-
-# Turn off VTK warning when using importing brainspace.mesh_operations:  
-# "vtkThreshold.cxx:99 WARN| vtkThreshold::ThresholdBetween was deprecated for VTK 9.1 and will be 
-# removed in a future version."
-import vtk
-vtk.vtkObject.GlobalWarningDisplayOff()
 
 # Set up joblib memory caching
-load_project_env()
 CACHE_DIR = os.getenv("CACHE_DIR")
 if CACHE_DIR is None or not os.path.exists(CACHE_DIR):
-    CACHE_DIR = Path.cwd()
-memory = Memory(Path(CACHE_DIR), verbose=0)
-
-
-def _check_surf(surf):
-    """Validate surface type and load if a file name. Adapted from `surfplot`."""
-    if isinstance(surf, (str, pathlib.Path)):
-        return read_surface(str(surf))
-    elif isinstance(surf, BSPolyData) or (surf is None):
-        return surf
-    else:
-        raise ValueError('Surface be a path-like string, an instance of '
-                        'BSPolyData, or None')
-
+    nsbtools = importlib.resources.files('nsbtools')
+    CACHE_DIR = Path(nsbtools) / '.eigencache'
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+memory = Memory(CACHE_DIR, verbose=0)
 
 class EigenSolver(Solver):
     """
     EigenSolver class for spectral analysis and simulation on surface meshes.
 
-    This class computes the Laplace-Beltrami operator on a triangular mesh, and supports spatial 
-    heterogeneity and various normalization/scaling options. It provides methods for calculating 
-    eigen-decompositions and eigen-reconstructions of data, and for simulating neural or BOLD 
-    activity using the Neural Field Theory wave model and Balloon-Windkessel model.
+    This class computes the Laplace-Beltrami operator on a triangular mesh via the Finite Element
+    Method, which discretizes the eigenvalue problem according to mass and stiffness matrices.
+    Spatial heterogeneity and various normalization/scaling options are supported. It provides
+    methods for calculating eigen-decompositions and eigen-reconstructions of data, and for
+    simulating neural or BOLD activity using the Neural Field Theory wave model and
+    Balloon-Windkessel model.
     """
 
-    def __init__(self, surf, medmask=None, hetero=None, n_modes=100, alpha=1.0, beta=1.0, r=28.9, gamma=0.116, 
-                 scaling="sigmoid", q_norm=None, lump=False, smoothit=10, normalize=False, 
+    def __init__(self, surf, medmask=None, hetero=None, n_modes=100, alpha=1.0, beta=1.0, r=28.9,
+                 gamma=0.116, scaling="sigmoid", lump=False, smoothit=10, normalize=False,
                  verbose=False):
         """
         Initialize the EigenSolver class.
@@ -63,17 +42,16 @@ class EigenSolver(Solver):
             The surface mesh to be used. Can be a file path to the surface mesh or a BSPolyData 
             object.
         medmask : numpy.ndarray, optional
-            A boolean mask to exclude certain points from the surface mesh. Default is None.
+            A boolean mask to exclude certain points (e.g., medial wall) from the surface mesh.
+            Default is None.
         hetero : numpy.ndarray, optional
             A heterogeneity map to scale the Laplace-Beltrami operator. Default is None.
         n_modes : int, optional
             Number of eigenmodes to compute. Default is 100.
         alpha : float, optional
-            Scaling factor for the heterogeneity map. Only used if `hetero` is not None. Default is 
-            1.0.
+            Scaling factor for the heterogeneity map. Default is 1.0.
         beta : float, optional
-            Exponent for the sigmoid scaling of the heterogeneity map. Only used if `hetero` is not 
-            None. Default is 1.0.
+            Exponent for the sigmoid scaling of the heterogeneity map. Default is 1.0.
         r : float, optional
             Axonal length scale for wave propagation. Default is 28.9.
         gamma : float, optional
@@ -81,8 +59,6 @@ class EigenSolver(Solver):
         scaling : str, optional
             Scaling function to apply to the heterogeneity map. Must be "sigmoid" or "exponential". 
             Default is "sigmoid".
-        q_norm : str, optional
-            Distribution type for quantile normalization of the heterogeneity map. Default is None.
         lump : bool, optional
             Whether to use lumped mass matrix for the Laplace-Beltrami operator. Default is False.
         smoothit : int, optional
@@ -91,6 +67,11 @@ class EigenSolver(Solver):
             Whether to normalize the surface mesh. Default is False.
         verbose : bool, optional
             Whether to print verbose output during initialization. Default is False.
+
+        Raises
+        -------
+        ValueError
+            If the input mesh, mask, or parameters are not valid.
         """
         self.nmodes = n_modes
         self._r = r
@@ -98,20 +79,17 @@ class EigenSolver(Solver):
         self.alpha = alpha if hetero is not None else 0
         self.beta = beta if hetero is not None else 0
         self.scaling = scaling
-        self.q_norm = q_norm
         self.verbose = verbose
 
-        # Initialise surface and convert to TriaMesh object
-        surf = _check_surf(surf)
+        # Initialize surface and convert to TriaMesh object
+        surf = check_surf(surf)
         if medmask is not None:
-            surf = mask_points(surf, medmask)
-            # TODO: check for floating points after mask and return modified mask and print warning
-            if hetero is not None:
-                hetero = hetero[medmask]
-        self.geometry = TriaMesh(get_points(surf), get_cells(surf))
+            surf = mask_surf(surf, medmask)
+        self.medmask = medmask
+        self.geometry = TriaMesh(surf.vertices, surf.faces)
         if normalize:
             self.geometry.normalize_()
-        self.surf = surf  
+        self.n_verts = surf.vertices.shape[0]
         self.hetero = hetero
 
         # Calculate the two matrices of the Laplace-Beltrami operator
@@ -123,7 +101,7 @@ class EigenSolver(Solver):
 
     @r.setter
     def r(self, r):
-        self.check_hetero(hetero=self.hetero, r=r, gamma=self.gamma)
+        check_hetero(hetero=self.hetero, r=r, gamma=self.gamma)
         self._r = r
 
     @property
@@ -132,7 +110,7 @@ class EigenSolver(Solver):
 
     @gamma.setter
     def gamma(self, gamma):
-        self.check_hetero(hetero=self.hetero, r=self.r, gamma=gamma)
+        check_hetero(hetero=self.hetero, r=self.r, gamma=gamma)
         self._gamma = gamma
 
     @property
@@ -144,110 +122,42 @@ class EigenSolver(Solver):
         # Handle None case by setting to ones
         if hetero is None:
             if self.alpha != 0 or self.beta != 0:
-                # TODO: raise warning instead of print
-                print("Warning: Setting `alpha` and `beta` to 0 because `hetero` is None.")
+                warnings.warn('Setting `alpha` and `beta` to 0 because `hetero` is None.')
                 self.alpha = 0
                 self.beta = 0
-            self._hetero = np.ones(self.surf.n_points)
+            self._hetero = np.ones(self.n_verts)
         else:
             # Ensure hetero is valid
             if not isinstance(hetero, np.ndarray):
-                raise ValueError("Heterogeneity map must be a numpy array or None")
-            if len(hetero) != self.surf.n_points:
-                raise ValueError("Heterogeneity map must have the same number of elements as the "
-                                 "number of vertices in the surface template.")
+                raise ValueError("`hetero` must be a numpy array or None.")
             if np.isnan(hetero).any() or np.isinf(hetero).any():
-                raise ValueError("Heterogeneity map must not contain NaNs or Infs.")
+                raise ValueError("`hetero` must not contain NaNs or Infs.")
+            n_expected = len(self.medmask) if self.medmask is not None else self.n_verts
+            if len(hetero) != n_expected:
+                raise ValueError(f"The number of elements in `hetero` ({len(hetero)}) must match "
+                                 f"the number of vertices in the surface mesh ({n_expected}).")
+            # If medmask is provided, apply it
+            if self.medmask is not None:
+                hetero = hetero[self.medmask]
 
             # Scale the heterogeneity map
-            hetero = self.scale_hetero(
+            hetero = scale_hetero(
                 hetero=hetero, 
                 alpha=self.alpha, 
                 beta=self.beta,
-                scaling=self.scaling, 
-                q_norm=self.q_norm
+                scaling=self.scaling
             )
 
-            # Check the heterogeneity does not result in non-physiological wave speeds
-            self.check_hetero(hetero=hetero, r=self.r, gamma=self.gamma)
+            check_hetero(hetero=hetero, r=self.r, gamma=self.gamma)
 
             # Assign to private attribute
             self._hetero = hetero
 
-    @staticmethod
-    def check_hetero(hetero, r, gamma):
-        """
-        Check if the heterogeneity map values result in physiologically plausible wave speeds.
-        
-        Parameters
-        ----------
-        hetero : array_like
-            Heterogeneity map values.
-        r : float
-            Axonal length scale for wave propagation.
-        gamma : float
-            Damping parameter for wave propagation.
-        
-        Raises
-        ------
-        ValueError
-            If the computed wave speed exceeds 150 m/s, indicating non-physiological values.
-        """
-        
-        # Check hmap values are physiologically plausible
-        if np.max(r * gamma * np.sqrt(hetero)) > 150:
-            raise ValueError("Alpha value results in non-physiological wave speeds (> 150 m/s). Try" 
-                             " using a smaller alpha value.")
-
-    @staticmethod
-    def scale_hetero(hetero=None, alpha=1.0, beta=1.0, scaling="sigmoid", q_norm=None):
-        """
-        Scales a heterogeneity map using specified normalization and scaling functions.
-        
-        Parameters
-        ----------
-        hetero : array-like, optional
-            The heterogeneity map to be scaled. If None, no operation is performed.
-        alpha : float, default=1.0
-            Scaling parameter controlling the strength of the transformation.
-        scaling : {'sigmoid', 'exponential'}, default='sigmoid'
-            The scaling function to apply to the heterogeneity map.
-            - 'sigmoid': Applies a scaled sigmoid transformation.
-            - 'exponential': Applies an exponential transformation.
-        q_norm : {'uniform', 'normal'}, optional
-            If specified, applies quantile normalization to the heterogeneity map.
-            - 'uniform': Maps data to a uniform distribution.
-            - 'normal': Maps data to a normal distribution.
-        
-        Returns
-        -------
-        hetero : ndarray
-            The scaled heterogeneity map.
-        """
-
-        # Z-score the heterogeneity map
-        hetero = zscore(hetero)
-
-        # Apply quantile normalisation
-        if q_norm is not None:
-            scaler = QuantileTransformer(output_distribution=q_norm, random_state=0)
-            hetero = scaler.fit_transform(hetero.reshape(-1, 1)).flatten()
-
-        # Scale the heterogeneity map
-        if scaling == "exponential":
-            hetero = np.exp(alpha * hetero)
-        elif scaling == "sigmoid":
-            hetero = (2 / (1 + np.exp(-alpha * hetero)))**beta
-        else:
-            raise ValueError("Invalid scaling function. Must be 'exponential' or 'sigmoid'.")
-
-        return hetero
-
     def laplace_beltrami(self, lump=False, smoothit=10):   
         """
-        This method computes the Laplace-Beltrami operator using finite element methods
-        on a triangular mesh, optionally incorporating spatial heterogeneity and smoothing
-        of the curvature. The resulting stiffness and mass matrices are stored as attributes.
+        This method computes the Laplace-Beltrami operator using finite element methods on a
+        triangular mesh, optionally incorporating spatial heterogeneity and smoothing of the
+        curvature. The resulting stiffness and mass matrices are stored as attributes.
 
         Parameters
         ----------
@@ -256,238 +166,258 @@ class EigenSolver(Solver):
         smoothit : int, optional
             Number of smoothing iterations to apply to the curvature computation. Default is 10.
         """
-
         hetero_tri = self.geometry.map_vfunc_to_tfunc(self.hetero)
-        # Check that the length of the heterogeneity map matches the number of triangles
-        if len(hetero_tri) != self.geometry.t.shape[0]:
-            raise ValueError(f"Wrong hetero length: {len(hetero_tri)}. Should be: "
-                                f"{self.geometry.t.shape[0]}")
 
-        # heterogneous Laplace
         if self.verbose:
-            print("TriaMesh with heterogeneous Laplace-Beltrami")
+            if self.alpha != 0:
+                print("Solving eigenvalue problem with heterogeneous Laplace-Beltrami (⍺ = "
+                      f"{self.alpha})")
+            else:
+                print("Solving eigenvalue problem with homogeneous Laplace-Beltrami")
         u1, u2, _, _ = self.geometry.curvature_tria(smoothit=smoothit)
 
         hetero_mat = np.tile(hetero_tri[:, np.newaxis], (1, 2))
         self.stiffness, self.mass = self._fem_tria_aniso(self.geometry, u1, u2, hetero_mat, lump)
 
-    def solve(self, fix_mode1=False, standardise=False, use_cholmod=False):
+    def solve(self, standardize=True, fix_mode1=True):
         """
         Solve the generalized eigenvalue problem for the Laplace-Beltrami operator and compute 
         eigenvalues and eigenmodes.
 
         Parameters
         ----------
-        k : int, optional
-            Number of eigenvalues and eigenmodes to compute. Default is 10.
-        fix_mode1 : bool, optional
-            If True, sets the first eigenmode to a constant value. Default is False.
-        standardise : bool, optional
+        standardize : bool, optional
             If True, standardizes the sign of the eigenmodes so the first element is positive. 
             Default is False.
-        use_cholmod : bool, optional
-            If True, uses the CHOLMOD solver from sksparse for the eigenvalue problem. Default is 
-            False.
+        fix_mode1 : bool, optional
+            If True, sets the first eigenmode to a constant value and the first eigenvalue to zero. 
+            Default is True. See the check_orthonorm_modes function for details.
 
         Raises
         ------
         AssertionError
-            If the computed eigenmodes contain NaN values.
+            If the computed eigenmodes or eigenvalues contain NaN values.
         """
-
-        self.use_cholmod = use_cholmod
-        if self.use_cholmod:
-            self.sksparse = import_optional_dependency("sksparse", raise_error=True)
-            importlib.import_module(".cholmod", self.sksparse.__name__)
-        else:
-            self.sksparse = None
-        
         # Solve the eigenvalue problem
-        self.evals, evecs = self.eigs(k=self.nmodes)
-        
-        # Set first mode to be constant (mean of first column)
+        self.use_cholmod = False
+        self.evals, emodes = self.eigs(k=self.nmodes)
+
+        assert not np.isnan(self.evals).any(), "Eigenvalues contain NaNs."
+        if self.evals[0] < 1e-6:
+            warnings.warn(f"First eigenvalue is {self.evals[0]}, expected to be 0 (< 1e-6 with "
+                          "precision error).")
+
+        check_orthonorm_modes(emodes, self.mass)
+
         if fix_mode1:
-            evecs[:, 0] = np.mean(evecs[:, 0])
+            emodes[:, 0] = np.full(self.n_verts, 1 / np.sqrt(self.mass.sum()))
+            self.evals[0] = 0.0
+        if standardize:
+            emodes = standardize_modes(emodes)
 
-        # Standardise sign of modes
-        if standardise:
-            evecs = standardise_modes(evecs)
-
-        # Check for NaNs
-        if np.isnan(evecs).any():
-            raise AssertionError("`evecs` contain NaNs") 
-
-        self.evecs = evecs
+        self.emodes = emodes
     
     @staticmethod
-    def decompose(data, evecs, method='orthogonal', mass=None):
+    def decompose(data, emodes, method='orthogonal', mass=None, return_norm_power=False,
+                  check_orthonorm=True):
         """
         Calculate the eigen-decomposition of the given data using the specified method.
 
         Parameters
         ----------
         data : array-like
-            The input data for the eigen-decomposition.
-        evecs : array-like
-            The eigenmodes used for the eigen-decomposition.
+            The input data array of shape (n_verts, n_maps), where n_verts is the number of vertices 
+            and n_maps is the number of brain maps.
+        emodes : array-like
+            The eigenmodes array of shape (n_verts, n_modes), where n_modes is the number of 
+            eigenmodes.
         method : str, optional
-            The method used for the eigen-decomposition. Default is 'matrix'.
+            The method used for the eigen-decomposition, either 'orthogonal' or 'regress'. Default is
+            'orthogonal'.
         mass : array-like, optional
-            The mass matrix used for the eigen-decomposition when method is 'orthogonal'. Default is 
-            None.
+            The mass matrix of shape (n_verts, n_verts) used for the eigen-decomposition when method
+            is 'orthogonal'. If using EigenSolver, provide its self.mass. Default is None.
+        return_norm_power : bool, optional
+            If True, returns normalized power of each mode instead of beta coefficients. Default is
+            False.
+        check_orthonorm : bool, optional
+            If True and mass is not None, checks that the eigenmodes are mass-orthonormal. Default 
+            is True. See the check_orthonorm_modes function for details.
 
         Returns
         -------
-        beta : numpy.ndarray of shape (n_modes, n_data)
-            The beta coefficients obtained from the eigen-decomposition.
+        beta : numpy.ndarray
+            The beta coefficients array of shape (n_modes, n_maps), obtained from the
+            eigen-decomposition.
+        norm_power : numpy.ndarray, optional
+            The normalized power array of shape (n_modes, n_maps), obtained from the
+            eigen-decomposition.
+
+        Raises
+        ------
+        ValueError
+            If the number of vertices in `data` and `emodes` do not match, if `emodes` contain NaNs,
+            if an invalid method is specified, or if the `mass` matrix is not provided when
+            required.
         """
-        if not np.allclose(evecs[:, 0], np.full_like(evecs[:, 0], evecs[0, 0])):
-            print("Warning: `evecs` should contain a constant eigenvector.")
+        if np.shape(data)[0] != np.shape(emodes)[0]:
+            raise ValueError(f"The number of elements in `data` ({np.shape(data)[0]}) must match "
+                             f"the number of vertices in `emodes` ({np.shape(emodes)[0]}).")
+        if np.isnan(emodes).any() or np.isinf(emodes).any():
+            raise ValueError("`emodes` contains NaNs or Infs.")
+        if data.ndim == 1:
+            data = np.expand_dims(data, axis=1)
+        if check_orthonorm and mass is not None:
+            check_orthonorm_modes(emodes, mass)
 
-        # Solve the linear system to get the beta coefficients
-        if method == 'matrix':
-            beta = np.linalg.solve((evecs.T @ evecs), (evecs.T @ data))
-        elif method == 'orthogonal':
-            if mass is None:
-                raise ValueError("B must be specified when method is 'orthogonal'")
-
-            beta = evecs.T @ mass @ data
+        if method == 'orthogonal':
+            if mass is None or mass.shape != (emodes.shape[0], emodes.shape[0]):
+                raise ValueError(f"Mass matrix of shape ({emodes.shape[0]}, {emodes.shape[0]}) must "
+                                 "be provided when method is 'orthogonal'.")
+            beta = emodes.T @ mass @ data
+        elif method == 'regress':
+            beta = np.linalg.solve(emodes.T @ emodes, emodes.T @ data)
         else:
-            raise ValueError("Invalid method; must be 'matrix' or 'orthogonal'.")
+            raise ValueError(f"Invalid eigen-decomposition method '{method}'; must be 'orthogonal' "
+                             "or 'regress'.")
 
-        return beta
+        if return_norm_power:
+            total_power = np.sum(beta**2, axis=0)
+            norm_power = beta**2 / total_power
+            return norm_power
+        else:
+            return beta
 
     @staticmethod
-    def reconstruct(data, evecs, method='orthogonal', modesq=None, mass=None, data_type="maps", 
-                    metric="pearsonr", return_all=False):
+    def reconstruct(data, emodes, method='orthogonal', mass=None, modesq=None, timeseries=False,
+                    metric="pearsonr", return_all=False, check_orthonorm=True):
         """
         Calculate the eigen-reconstruction of the given data using the provided eigenmodes.
 
         Parameters
         ----------
         data : array-like
-            The input data array of shape (n_verts, n_data), where n_verts is the number of vertices 
-            and n_data is the number of data points.
-        evecs : array-like
+            The input data array of shape (n_verts, n_maps), where n_verts is the number of vertices 
+            and n_maps is the number of brain maps.
+        emodes : array-like
             The eigenmodes array of shape (n_verts, n_modes), where n_modes is the number of 
             eigenmodes.
         method : str, optional
-            The method used for eigen-decomposition. Default is 'matrix'.
+            The method used for the eigen-decomposition, either 'orthogonal' or 'regress'. Default is
+            'orthogonal'.
+        mass : array-like, optional
+            The mass matrix used for the eigen-decomposition when method is 'orthogonal'. If using
+            EigenSolver, provide its self.mass. Default is None.
         modesq : array-like, optional
             The sequence of modes to be used for reconstruction. Default is None, which uses all 
             modes.
-        mass : array-like, optional
-            The mass matrix used for the eigen-decomposition when method is 'orthogonal'. Default is 
-            None.
-        data_type : str, optional
-            The type of data, either "maps" or "timeseries". Default is "maps".
+        timeseries : bool, optional
+            Whether the brain maps comprise a time series of activity. Default is False.
         metric : str, optional
-            The metric used for calculating reconstruction accuracy. Default is "pearsonr".
+            The metric used for calculating reconstruction accuracy, either "pearsonr" or "mse".
+            Default is "pearsonr".
         return_all : bool, optional
-            Whether to return the reconstructed timepoints when data_type is "timeseries". Default 
-            is False.
+            Whether to return the reconstructed timepoints when timeseries is True. Default is
+            False.
+        check_orthonorm : bool, optional
+            If True and mass is not None, checks that the eigenmodes are mass-orthonormal. Default 
+            is True. See the check_orthonorm_modes function for details.
 
         Returns
         -------
         beta : list of numpy.ndarray
             A list of beta coefficients calculated for each mode.
         recon : numpy.ndarray
-            The reconstructed data array of shape (n_verts, nq, n_data).
+            The reconstructed data array of shape (n_verts, nq, n_maps).
         recon_score : numpy.ndarray
-            The correlation coefficients array of shape (nq, n_data).
+            The correlation coefficients array of shape (nq, n_maps).
         fc_recon : numpy.ndarray, optional
             The functional connectivity reconstructed data array of shape (n_verts, n_verts, nq). 
             Returned only if data_type is "timeseries".
         fc_recon_score : numpy.ndarray, optional
             The functional connectivity correlation coefficients array of shape (nq,). Returned only
             if data_type is "timeseries".
-        """
-
-        if np.shape(data)[0] != np.shape(evecs)[0]:
-            raise ValueError("The number of vertices in `data` and `evecs` must be the same.")
-        if method == "orthogonal" and mass is None:
-            raise ValueError("B must be specified when method is 'orthogonal'")
-        if metric not in ["pearsonr", "mse"]:
-            raise ValueError("Invalid metric; must be 'pearsonr' or 'mse'.")
-        if data_type not in ["maps", "timeseries"]:
-            raise ValueError("Invalid data_type; must be 'maps' or 'timeseries'.")
         
-        # Get the number of vertices and data points
-        n_verts, n_data = np.shape(data)
+        Raises
+        ------
+        ValueError
+            If the number of vertices in `data` and `emodes` do not match, if `emodes` contain NaNs,
+            if an invalid method or metric is specified, or if the `mass` matrix is not provided
+            when required.
+        """
+        if metric not in ["pearsonr", "mse"]:
+            raise ValueError(f"Invalid metric '{metric}'; must be 'pearsonr' or 'mse'.")
+        if data.ndim == 1:
+            data = np.expand_dims(data, axis=1)
+        if check_orthonorm and mass is not None:
+            check_orthonorm_modes(emodes, mass)
 
         if modesq is None:
             # Use all modes if not specified (except the first constant mode)
-            modesq = np.arange(1, np.shape(evecs)[1] + 1)
+            modesq = np.arange(1, np.shape(emodes)[1] + 1)
         nq = len(modesq)
 
+        n_verts, n_maps = np.shape(data)
+
         # If data is timeseries, calculate the FC of the original data and initialize output arrays
-        if data_type == "timeseries":
+        if timeseries:
             triu_inds = np.triu_indices(n_verts, k=1)
             fc_orig = np.corrcoef(data)[triu_inds]
             fc_recon = np.empty((n_verts, n_verts, nq))
             fc_recon_score = np.empty((nq,))
 
-        # If method is 'orthogonal', then beta coefficients can be calucated at once
-        if method == "orthogonal":
-            tmp = EigenSolver.decompose(data, evecs[:, :np.max(modesq)], method=method, mass=mass)
+        # Decompose the data to get beta coefficients
+        if method == 'orthogonal':
+            if mass is None or mass.shape != (emodes.shape[0], emodes.shape[0]):
+                raise ValueError(f"Mass matrix of shape ({emodes.shape[0]}, {emodes.shape[0]}) must "
+                                 "be provided when method is 'orthogonal'.")
+            tmp = EigenSolver.decompose(data, emodes[:, :np.max(modesq)], mass=mass,
+                                        check_orthonorm=False)
             beta = [tmp[:mq] for mq in modesq]
         else:
-            beta = [None] * nq
+            beta = [
+                EigenSolver.decompose(data, emodes[:, :modesq[i]], method=method)
+                for i in range(nq)
+            ]
 
         # Initialize the output arrays
-        recon = np.empty((n_verts, nq, n_data))
-        recon_score = np.empty((nq, n_data))
+        recon = np.empty((n_verts, nq, n_maps))
+        recon_score = np.empty((nq, n_maps))
         for i in range(nq):
-            if method != "orthogonal":
-                beta[i] = EigenSolver.decompose(data, evecs[:, :modesq[i]], method=method, mass=mass)
-
             # Reconstruct the data using the beta coefficients
-            recon[:, i, :] = evecs[:, :modesq[i]] @ beta[i]
-            if data_type == "maps":
-                # Avoid division by zero
-                if modesq[i] == 1:  
-                    recon_score[i, :] = 0
-                else:
-                    if metric == "pearsonr":
-                        recon_score[i, :] = [
-                            np.corrcoef(data[:, j], np.squeeze(recon[:, i, j]))[0, 1] 
-                            for j in range(n_data)
-                        ]
-                    elif metric == "mse":
-                        recon_score[i, :] = np.mean((data - np.squeeze(recon[:, i, :]))**2, axis=0)
-                    else:
-                        raise ValueError("Invalid metric; must be 'pearsonr' or 'mse'")
+            recon[:, i, :] = emodes[:, :modesq[i]] @ beta[i]
 
-            # Calculate FC of the reconstructed data
-            elif data_type == "timeseries":
-                # Calculate the functional connectivity of the reconstructed data
-                fc_recon[:, :, i] = np.corrcoef(recon[:, i, :])
-                
-                # Avoid division by zero
-                if modesq[i] == 1:
-                    if return_all:
-                        recon_score[i, :] = 0
-                    fc_recon_score[i] = 0
-                else:
-                    if return_all:
-                        recon_score[i, :] = [
-                            np.corrcoef(data[:, j], np.squeeze(recon[:, i, j]))[0, 1] 
-                            for j in range(n_data)
-                        ]
+            # Score reconstruction
+            if return_all or timeseries is False:
+                if metric == "pearsonr":
+                    recon_score[i, :] = [
+                        0 if modesq[i] == 1 else np.corrcoef(data[:, j],
+                                                             np.squeeze(recon[:, i, j]))[0, 1]
+                        for j in range(n_maps)
+                    ]
+                elif metric == "mse":
+                    recon_score[i, :] = [
+                        np.mean((data[:, j] - np.squeeze(recon[:, i, j]))**2)
+                        for j in range(n_maps)
+                    ]
 
-                    if metric == "pearsonr":
-                        fc_recon_score[i] = np.corrcoef(
-                            np.arctanh(fc_orig), 
-                            np.arctanh(np.squeeze(fc_recon[:, :, i][triu_inds]))
-                        )[0, 1]
-                    elif metric == "mse":
-                        fc_recon_score[i] = np.mean(
-                            (fc_orig - np.squeeze(fc_recon[:, :, i][triu_inds]))**2
-                        )
-                    else:
-                        raise ValueError("Invalid metric; must be 'pearsonr' or 'mse'")
+            if timeseries:
+                # Calculate FC from the reconstruction
+                fc_recon[:, :, i] = 0 if modesq[i] == 1 else np.corrcoef(recon[:, i, :])
+
+                # Score reconstruction of FC
+                if metric == "pearsonr":
+                    fc_recon_score[i] = 0 if modesq[i] == 1 else np.corrcoef(
+                        np.arctanh(fc_orig), np.arctanh(fc_recon[:, :, i][triu_inds])
+                    )[0, 1]
+                elif metric == "mse":
+                    fc_recon_score[i] = np.mean((fc_orig - np.squeeze(fc_recon[:, :, i][triu_inds]))**2)
                     
-        if data_type == "timeseries":
+        beta = [beta[i].squeeze() for i in range(nq)]
+        recon = recon.squeeze()
+        recon_score = recon_score.squeeze()
+
+        if timeseries:
             if return_all:
                 return beta, recon, recon_score, fc_recon, fc_recon_score
             else:
@@ -495,64 +425,64 @@ class EigenSolver(Solver):
         else:
             return beta, recon, recon_score
 
-
-    def simulate_waves(self, ext_input=None, dt=0.1, nt=1000, tsteady=0, eig_method="orthogonal", 
-                       pde_method="fourier", seed=None, bold_out=False):
+    def simulate_waves(self, ext_input=None, dt=0.1, nt=1000, bold_out=False, 
+                       eig_method="orthogonal", pde_method="fourier", seed=None):
         """
         Simulate neural activity or BOLD signals on the surface mesh using the eigenmode 
-        decomposition.
+        decomposition. Consider discarding the first 50 time points to allow the system to reach a 
+        steady state. The simulation uses a Neural Field Theory wave model and optionally the
+        Balloon-Windkessel model for BOLD signal generation. 
 
         Parameters
         ----------
         ext_input : np.ndarray, optional
-            External input array of shape (n_points, n_timepoints). If None, random input is 
+            External input array of shape (n_verts, n_timepoints). If None, random input is 
             generated.
         dt : float, optional
             Time step for simulation in milliseconds. Default is 0.1.
         nt : int, optional
             Number of time points to simulate (excluding steady-state period). Default is 1000.
-        tsteady : float, optional
-            Duration of steady-state period (in milliseconds) before simulation starts. Default is 
-            0.
-        eig_method : str, optional
-            Method for eigen-decomposition. Either "orthogonal" or "matrix". Default is 
-            "orthogonal".
-        seed : int, optional
-            Random seed for generating external input. Default is None.
         bold_out : bool, optional
             If True, simulate BOLD signal using the balloon model. If False, simulate neural 
             activity. Default is False.
+        eig_method : str, optional
+            Method for eigen-decomposition, either "orthogonal" or "regress". Default is
+            "orthogonal".
+        pde_method : str, optional
+            Method for solving the wave PDE. Either "fourier" or "ode". Default is "fourier".
+        seed : int, optional
+            Random seed for generating external input. Default is None.
 
         Returns
         -------
         sim_activity : np.ndarray
-            Simulated neural or BOLD activity of shape (n_points, n_timepoints), starting after the 
+            Simulated neural or BOLD activity of shape (n_verts, n_timepoints), starting after the 
             steady-state period.
 
         Raises
         ------
         ValueError
-            If the shape of ext_input does not match (n_points, n_timepoints).
+            If the shape of ext_input does not match (n_verts, n_timepoints), or if either the
+            eigen-decomposition or PDE method is invalid.
         """
         # Ensure the eigenmodes are calculated
-        if not hasattr(self, 'evecs'):
-            self.solve(fix_mode1=True)
+        if not hasattr(self, 'emodes'):
+            self.solve()
 
         self.dt = dt
-        self.tmax = self.dt * nt + tsteady
-        self.t = np.arange(0, self.tmax + self.dt, self.dt)
-        tsteady_ind = np.abs(self.t - tsteady).argmin() # index of the steady state time point
+        self.t = np.linspace(0, dt * (nt - 1), nt)
 
         # Check if external input is provided, otherwise generate random input
         if ext_input is None:
-            ext_input = gen_random_input(self.surf.n_points, len(self.t), seed=seed)
+            ext_input = gen_random_input(self.n_verts, len(self.t), seed=seed)
         # Ensure the external input has the correct shape
-        if ext_input.shape != (self.surf.n_points, len(self.t)):
-            raise ValueError(f"External input shape {ext_input.shape} does not have the correct "
-                              "shape ({self.surf.n_points}, {len(self.t)}).")
+        if ext_input.shape != (self.n_verts, len(self.t)):
+            raise ValueError(f"External input shape is {ext_input.shape}, should be "
+                             f"({self.n_verts}, {len(self.t)}).")
 
         # Mode decomposition of external input
-        input_coeffs = self.decompose(ext_input, self.evecs, method=eig_method, mass=self.mass)
+        input_coeffs = self.decompose(ext_input, self.emodes, method=eig_method, mass=self.mass,
+                                      check_orthonorm=False)
 
         # Initialize simulated activity vector
         mode_coeffs = np.zeros((self.nmodes, input_coeffs.shape[1]))
@@ -578,49 +508,170 @@ class EigenSolver(Solver):
                     eval=eval
                 )
             else:
-                raise ValueError("Invalid PDE method; must be 'fourier' or 'ode'.")
-            
+                raise ValueError(f"Invalid PDE method '{pde_method}'; must be 'fourier' or 'ode'.")
+
             # If bold_out is True, calculate the BOLD signal using the balloon model
             if bold_out:
                 if pde_method == "fourier":
                     bold = model_balloon_fourier(mode_coeff=neural, dt=self.dt)
                 elif pde_method == "ode":
                     bold = model_balloon_ode(mode_coeff=neural, t=self.t)
-                else:
-                    raise ValueError("Invalid PDE method; must be 'fourier' or 'ode'.")
                 mode_coeffs[mode_ind, :] = bold
             else:
                 mode_coeffs[mode_ind, :] = neural
 
         # Combine the mode activities to get the total simulated activity
-        sim_activity = self.evecs @ mode_coeffs
+        sim_activity = self.emodes @ mode_coeffs
 
-        return sim_activity[:, tsteady_ind:]
+        return sim_activity
 
+def check_surf(surf):
+    """Validate surface type and load if a file name. Returns a trimesh.Trimesh object."""
+    if isinstance(surf, trimesh.Trimesh):
+        return surf
+    elif isinstance(surf, TriaMesh):
+        return trimesh.Trimesh(vertices=surf.v, faces=surf.t)
+    else:
+        try:
+            surf_str = str(surf)
+            if surf_str.endswith('.vtk'):
+                mesh = TriaMesh.read_vtk(surf_str)
+                return trimesh.Trimesh(vertices=mesh.v, faces=mesh.t)
+            else:
+                mesh = nib.load(surf_str).darrays
+                return trimesh.Trimesh(vertices=mesh[0].data, faces=mesh[1].data)
+        except Exception as e:
+            raise ValueError('Surface must be a path-like string or an instance of either '
+                             'trimesh.Trimesh or lapy.TriaMesh.') from e
 
-    # TODO:
-    def pangcellation():
-        pass
+def mask_surf(surf, medmask):
+    """Remove medial wall vertices from the surface mesh. Returns a trimesh.Trimesh object."""
+    try:
+        medmask = np.asarray(medmask, dtype=bool)
+    except Exception as e:
+        raise ValueError("`medmask` must be convertible to a boolean numpy array.") from e
+    if len(medmask) != surf.vertices.shape[0]:
+        raise ValueError(f"The number of elements in `medmask` ({len(medmask)}) must match "
+                         f"the number of vertices in the surface mesh ({surf.vertices.shape[0]}).")
+    
+    # Mask vertices
+    v_masked = surf.vertices[medmask]
+    # Map old vertex indices to new
+    idx_map = np.full(len(medmask), -1, dtype=int)
+    idx_map[medmask] = np.arange(np.sum(medmask))
+    # Keep only faces where all vertices are in mask
+    f_masked = surf.faces[np.all(medmask[surf.faces], axis=1)]
+    f_masked = idx_map[f_masked]
+    mesh = trimesh.Trimesh(vertices=v_masked, faces=f_masked, process=False)
 
-    # TODO:
-    def francis_phd():
-        pass
+    components = mesh.split(only_watertight=False)
+    if len(components) != 1:
+        raise ValueError(f'Masked mesh is not contiguous: {len(components)} connected components '
+                         'found. Try using a different medmask.')
+    
+    return mesh
 
+def check_hetero(hetero, r, gamma):
+    """
+    Check if the heterogeneity map values result in physiologically plausible wave speeds.
+    
+    Parameters
+    ----------
+    hetero : array_like
+        Heterogeneity map values.
+    r : float
+        Axonal length scale for wave propagation.
+    gamma : float
+        Damping parameter for wave propagation.
+    
+    Raises
+    ------
+    ValueError
+        If the computed wave speed exceeds 150 m/s, indicating non-physiological values.
+    """
+    max_speed = np.max(r * gamma * np.sqrt(hetero))
+    if max_speed > 150:
+        raise ValueError(f"Alpha value results in non-physiological wave speeds of {max_speed:.2f} "
+                         "m/s (> 150 m/s). Try using a smaller alpha value.")
 
-def standardise_modes(emodes):
+def scale_hetero(hetero=None, alpha=1.0, beta=1.0, scaling="sigmoid"):
+    """
+    Scales a heterogeneity map using specified normalization and scaling functions.
+    
+    Parameters
+    ----------
+    hetero : array-like, optional
+        The heterogeneity map to be scaled. If None, no operation is performed.
+    alpha : float, optional
+        Scaling parameter controlling the strength of the transformation. Default is 1.0.
+    scaling : str, optional
+        The scaling function to apply to the heterogeneity map, either "sigmoid" or "exponential".
+        Default is "sigmoid".
+    
+    Returns
+    -------
+    hetero : ndarray
+        The scaled heterogeneity map.
+
+    Raises
+    ------
+    ValueError
+        If the scaling parameter is not a supported function.
+    """
+    # Z-score the heterogeneity map
+    hetero = zscore(hetero)
+
+    # Scale the heterogeneity map
+    if scaling == "exponential":
+        hetero = np.exp(alpha * hetero)
+    elif scaling == "sigmoid":
+        hetero = (2 / (1 + np.exp(-alpha * hetero)))**beta
+    else:
+        raise ValueError(f"Invalid scaling '{scaling}'. Must be 'exponential' or 'sigmoid'.")
+
+    return hetero
+
+def check_orthonorm_modes(emodes, mass):
+    """
+    Check if eigenmodes are approximately mass-orthonormal. Raises a warning if not.
+
+    Parameters
+    ----------
+    emodes : array-like
+        The eigenmodes array of shape (n_verts, n_modes), where n_modes is the number of eigenmodes.
+    mass : array-like
+        The mass matrix of shape (n_verts, n_verts).
+
+    Notes
+    -----
+    Under discretization, the set of solutions for the generalized eigenvalue problem is expected to
+    be mass-orthogonal (mode_i^T * mass matrix * mode_j = 0 for i ≠ j), rather than orthogonal with
+    respect to the standard inner (dot) product (mode_i^T * mode_j = 0 for i ≠ j). Eigenmodes are also 
+    expected to be mass-normal (mode_i^T * mass matrix * mode_i = 1). It follows that the first mode
+    is expected to be a specific constant, but precision error during computation can introduce
+    spurious spatial heterogeneity. Since many eigenmode analyses rely on mass-orthonormality (e.g.,
+    decomposition, wave simulation), this function serves to ensure the validity of any calculated
+    or provided eigenmodes.
+    """
+    prod = emodes.T @ mass @ emodes
+    if not np.allclose(prod, np.eye(prod.shape[0]), atol=1e-3):
+        warnings.warn('Eigenmodes are not mass-orthonormal.')
+
+def standardize_modes(emodes):
     """
     Perform standardisation by flipping the modes such that the first element of each eigenmode is 
     positive. This is helpful when visualising eigenmodes.
 
     Parameters
     ----------
-    emodes : numpy.ndarray
-        The input array containing the modes.
+    emodes : array-like
+        The eigenmodes array of shape (n_verts, n_modes), where n_modes is the number of eigenmodes.
 
     Returns
     -------
     numpy.ndarray
-        The standardized eigenmodes with the first element of each mode set to be positive.
+        The standardized eigenmodes array of shape (n_verts, n_modes), with the first element of
+        each mode set to be positive.
     """
     # Find the sign of the first non-zero element in each column
     signs = np.sign(emodes[np.argmax(emodes != 0, axis=0), np.arange(emodes.shape[1])])
@@ -630,20 +681,18 @@ def standardise_modes(emodes):
     
     return standardized_modes
 
-
 @memory.cache
-def gen_random_input(n_points, n_timepoints, seed=None):
+def gen_random_input(n_verts, n_timepoints, seed=None):
     """Generates external input with caching to avoid redundant recomputation."""
     if seed is not None:
         np.random.seed(seed)
-    return np.random.randn(n_points, n_timepoints)
-
+    return np.random.randn(n_verts, n_timepoints)
 
 def model_wave_fourier(mode_coeff, dt, r, gamma, eval):
     """
     Simulates the time evolution of a wave model based on one mode using a frequency-domain 
-    approach. This method applies a Fourier transform to the input mode coefficients, computes 
-    the system's frequency response, and then applies an inverse Fourier transform to obtain the
+    approach. This method applies a Fourier transform to the input mode coefficients, computes the
+    system's frequency response, and then applies an inverse Fourier transform to obtain the
     time-domain response of the mode.
 
     Parameters
@@ -679,9 +728,8 @@ def model_wave_fourier(mode_coeff, dt, r, gamma, eval):
       3. Apply the frequency response (transfer function)
       4. Use fft to return to the time domain (with appropriate shifts)
     """
-
     nt = len(mode_coeff) - 1
-    t_full = np.arange(-nt * dt, nt * dt + dt, dt)  # Symmetric time vector
+    t_full = np.linspace(-nt * dt, nt * dt, 2 * nt + 1)  # Symmetric time vector
     nt_full = len(t_full)
 
     # Pad input with zeros on negative side to ensure causality (system is only driven for t >= 0)
@@ -706,7 +754,6 @@ def model_wave_fourier(mode_coeff, dt, r, gamma, eval):
 
     # Return only the non-negative time part (t >= 0)
     return out_full[nt:]
-
 
 def solve_wave_ode(mode_coeff, t, gamma, r, eval):
     """
@@ -737,9 +784,8 @@ def solve_wave_ode(mode_coeff, t, gamma, r, eval):
     
     Rearranging gives us the first-order system
         dx1/dt = x2
-        dx2/dt = -2 * gamma * x2 - gamma^2 * (1 + r**2 * lambdaj) * x1 + gamma**2 * qval
+        dx2/dt = -2 * gamma * x2 - gamma^2 * (1 + r^2 * lambdaj) * x1 + gamma^2 * qval
     """
-
     eval = float(eval)  # Ensure eval is a float
 
     def q_interp_safe(t_):
@@ -757,7 +803,7 @@ def solve_wave_ode(mode_coeff, t, gamma, r, eval):
 
         return [dx1dt, dx2dt]
 
-    y0 = [float(mode_coeff), 0.0]
+    y0 = [0.0, 0.0]
 
     sol = solve_ivp(
         wave_rhs,
@@ -773,9 +819,9 @@ def solve_wave_ode(mode_coeff, t, gamma, r, eval):
 
 def model_balloon_fourier(mode_coeff, dt):       
     """
-    Simulates the hemodynamic response of one mode using the balloon model in the frequency 
-    domain. This method applies a frequency-domain implementation of the balloon model to a 
-    given set of mode coefficients, returning the modeled hemodynamic response over time.
+    Simulates the hemodynamic response of one mode using the balloon model in the frequency domain. 
+    This method applies a frequency-domain implementation of the balloon model to a given set of 
+    mode coefficients, returning the modeled hemodynamic response over time.
 
     Parameters
     ----------
@@ -804,7 +850,6 @@ def model_balloon_fourier(mode_coeff, dt):
       3. Apply the frequency response (transfer function)
       4. Use fft to return to the time domain (with appropriate shifts)
     """
-
     # Default independent model parameters
     kappa = 0.65   # signal decay rate [s^-1]
     gamma = 0.41   # rate of elimination [s^-1]
