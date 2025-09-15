@@ -1,12 +1,11 @@
 [project]
 name = "nsbtools"
 version = "0.1.0"
-description = "Neuroimaging tools developed by the Neural Systems and Behavious lab"
+description = "Neuroimaging tools developed by the Neural Systems and Behaviour lab"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.9, <3.13"
 dependencies = [
     "brainspace>=0.1.20",
-    "dotenv>=0.9.9",
     "joblib>=1.4.2",
     "lapy>=1.1.0",
     "matplotlib>=3.7.5",
@@ -14,4 +13,9 @@ dependencies = [
     "numpy>=1.24.4",
     "scipy>=1.10.1",
     "surfplot>=0.2.0",
+    "trimesh>=4.8.1",
+    "networkx>=3.2.1",
 ]
+
+[tool.setuptools.package-data]
+"nsbtools.data" = ["*"]
