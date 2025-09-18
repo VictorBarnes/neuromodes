@@ -46,8 +46,8 @@ def plot_brain(
         - "individual" to compute limits separately for each brain map.
         By default, color range is determined individually per map.
     center : float, optional
-        Center value for colormap scaling. If provided, color range will be symmetric around center for each map,
-        unless color_range is a tuple, in which case center is ignored.
+        Center value for colormap scaling. If provided, color range will be symmetric around center.
+        Note that `center` is ignored if `color_range` is a tuple.
     cmap : matplotlib colormap name or object, optional
         Colormap to use for the data, by default "viridis".
     cbar : bool, optional

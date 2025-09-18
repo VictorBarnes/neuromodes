@@ -25,6 +25,14 @@ Installation
   cd nsbtools
   pip install .
 
+Tests can be run with ``pytest``:
+
+::
+
+  cd nsbtools
+  pip install pytest
+  pytest tests
+
 Citing
 ------
 If you use the ``eigen`` module in your work, please cite the following paper:
