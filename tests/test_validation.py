@@ -4,8 +4,6 @@ from nsbtools.validation import (check_normalized_vectors,
                                  check_orthogonal_vectors,
                                  check_orthonormal_matrix)
 
-# TODO: maybe tests should be combined across functions for the same case?
-
 def test_check_orthogonal_vectors_typical():
     """Tests check_orthogonal_vectors() with typical cases.
     """

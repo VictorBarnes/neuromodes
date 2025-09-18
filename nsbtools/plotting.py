@@ -5,10 +5,26 @@ import matplotlib.pyplot as plt
 from scipy.ndimage import zoom
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from surfplot import Plot
+from typing import Optional, List, Union, Tuple, Dict, Any
+import warnings
 
-def plot_brain(surf, data, layout="row", views=["lateral", "medial"], color_range="individual", 
-               cmap="viridis", cbar=False, cbar_label=None, cbar_kws=None, labels=None, 
-               label_kws=None, outline=False, zoom=1.25, ax=None):
+def plot_brain(
+    surf: str,
+    data: Union[np.ndarray, List[float], List[List[float]]],
+    layout: str = "row",
+    views: List[str] = ["lateral", "medial"],
+    color_range: Union[Tuple[float, float], str] = "individual",
+    center: Optional[float] = None,
+    cmap: Union[str, mpl.colors.Colormap] = "viridis",
+    cbar: bool = False,
+    cbar_label: Optional[str] = None,
+    cbar_kws: Optional[Dict[str, Any]] = None,
+    labels: Optional[List[str]] = None,
+    label_kws: Optional[Dict[str, Any]] = None,
+    outline: bool = False,
+    zoom: float = 1.25,
+    ax: Optional[Union[plt.Axes, List[plt.Axes]]] = None
+) -> Optional[plt.Figure]:
     """
     Plot brain surface data on a given surface mesh.
 
@@ -17,7 +33,8 @@ def plot_brain(surf, data, layout="row", views=["lateral", "medial"], color_rang
     surf : str
         Path to the surface file.
     data : array-like
-        Data to be plotted on the surface. Can be 1D or 2D.
+        Data to be plotted on the surface. Can be 1D or 2D with shape (n_verts, n_maps). Note that 
+        NaNs are not colored, but zeros are.
     layout : str, optional
         Layout of the subplots, either "row" or "col", by default "row".
     views : list of str, optional
@@ -26,9 +43,11 @@ def plot_brain(surf, data, layout="row", views=["lateral", "medial"], color_rang
         Defines the color limits for the colormap. Can be:
         - A tuple (vmin, vmax) to apply the same color scale across all maps.
         - "group" to compute global (min, max) across all data columns and apply uniformly.
-        - "individual" (or None) to compute limits separately for each brain map.
-        - "individual_centered" to compute limits centered around zero for each brain map.
+        - "individual" to compute limits separately for each brain map.
         By default, color range is determined individually per map.
+    center : float, optional
+        Center value for colormap scaling. If provided, color range will be symmetric around center for each map,
+        unless color_range is a tuple, in which case center is ignored.
     cmap : matplotlib colormap name or object, optional
         Colormap to use for the data, by default "viridis".
     cbar : bool, optional
@@ -84,21 +103,35 @@ def plot_brain(surf, data, layout="row", views=["lateral", "medial"], color_rang
             axs = [ax]
     
     # Set the color range
-    if isinstance(color_range, str) and color_range == "group":
-        color_range = (np.nanmin(data), np.nanmax(data))
-    elif isinstance(color_range, str) and color_range == "individual":
-        color_range = None
+    if isinstance(color_range, tuple):
+        crange = color_range
+        if center is not None:
+            warnings.warn("`center` is ignored when `color_range` is a tuple.", UserWarning)
+    if color_range == "group":
+        vmax = np.nanmax(data)
+        vmin = np.nanmin(data)
+        if center is not None:
+            vrange = max(abs(vmax - center), abs(center - vmin))
+            crange = (center - vrange, center + vrange)
+        else:
+            crange = (vmax, vmin)
+    else:
+        crange = None
 
     # To plot multiple brain maps, save each figure to a temporary file then load it into the axes
     with tempfile.TemporaryDirectory() as temp_dir:
         for i, ax in enumerate(axs):
-            if isinstance(color_range, str) and color_range == "individual_centered":
-                max_abs = np.nanmax(np.abs(data[:, i]))
-                color_range = (-max_abs, max_abs)
 
+            # Set color range for centered "individual"
+            if color_range == "individual" and center is not None:
+                vmax = np.nanmax(data[:, i])
+                vmin = np.nanmin(data[:, i])
+                vrange = max(abs(vmax - center), abs(center - vmin))
+                crange = (center - vrange, center + vrange)
+                    
             # Use surfplot to plot the data
             p = Plot(surf_lh=surf, views=views, size=(500, 250), zoom=zoom)
-            p.add_layer(data=data[:, i], cmap=cmap, cbar=cbar, color_range=color_range,
+            p.add_layer(data=data[:, i], cmap=cmap, cbar=cbar, color_range=crange,
                         cbar_label=cbar_label, zero_transparent=False)
             if outline:
                 p.add_layer(data[:, i], as_outline=True, cmap="gray", cbar=False,
@@ -125,8 +158,17 @@ def plot_brain(surf, data, layout="row", views=["lateral", "medial"], color_rang
     
     return fig if ax is None else None
 
-def plot_heatmap(data, ax=None, center=None, cmap="viridis", cbar=False, square=True,
-                 downsample=1, annot=False, fmt=".1f"):
+def plot_heatmap(
+    data: Union[np.ndarray, List[List[float]]],
+    ax: Optional[plt.Axes] = None,
+    center: Optional[float] = None,
+    cmap: Union[str, mpl.colors.Colormap] = "viridis",
+    cbar: bool = False,
+    square: bool = True,
+    downsample: float = 1,
+    annot: bool = False,
+    fmt: str = ".1f"
+) -> plt.Axes:
     """
     Plot a heatmap of the data with optional colorbar and annotations.
 
@@ -163,6 +205,8 @@ def plot_heatmap(data, ax=None, center=None, cmap="viridis", cbar=False, square=
 
     if 0 < downsample < 1:
         data = zoom(data, zoom=downsample, order=1) # bilinear interpolation
+    elif downsample != 1:
+        raise ValueError("`downsample` must be in the range (0, 1].")
 
     vmin = np.min(data)
     vmax = np.max(data)
@@ -170,10 +214,10 @@ def plot_heatmap(data, ax=None, center=None, cmap="viridis", cbar=False, square=
     cmap = plt.get_cmap(cmap)
     if center is not None:
         # Compute a symmetric range around center
-        vrange = max(vmax - center, center - vmin)
+        vrange = max(abs(vmax - center), abs(center - vmin))
         norm = mpl.colors.Normalize(vmin=center - vrange, vmax=center + vrange)
 
-        # Remap the colormap to ensure center=0 is white
+        # Remap colormap to the new range
         cmin, cmax = norm([vmin, vmax])
         cc = np.linspace(cmin, cmax, 256)
         cmap = mpl.colors.ListedColormap(cmap(cc))

@@ -9,6 +9,8 @@ import trimesh
 from lapy import Solver, TriaMesh
 from scipy.stats import zscore
 from scipy.integrate import solve_ivp
+import scipy.sparse
+from typing import Optional, Union, Any, List
 
 # Set up joblib memory caching
 CACHE_DIR = os.getenv("CACHE_DIR")
@@ -30,9 +32,22 @@ class EigenSolver(Solver):
     Balloon-Windkessel model.
     """
 
-    def __init__(self, surf, medmask=None, hetero=None, n_modes=100, alpha=1.0, beta=1.0, r=28.9,
-                 gamma=0.116, scaling="sigmoid", lump=False, smoothit=10, normalize=False,
-                 verbose=False):
+    def __init__(
+        self,
+        surf: Union[str, Path, trimesh.Trimesh, TriaMesh],
+        medmask: Optional[Union[np.ndarray, list]] = None,
+        hetero: Optional[np.ndarray] = None,
+        n_modes: int = 100,
+        alpha: float = 1.0,
+        beta: float = 1.0,
+        r: float = 28.9,
+        gamma: float = 0.116,
+        scaling: str = "sigmoid",
+        lump: bool = False,
+        smoothit: int = 10,
+        normalize: bool = False,
+        verbose: bool = False
+    ):
         """
         Initialize the EigenSolver class.
 
@@ -96,29 +111,29 @@ class EigenSolver(Solver):
         self.laplace_beltrami(lump=lump, smoothit=smoothit)
 
     @property
-    def r(self):
+    def r(self) -> float:
         return self._r
 
     @r.setter
-    def r(self, r):
+    def r(self, r: float) -> None:
         check_hetero(hetero=self.hetero, r=r, gamma=self.gamma)
         self._r = r
 
     @property
-    def gamma(self):
+    def gamma(self) -> float:
         return self._gamma
 
     @gamma.setter
-    def gamma(self, gamma):
+    def gamma(self, gamma: float) -> None:
         check_hetero(hetero=self.hetero, r=self.r, gamma=gamma)
         self._gamma = gamma
 
     @property
-    def hetero(self):
+    def hetero(self) -> np.ndarray:
         return self._hetero
 
     @hetero.setter
-    def hetero(self, hetero):
+    def hetero(self, hetero: Optional[np.ndarray]) -> None:
         # Handle None case by setting to ones
         if hetero is None:
             if self.alpha != 0 or self.beta != 0:
@@ -153,7 +168,7 @@ class EigenSolver(Solver):
             # Assign to private attribute
             self._hetero = hetero
 
-    def laplace_beltrami(self, lump=False, smoothit=10):   
+    def laplace_beltrami(self, lump: bool = False, smoothit: int = 10) -> None:   
         """
         This method computes the Laplace-Beltrami operator using finite element methods on a
         triangular mesh, optionally incorporating spatial heterogeneity and smoothing of the
@@ -179,7 +194,7 @@ class EigenSolver(Solver):
         hetero_mat = np.tile(hetero_tri[:, np.newaxis], (1, 2))
         self.stiffness, self.mass = self._fem_tria_aniso(self.geometry, u1, u2, hetero_mat, lump)
 
-    def solve(self, standardize=True, fix_mode1=True):
+    def solve(self, standardize: bool = True, fix_mode1: bool = True) -> None:
         """
         Solve the generalized eigenvalue problem for the Laplace-Beltrami operator and compute 
         eigenvalues and eigenmodes.
@@ -218,8 +233,14 @@ class EigenSolver(Solver):
         self.emodes = emodes
     
     @staticmethod
-    def decompose(data, emodes, method='orthogonal', mass=None, return_norm_power=False,
-                  check_orthonorm=True):
+    def decompose(
+        data: Union[np.ndarray, List[List[float]]],
+        emodes: Union[np.ndarray, List[List[float]]],
+        method: str = 'orthogonal',
+        mass: Optional[Union[np.ndarray, List[List[float]], scipy.sparse._csc.csc_matrix]] = None,
+        return_norm_power: bool = False,
+        check_orthonorm: bool = True
+    ) -> np.ndarray:
         """
         Calculate the eigen-decomposition of the given data using the specified method.
 
@@ -260,6 +281,13 @@ class EigenSolver(Solver):
             if an invalid method is specified, or if the `mass` matrix is not provided when
             required.
         """
+        if isinstance(data, list):
+            data = np.array(data)
+        if isinstance(emodes, list):
+            emodes = np.array(emodes)
+        if isinstance(mass, list):
+            mass = np.array(mass)
+
         if np.shape(data)[0] != np.shape(emodes)[0]:
             raise ValueError(f"The number of elements in `data` ({np.shape(data)[0]}) must match "
                              f"the number of vertices in `emodes` ({np.shape(emodes)[0]}).")
@@ -289,8 +317,17 @@ class EigenSolver(Solver):
             return beta
 
     @staticmethod
-    def reconstruct(data, emodes, method='orthogonal', mass=None, modesq=None, timeseries=False,
-                    metric="pearsonr", return_all=False, check_orthonorm=True):
+    def reconstruct(
+        data: Union[np.ndarray, List[List[float]]],
+        emodes: Union[np.ndarray, List[List[float]]],
+        method: str = 'orthogonal',
+        mass: Optional[Union[np.ndarray, List[List[float]], scipy.sparse._csc.csc_matrix]] = None,
+        modesq: Optional[Union[np.ndarray, list]] = None,
+        timeseries: bool = False,
+        metric: str = "pearsonr",
+        return_all: bool = False,
+        check_orthonorm: bool = True
+    ) -> Any:
         """
         Calculate the eigen-reconstruction of the given data using the provided eigenmodes.
 
@@ -362,9 +399,12 @@ class EigenSolver(Solver):
         # If data is timeseries, calculate the FC of the original data and initialize output arrays
         if timeseries:
             triu_inds = np.triu_indices(n_verts, k=1)
-            fc_orig = np.corrcoef(data)[triu_inds]
             fc_recon = np.empty((n_verts, n_verts, nq))
             fc_recon_score = np.empty((nq,))
+            fc_orig = np.corrcoef(data)[triu_inds]
+            if metric == "pearsonr":
+                # Clip FC at (-1, 1), then Fisher r-to-z transform
+                fc_orig_z = np.arctanh(np.clip(fc_orig, -1+1e-6, 1-1e-6))
 
         # Decompose the data to get beta coefficients
         if method == 'orthogonal':
@@ -405,13 +445,18 @@ class EigenSolver(Solver):
                 # Calculate FC from the reconstruction
                 fc_recon[:, :, i] = 0 if modesq[i] == 1 else np.corrcoef(recon[:, i, :])
 
+                # Clip FC at (-1, 1), then Fisher r-to-z transform
+                fc_recon_z = np.arctanh(np.clip(fc_recon[:, :, i][triu_inds], -1+1e-6, 1-1e-6))
+
                 # Score reconstruction of FC
                 if metric == "pearsonr":
                     fc_recon_score[i] = 0 if modesq[i] == 1 else np.corrcoef(
-                        np.arctanh(fc_orig), np.arctanh(fc_recon[:, :, i][triu_inds])
+                        fc_orig_z, fc_recon_z  
                     )[0, 1]
                 elif metric == "mse":
-                    fc_recon_score[i] = np.mean((fc_orig - np.squeeze(fc_recon[:, :, i][triu_inds]))**2)
+                    fc_recon_score[i] = np.mean(
+                        (fc_orig - np.squeeze(fc_recon[:, :, i][triu_inds]))**2
+                        )
                     
         beta = [beta[i].squeeze() for i in range(nq)]
         recon = recon.squeeze()
@@ -425,8 +470,16 @@ class EigenSolver(Solver):
         else:
             return beta, recon, recon_score
 
-    def simulate_waves(self, ext_input=None, dt=0.1, nt=1000, bold_out=False, 
-                       eig_method="orthogonal", pde_method="fourier", seed=None):
+    def simulate_waves(
+        self,
+        ext_input: Optional[Union[np.ndarray, List[List[float]]]] = None,
+        dt: float = 0.1,
+        nt: int = 1000,
+        bold_out: bool = False,
+        eig_method: str = "orthogonal",
+        pde_method: str = "fourier",
+        seed: Optional[int] = None
+    ) -> np.ndarray:
         """
         Simulate neural activity or BOLD signals on the surface mesh using the eigenmode 
         decomposition. Consider discarding the first 50 time points to allow the system to reach a 
@@ -465,11 +518,13 @@ class EigenSolver(Solver):
             If the shape of ext_input does not match (n_verts, n_timepoints), or if either the
             eigen-decomposition or PDE method is invalid.
         """
+        if isinstance(ext_input, list):
+            ext_input = np.array(ext_input)
+
         # Ensure the eigenmodes are calculated
         if not hasattr(self, 'emodes'):
             self.solve()
-
-        self.dt = dt
+        
         self.t = np.linspace(0, dt * (nt - 1), nt)
 
         # Check if external input is provided, otherwise generate random input
@@ -494,7 +549,7 @@ class EigenSolver(Solver):
             if pde_method == "fourier":
                 neural = model_wave_fourier(
                     mode_coeff=input_coeffs_i, 
-                    dt=self.dt, 
+                    dt=dt, 
                     r=self.r, 
                     gamma=self.gamma, 
                     eval=eval
@@ -513,7 +568,7 @@ class EigenSolver(Solver):
             # If bold_out is True, calculate the BOLD signal using the balloon model
             if bold_out:
                 if pde_method == "fourier":
-                    bold = model_balloon_fourier(mode_coeff=neural, dt=self.dt)
+                    bold = model_balloon_fourier(mode_coeff=neural, dt=dt)
                 elif pde_method == "ode":
                     bold = model_balloon_ode(mode_coeff=neural, t=self.t)
                 mode_coeffs[mode_ind, :] = bold
@@ -525,7 +580,7 @@ class EigenSolver(Solver):
 
         return sim_activity
 
-def check_surf(surf):
+def check_surf(surf: Union[str, Path, trimesh.Trimesh, TriaMesh]) -> trimesh.Trimesh:
     """Validate surface type and load if a file name. Returns a trimesh.Trimesh object."""
     if isinstance(surf, trimesh.Trimesh):
         return surf
@@ -544,7 +599,7 @@ def check_surf(surf):
             raise ValueError('Surface must be a path-like string or an instance of either '
                              'trimesh.Trimesh or lapy.TriaMesh.') from e
 
-def mask_surf(surf, medmask):
+def mask_surf(surf: trimesh.Trimesh, medmask: Union[np.ndarray, list]) -> trimesh.Trimesh:
     """Remove medial wall vertices from the surface mesh. Returns a trimesh.Trimesh object."""
     try:
         medmask = np.asarray(medmask, dtype=bool)
@@ -571,7 +626,7 @@ def mask_surf(surf, medmask):
     
     return mesh
 
-def check_hetero(hetero, r, gamma):
+def check_hetero(hetero: np.ndarray, r: float, gamma: float) -> None:
     """
     Check if the heterogeneity map values result in physiologically plausible wave speeds.
     
@@ -594,7 +649,12 @@ def check_hetero(hetero, r, gamma):
         raise ValueError(f"Alpha value results in non-physiological wave speeds of {max_speed:.2f} "
                          "m/s (> 150 m/s). Try using a smaller alpha value.")
 
-def scale_hetero(hetero=None, alpha=1.0, beta=1.0, scaling="sigmoid"):
+def scale_hetero(
+    hetero: Optional[np.ndarray] = None,
+    alpha: float = 1.0,
+    beta: float = 1.0,
+    scaling: str = "sigmoid"
+) -> np.ndarray:
     """
     Scales a heterogeneity map using specified normalization and scaling functions.
     
@@ -631,7 +691,10 @@ def scale_hetero(hetero=None, alpha=1.0, beta=1.0, scaling="sigmoid"):
 
     return hetero
 
-def check_orthonorm_modes(emodes, mass):
+def check_orthonorm_modes(
+        emodes: Union[np.ndarray, List[List[float]]],
+        mass: Union[np.ndarray, List[List[float]], scipy.sparse._csc.csc_matrix]
+) -> None:
     """
     Check if eigenmodes are approximately mass-orthonormal. Raises a warning if not.
 
@@ -653,11 +716,16 @@ def check_orthonorm_modes(emodes, mass):
     decomposition, wave simulation), this function serves to ensure the validity of any calculated
     or provided eigenmodes.
     """
+    if isinstance(emodes, list):
+        emodes = np.array(emodes)
+    if isinstance(mass, list):
+        mass = np.array(mass)
+
     prod = emodes.T @ mass @ emodes
     if not np.allclose(prod, np.eye(prod.shape[0]), atol=1e-3):
         warnings.warn('Eigenmodes are not mass-orthonormal.')
 
-def standardize_modes(emodes):
+def standardize_modes(emodes: Union[np.ndarray, List[List[float]]]) -> np.ndarray:
     """
     Perform standardisation by flipping the modes such that the first element of each eigenmode is 
     positive. This is helpful when visualising eigenmodes.
@@ -673,6 +741,9 @@ def standardize_modes(emodes):
         The standardized eigenmodes array of shape (n_verts, n_modes), with the first element of
         each mode set to be positive.
     """
+    if isinstance(emodes, list):
+        emodes = np.array(emodes)
+
     # Find the sign of the first non-zero element in each column
     signs = np.sign(emodes[np.argmax(emodes != 0, axis=0), np.arange(emodes.shape[1])])
     
@@ -682,13 +753,23 @@ def standardize_modes(emodes):
     return standardized_modes
 
 @memory.cache
-def gen_random_input(n_verts, n_timepoints, seed=None):
+def gen_random_input(
+    n_verts: int,
+    n_timepoints: int,
+    seed: Optional[int] = None
+) -> np.ndarray:
     """Generates external input with caching to avoid redundant recomputation."""
     if seed is not None:
         np.random.seed(seed)
     return np.random.randn(n_verts, n_timepoints)
 
-def model_wave_fourier(mode_coeff, dt, r, gamma, eval):
+def model_wave_fourier(
+    mode_coeff: np.ndarray,
+    dt: float,
+    r: float,
+    gamma: float,
+    eval: float
+) -> np.ndarray:
     """
     Simulates the time evolution of a wave model based on one mode using a frequency-domain 
     approach. This method applies a Fourier transform to the input mode coefficients, computes the
@@ -755,7 +836,13 @@ def model_wave_fourier(mode_coeff, dt, r, gamma, eval):
     # Return only the non-negative time part (t >= 0)
     return out_full[nt:]
 
-def solve_wave_ode(mode_coeff, t, gamma, r, eval):
+def solve_wave_ode(
+    mode_coeff: np.ndarray,
+    t: np.ndarray,
+    gamma: float,
+    r: float,
+    eval: float
+) -> np.ndarray:
     """
     Solves the damped wave ODE for one eigenmode j.
 
@@ -817,7 +904,10 @@ def solve_wave_ode(mode_coeff, t, gamma, r, eval):
 
     return sol.y[0]  # Return phi_j(t)
 
-def model_balloon_fourier(mode_coeff, dt):       
+def model_balloon_fourier(
+    mode_coeff: np.ndarray,
+    dt: float
+) -> np.ndarray:       
     """
     Simulates the hemodynamic response of one mode using the balloon model in the frequency domain. 
     This method applies a frequency-domain implementation of the balloon model to a given set of 
@@ -902,7 +992,10 @@ def model_balloon_fourier(mode_coeff, dt):
     # Return only the non-negative time part (t >= 0)
     return out_full[nt:]
 
-def model_balloon_ode(mode_coeff, t):
+def model_balloon_ode(
+    mode_coeff: np.ndarray,
+    t: np.ndarray
+) -> np.ndarray:
     """
     Simulates the hemodynamic response of one mode using the balloon model in the time domain (ODE 
     approach). This function numerically integrates the balloon model ODEs for a given input mode 
