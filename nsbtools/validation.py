@@ -1,6 +1,10 @@
 import numpy as np
+from typing import Union, List
 
-def check_orthonormal_matrix(matrix, tol=1e-6):
+def check_orthonormal_matrix(
+    matrix: Union[np.ndarray, List[List[float]]],
+    tol: float = 1e-6
+) -> bool:
     """
     Check if a matrix is orthonormal, i.e., its rows and columns are both orthogonal and normalized.
 
@@ -28,7 +32,11 @@ def check_orthonormal_matrix(matrix, tol=1e-6):
            check_orthogonal_vectors(matrix, colvec=False, tol=tol) and
            check_normalized_vectors(matrix, colvec=False, tol=tol))
 
-def check_orthogonal_vectors(matrix, colvec=True, tol=1e-6):
+def check_orthogonal_vectors(
+    matrix: Union[np.ndarray, List[List[float]]],
+    colvec: bool = True,
+    tol: float = 1e-6
+) -> bool:
     """
     Check if a set of real-valued vectors in a matrix (rows or columns) are orthogonal.
 
@@ -74,7 +82,11 @@ def check_orthogonal_vectors(matrix, colvec=True, tol=1e-6):
 
     return np.allclose(off_diag, 0, atol=tol)
 
-def check_normalized_vectors(matrix, colvec=True, tol=1e-6):
+def check_normalized_vectors(
+    matrix: Union[np.ndarray, List[List[float]]],
+    colvec: bool = True,
+    tol: float = 1e-6
+) -> bool:
     """
     Check if a set of real-valued vectors in a matrix (rows or columns) have unit magnitude.
 

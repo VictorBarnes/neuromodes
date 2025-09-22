@@ -2,8 +2,6 @@ import numpy as np
 import pytest
 from nsbtools.utils import unmask, unparcellate
 
-# TODO: add more testing for bad inputs?
-
 def test_unmask_1d():
     data = np.array([1, 2, 3])
     mask = np.array([False, True, False, True, True])
@@ -51,5 +49,26 @@ def test_unparcellate_fill():
 def test_unparcellate_overflow():
     data = np.array([5, 10, 15])
     parc = np.array([2, 0, 1, 1, 3, 4])
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"Data length \(3\) does not match the number of non-zero "
+                                         r"parcels \(4\)."):
+        unparcellate(data, parc)
+
+def test_unparcellate_2d():
+    data = np.array([[1, 2], [3, 4]])
+    parc = np.array([2, 0, 1, 1])
+    expected = np.array([[3, 4], [np.nan, np.nan], [1, 2], [1, 2]])
+    result = unparcellate(data, parc)
+    np.testing.assert_array_equal(np.isnan(result), np.isnan(expected))
+    np.testing.assert_array_equal(result[~np.isnan(expected)], expected[~np.isnan(expected)])
+
+def test_unparcellate_3d():
+    data = np.array([[[1]], [[2]]])
+    parc = np.array([1, 2, 0])
+    with pytest.raises(ValueError, match="Data must be 1D or 2D."):
+        unparcellate(data, parc)
+
+def test_unparcellate_invalid_parc():
+    data = np.array([1, 2])
+    parc = np.array([[1, 2], [0, 1]])
+    with pytest.raises(ValueError, match="Parcellation map must be 1D."):
         unparcellate(data, parc)

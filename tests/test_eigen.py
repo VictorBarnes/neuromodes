@@ -9,7 +9,8 @@ data_dir = importlib.resources.files('nsbtools.data')
 @pytest.fixture
 def surf_medmask_hetero():
     surfpath = data_dir / 'sp-human_tpl-fsLR_den-4k_hemi-L_midthickness.surf.gii'
-    medmask = np.load(data_dir / 'sp-human_space-fsLR_den-4k_hemi-L_desc-medmask.npy').astype(bool)
+    medmask = nib.load(
+        data_dir / 'sp-human_tpl-fsLR_den-4k_hemi-L_medmask.label.gii').darrays[0].data.astype(bool)
     np.random.seed(0)
     hetero = np.random.normal(loc=0, scale=0.5, size=len(medmask))
     return surfpath, medmask, hetero
@@ -82,7 +83,8 @@ def init_solver(surf_medmask_hetero):
 def test_symmetric_mass_matrix(init_solver):
     solver = init_solver
     mass = solver.mass
-    assert np.allclose(mass, mass.T, atol=1e-6), 'Mass matrix is not symmetric.'
+    diff = mass - mass.T
+    assert diff.nnz == 0, 'Mass matrix is not symmetric.'
 
 def test_no_hetero(init_solver):
     solver = init_solver
@@ -94,8 +96,8 @@ def test_no_hetero(init_solver):
     evals = solver.evals    
 
     # Check that eigenmodes and eigenvalues 2-10 highly correlate with previously calculated set
-    prior_modes = np.load(data_dir / 'emodes_human-lh-fsLR-4k_midthickness.npy')
-    prior_evals = np.load(data_dir / 'evals_human-lh-fsLR-4k_midthickness.npy')
+    prior_modes = np.load(data_dir / 'sp-human_tpl-fsLR_den-4k_hemi-L_midthickness-emodes.npy')
+    prior_evals = np.load(data_dir / 'sp-human_tpl-fsLR_den-4k_hemi-L_midthickness-evals.npy')
 
     for i in range(1, 10):
         assert np.abs(np.corrcoef(emodes[:, i], prior_modes[:, i])[0, 1]) > 0.99, \
@@ -190,8 +192,8 @@ def test_decompose_return_norm_power(solve_modes):
     norm_power = solver.decompose(map, emodes, mass=solver.mass, return_norm_power=True)
 
     # Powers should be positive and add to 1
-    assert np.all(norm_power > 0)
-    assert np.isclose(np.sum(norm_power), 1, atol=1e-8)
+    assert np.all(norm_power > 0), 'Normalized powers contain negative values.'
+    assert np.isclose(np.sum(norm_power), 1, atol=1e-8), 'Normalized powers do not sum to 1.'
 
 def test_decompose_invalid_data_shape(solve_modes):
     solver, emodes = solve_modes
@@ -294,7 +296,7 @@ def test_reconstruct_mode_superposition_timeseries(gen_eigenmap):
 def test_reconstruct_real_map_32k():
     # Get modes of fsLR 32k midthickness (data is in 32k)
     surfpath = data_dir / 'sp-human_tpl-fsLR_den-32k_hemi-L_midthickness.surf.gii'
-    medmask = np.load(data_dir / 'sp-human_space-fsLR_den-32k_hemi-L_desc-medmask.npy').astype(bool)
+    medmask = nib.load(data_dir / 'sp-human_tpl-fsLR_den-32k_hemi-L_medmask.label.gii').darrays[0].data.astype(bool)
     np.random.seed(0)
     hetero = np.random.normal(loc=0, scale=0.5, size=len(medmask))
     solver = EigenSolver(surfpath, medmask=medmask, hetero=hetero, n_modes=10)
@@ -302,14 +304,17 @@ def test_reconstruct_real_map_32k():
     emodes = solver.emodes
 
     # Load FC gradient from Margulies 2016 PNAS
-    map = nib.load(data_dir / 'fcgradient1_lh-fsLR-32k.gii').darrays[0].data
+    map = nib.load(data_dir / 'sp-human_tpl-fsLR_den-32k_hemi-L_fcgradient1.gii').darrays[0].data
     map = map[medmask]
     _, _, recon_score = solver.reconstruct(map, emodes, mass=solver.mass)
 
     # Pearson's r should strictly increase from 0, but not reach 1
-    assert np.all(np.diff(recon_score) > 1e-6)
-    assert np.isclose(recon_score[0], 0, atol=1e-6)
-    assert not np.isclose(recon_score[-1], 1, atol=1e-6)
+    assert np.all(np.diff(recon_score) > 1e-6), \
+        r'Reconstruction score \(r\) does not strictly increase.'
+    assert np.isclose(recon_score[0], 0, atol=1e-6), \
+        r'Reconstruction score \(r\) is non-zero when using only the constant mode.'
+    assert not np.isclose(recon_score[-1], 1, atol=1e-6), \
+        r'Reconstruction score \(r\) is unexpectedly close to 1 for only 10 modes.'
 
 def test_reconstruct_invalid_map_shape(solve_modes):
     solver, emodes = solve_modes
@@ -345,16 +350,20 @@ def test_simulate_waves_impulse(solve_modes):
     ode_ts = solver.simulate_waves(ext_input=ext_input, nt=nt, dt=dt, pde_method='ode')
 
     # Check output shapes
-    assert fourier_ts.shape == (solver.n_verts, nt)
-    assert ode_ts.shape == (solver.n_verts, nt)
+    assert fourier_ts.shape == (solver.n_verts, nt), 'Fourier output shape is incorrect.'
+    assert ode_ts.shape == (solver.n_verts, nt), 'ODE output shape is incorrect.'
 
     # Check that activity is negligible before impulse
-    assert np.allclose(fourier_ts[:, :i_start], 0, atol=1e-4) # Allow for Fourier artefacts
-    assert np.allclose(ode_ts[:, :i_start], 0, atol=1e-10)
+    assert np.allclose(fourier_ts[:, :i_start], 0, atol=1e-4), \
+        'Fourier activity is not negligible before impulse.'
+    assert np.allclose(ode_ts[:, :i_start], 0, atol=1e-10), \
+        'ODE activity is not negligible before impulse.'
 
     # Check that activity returns to negligible by 200ms
-    assert np.allclose(fourier_ts[:, -1], 0, atol=1e-4) # Allow for Fourier artefacts
-    assert np.allclose(ode_ts[:, -1], 0, atol=1e-8)
+    assert np.allclose(fourier_ts[:, -1], 0, atol=1e-4), \
+        'Fourier activity is not negligible after 200ms.'
+    assert np.allclose(ode_ts[:, -1], 0, atol=1e-8), \
+        'ODE activity is not negligible after 200ms.'
 
 def test_simulate_waves_default_input(solve_modes):
     solver, _ = solve_modes
@@ -374,7 +383,11 @@ def test_simulate_waves_bold(solve_modes):
 
     nt = 10
     dt = 0.1
-    solver.simulate_waves(nt=nt, dt=dt, return_bold=True, seed=0)
+    bold_fourier = solver.simulate_waves(nt=nt, dt=dt, bold_out=True, seed=0)
+    bold_ode = solver.simulate_waves(nt=nt, dt=dt, bold_out=True, seed=0, pde_method='ode')
+
+    assert bold_fourier.shape == (solver.n_verts, nt), 'Fourier BOLD output shape is incorrect.'
+    assert bold_ode.shape == (solver.n_verts, nt), 'ODE BOLD output shape is incorrect.'
 
 def test_simulate_waves_solveless(init_solver):
     solver = init_solver
@@ -390,5 +403,5 @@ def test_simulate_waves_invalid_input_shape(solve_modes):
 def test_simulate_waves_invalid_pde_method(solve_modes):
     solver, _ = solve_modes
 
-    with pytest.raises(ValueError, match="Invalid PDE method 'cornifer'.*"):
+    with pytest.raises(ValueError, match="Invalid PDE method 'zote'.*"):
         solver.simulate_waves(pde_method='zote')

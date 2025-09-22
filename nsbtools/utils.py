@@ -1,13 +1,18 @@
 import numpy as np
+from typing import Union
 
-def unmask(data, medmask, val=np.nan):
+def unmask(
+    data: np.ndarray,
+    medmask: np.ndarray,
+    val: float = np.nan
+) -> np.ndarray:
     """
-    Unmasks data by inserting it into a full array with the same length as the medial mask.
+    Unmasks data by inserting it into a full array with the same length as the medial wall mask.
 
     Parameters
     ----------
     data : numpy.ndarray
-        The data to be unmasked (n_verts, n_data). Can be 1D or 2D.
+        The data to be unmasked. Can be 1D or 2D with shape (n_verts, n_maps).
     medmask : numpy.ndarray
         A boolean array where True indicates the positions of the data in the full array.
     val : float, optional
@@ -32,34 +37,45 @@ def unmask(data, medmask, val=np.nan):
 
     return map_reshaped
 
-def unparcellate(data, parc, val=np.nan):
+def unparcellate(
+    data: np.ndarray,
+    parc: Union[np.ndarray, list],
+    val: float = np.nan
+) -> np.ndarray:
     """
     Reconstructs a full array from parcellated data based on a parcellation map.
 
     Parameters
     ----------
-    data : array-like
-        The parcellated data, where each element corresponds to a parcel.
+    data : np.ndarray
+        The parcellated data, where each element corresponds to a parcel. Can be 1D or 2D with shape
+        (n_parcels, n_maps).
     parc : array-like
-        An array indicating the parcellation ID for each vertex. A value of 0
-        indicates that the vertex does not belong to any parcel.
-    val : scalar, optional
+        An array indicating the parcellation ID for each vertex. A value of 0 indicates that the 
+        vertex does not belong to any parcel.
+    val : float, optional
         The value to assign to vertices that do not belong to any parcel, by default np.nan.
 
     Returns
     -------
-    array-like
-        The reconstructed full array, where each vertex is assigned the value from
-        the corresponding parcel in `data`, or `val` if it does not belong to any parcel.
+    np.ndarray
+        The reconstructed full array, where each vertex is assigned the value from the corresponding
+        parcel in `data`, or `val` if it does not belong to any parcel.
     """
-
     unique_parcels = np.unique(parc)
     unique_parcels = unique_parcels[unique_parcels != 0]
-    if len(data) != len(unique_parcels):
-        raise ValueError("Data length must match the number of non-zero parcels.")
+    if data.shape[0] != len(unique_parcels):
+        raise ValueError(f"Data length ({data.shape[0]}) does not match the number of non-zero "
+                         f"parcels ({len(unique_parcels)}).")
+    if data.ndim > 2:
+        raise ValueError("Data must be 1D or 2D.")
+    if parc.ndim != 1:
+        raise ValueError("Parcellation map must be 1D.")
 
-    out = np.full(len(parc), val)
+    data_2d = data[:, np.newaxis] if data.ndim == 1 else data
+
+    out = np.full((len(parc), data_2d.shape[1]), val)
     for idx, parcel_id in enumerate(unique_parcels):
-        out[parc == parcel_id] = data[idx]
+        out[parc == parcel_id, :] = data_2d[idx, :]
 
-    return out
+    return out.squeeze()
