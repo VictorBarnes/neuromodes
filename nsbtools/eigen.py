@@ -59,7 +59,7 @@ class EigenSolver(Solver):
         medmask : numpy.ndarray, optional
             A boolean mask to exclude certain points (e.g., medial wall) from the surface mesh.
             Default is None.
-        hetero : numpy.ndarray, optional
+        hetero : array-like, optional
             A heterogeneity map to scale the Laplace-Beltrami operator. Default is None.
         n_modes : int, optional
             Number of eigenmodes to compute. Default is 100.
@@ -142,19 +142,24 @@ class EigenSolver(Solver):
                 self.beta = 0
             self._hetero = np.ones(self.n_verts)
         else:
-            # Ensure hetero is valid
-            if not isinstance(hetero, np.ndarray):
-                raise ValueError("`hetero` must be a numpy array or None.")
-            if np.isnan(hetero).any() or np.isinf(hetero).any():
-                raise ValueError("`hetero` must not contain NaNs or Infs.")
+            hetero = np.asarray(hetero)
+
+            # Ensure hetero has correct length
             n_expected = len(self.medmask) if self.medmask is not None else self.n_verts
             if len(hetero) != n_expected:
                 raise ValueError(f"The number of elements in `hetero` ({len(hetero)}) must match "
                                  f"the number of vertices in the surface mesh ({n_expected}).")
-            # If medmask is provided, apply it
+                         
+            # If medmask is provided, check only the masked portion for NaN/Inf
             if self.medmask is not None:
-                hetero = hetero[self.medmask]
-
+                if np.isnan(hetero[self.medmask]).any() or np.isinf(hetero[self.medmask]).any():
+                    raise ValueError("`hetero` must not contain NaNs or Infs.")
+                hetero = hetero[self.medmask]  # Then apply the mask
+            else:
+                # If no medmask, check the entire array
+                if np.isnan(hetero).any() or np.isinf(hetero).any():
+                    raise ValueError("`hetero` must not contain NaNs or Infs.")
+                
             # Scale the heterogeneity map
             hetero = scale_hetero(
                 hetero=hetero, 
@@ -281,12 +286,6 @@ class EigenSolver(Solver):
             if an invalid method is specified, or if the `mass` matrix is not provided when
             required.
         """
-        if isinstance(data, list):
-            data = np.array(data)
-        if isinstance(emodes, list):
-            emodes = np.array(emodes)
-        if isinstance(mass, list):
-            mass = np.array(mass)
 
         if np.shape(data)[0] != np.shape(emodes)[0]:
             raise ValueError(f"The number of elements in `data` ({np.shape(data)[0]}) must match "
@@ -382,6 +381,9 @@ class EigenSolver(Solver):
             if an invalid method or metric is specified, or if the `mass` matrix is not provided
             when required.
         """
+        data = np.asarray(data)
+        emodes = np.asarray(emodes)
+
         if metric not in ["pearsonr", "mse"]:
             raise ValueError(f"Invalid metric '{metric}'; must be 'pearsonr' or 'mse'.")
         if data.ndim == 1:
@@ -518,8 +520,6 @@ class EigenSolver(Solver):
             If the shape of ext_input does not match (n_verts, n_timepoints), or if either the
             eigen-decomposition or PDE method is invalid.
         """
-        if isinstance(ext_input, list):
-            ext_input = np.array(ext_input)
 
         # Ensure the eigenmodes are calculated
         if not hasattr(self, 'emodes'):

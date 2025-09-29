@@ -53,12 +53,27 @@ def test_nan_inf_hetero(surf_medmask_hetero):
     with pytest.raises(ValueError, match="`hetero` must not contain NaNs or Infs."):
         EigenSolver(surfpath, hetero=hetero)
 
-def test_list_hetero(surf_medmask_hetero):
-    surfpath, _, hetero = surf_medmask_hetero
+def test_nan_inf_hetero_medmask(surf_medmask_hetero):
+    # Inject NaN/Inf at a cortical vertex (should raise error)
+    surfpath, medmask, hetero = surf_medmask_hetero
+    cortical_vertex = np.where(medmask)[0][0]
+    print(cortical_vertex)
+    hetero[cortical_vertex] = np.nan
+    with pytest.raises(ValueError, match="`hetero` must not contain NaNs or Infs."):
+        EigenSolver(surfpath, hetero=hetero)
+    hetero[cortical_vertex] = np.inf
+    with pytest.raises(ValueError, match="`hetero` must not contain NaNs or Infs."):
+        EigenSolver(surfpath, hetero=hetero)
 
-    list_hetero = hetero.tolist()
-    with pytest.raises(ValueError, match="`hetero` must be a numpy array or None."):
-        EigenSolver(surfpath, hetero=list_hetero)
+def test_nan_inf_hetero_medmask_ignored(surf_medmask_hetero):
+    # Inject NaN/Inf at a medial vertex (should be ignored)
+    surfpath, medmask, hetero = surf_medmask_hetero
+    medial_vertex = np.where(~medmask)[0][0]
+    print(medial_vertex)
+    hetero[medial_vertex] = np.nan
+    EigenSolver(surfpath, medmask=medmask, hetero=hetero)
+    hetero[medial_vertex] = np.inf  
+    EigenSolver(surfpath, medmask=medmask, hetero=hetero)
 
 def test_init_invalid_wave_speed(surf_medmask_hetero):
     surfpath, medmask, hetero = surf_medmask_hetero
