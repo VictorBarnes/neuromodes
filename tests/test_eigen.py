@@ -27,7 +27,7 @@ def test_invalid_surf():
     with pytest.raises(ValueError, match="Surface must be a .*"):
         EigenSolver([1,2,3])
 
-def test_surf_unreferenced_verts():    
+def test_surf_unreferenced_verts():
     # Create an invalid mesh with unreferenced vertices
     vertices = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1], [2, 2, 2]])  # Last vertex unreferenced
     faces = np.array([[0, 1, 2], [0, 2, 3]])  # Only uses first 4 vertices, vertex 4 is unreferenced
@@ -39,7 +39,7 @@ def test_surf_unreferenced_verts():
     with pytest.raises(ValueError, match="Surface mesh contains .* unreferenced vertices"):
         check_surf(invalid_mesh)
 
-def test_surf_not_contiguous():   
+def test_surf_not_contiguous():
     # Create two separate triangles (disconnected components)
     vertices = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [2, 0, 0], [3, 0, 0], [2, 1, 0]])
     faces = np.array([[0, 1, 2], [3, 4, 5]])  # Two separate triangles

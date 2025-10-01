@@ -288,6 +288,10 @@ class EigenSolver(Solver):
             if an invalid method is specified, or if the `mass` matrix is not provided when
             required.
         """
+        data = np.asarray(data)
+        emodes = np.asarray(emodes)
+        if isinstance(mass, list):
+            mass = np.array(mass)
 
         if np.shape(data)[0] != np.shape(emodes)[0]:
             raise ValueError(f"The number of elements in `data` ({np.shape(data)[0]}) must match "
@@ -385,6 +389,8 @@ class EigenSolver(Solver):
         """
         data = np.asarray(data)
         emodes = np.asarray(emodes)
+        if isinstance(mass, list):
+            mass = np.array(mass)
 
         if metric not in ["pearsonr", "mse"]:
             raise ValueError(f"Invalid metric '{metric}'; must be 'pearsonr' or 'mse'.")
@@ -733,8 +739,7 @@ def check_orthonorm_modes(
     decomposition, wave simulation), this function serves to ensure the validity of any calculated
     or provided eigenmodes.
     """
-    if isinstance(emodes, list):
-        emodes = np.array(emodes)
+    emodes = np.asarray(emodes)
     if isinstance(mass, list):
         mass = np.array(mass)
 
@@ -758,8 +763,7 @@ def standardize_modes(emodes: Union[np.ndarray, List[List[float]]]) -> np.ndarra
         The standardized eigenmodes array of shape (n_verts, n_modes), with the first element of
         each mode set to be positive.
     """
-    if isinstance(emodes, list):
-        emodes = np.array(emodes)
+    emodes = np.asarray(emodes)
 
     # Find the sign of the first non-zero element in each column
     signs = np.sign(emodes[np.argmax(emodes != 0, axis=0), np.arange(emodes.shape[1])])
