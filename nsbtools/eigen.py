@@ -97,10 +97,12 @@ class EigenSolver(Solver):
         self.verbose = verbose
 
         # Initialize surface and convert to TriaMesh object
-        surf = check_surf(surf)
+        surf = read_surf(surf)
         if medmask is not None:
-            surf = mask_surf(surf, medmask)
-        self.medmask = medmask
+            self.medmask = np.asarray(medmask, dtype=bool)
+            surf = mask_surf(surf, self.medmask)
+        else:
+            self.medmask = None
         self.geometry = TriaMesh(surf.vertices, surf.faces)
         if normalize:
             self.geometry.normalize_()
@@ -580,31 +582,32 @@ class EigenSolver(Solver):
 
         return sim_activity
 
-def check_surf(surf: Union[str, Path, trimesh.Trimesh, TriaMesh]) -> trimesh.Trimesh:
-    """Validate surface type and load if a file name. Returns a trimesh.Trimesh object."""
+def read_surf(surf: Union[str, Path, trimesh.Trimesh, TriaMesh]) -> trimesh.Trimesh:
+    """Validate surface type and load if a file name. Returns a validated trimesh.Trimesh object."""
     if isinstance(surf, trimesh.Trimesh):
-        return surf
+        mesh = surf
     elif isinstance(surf, TriaMesh):
-        return trimesh.Trimesh(vertices=surf.v, faces=surf.t)
+        mesh = trimesh.Trimesh(vertices=surf.v, faces=surf.t)
     else:
         try:
             surf_str = str(surf)
             if surf_str.endswith('.vtk'):
-                mesh = TriaMesh.read_vtk(surf_str)
-                return trimesh.Trimesh(vertices=mesh.v, faces=mesh.t)
+                mesh_data = TriaMesh.read_vtk(surf_str)
+                mesh = trimesh.Trimesh(vertices=mesh_data.v, faces=mesh_data.t)
             else:
-                mesh = nib.load(surf_str).darrays
-                return trimesh.Trimesh(vertices=mesh[0].data, faces=mesh[1].data)
+                mesh_data = nib.load(surf_str).darrays
+                mesh = trimesh.Trimesh(vertices=mesh_data[0].data, faces=mesh_data[1].data)
         except Exception as e:
             raise ValueError('Surface must be a path-like string or an instance of either '
                              'trimesh.Trimesh or lapy.TriaMesh.') from e
+    
+    # Validate the mesh before returning
+    check_surf(mesh)
+
+    return mesh
 
 def mask_surf(surf: trimesh.Trimesh, medmask: Union[np.ndarray, list]) -> trimesh.Trimesh:
-    """Remove medial wall vertices from the surface mesh. Returns a trimesh.Trimesh object."""
-    try:
-        medmask = np.asarray(medmask, dtype=bool)
-    except Exception as e:
-        raise ValueError("`medmask` must be convertible to a boolean numpy array.") from e
+    """Remove medial wall vertices from the surface mesh. Returns a validated trimesh.Trimesh object."""
     if len(medmask) != surf.vertices.shape[0]:
         raise ValueError(f"The number of elements in `medmask` ({len(medmask)}) must match "
                          f"the number of vertices in the surface mesh ({surf.vertices.shape[0]}).")
@@ -618,13 +621,27 @@ def mask_surf(surf: trimesh.Trimesh, medmask: Union[np.ndarray, list]) -> trimes
     f_masked = surf.faces[np.all(medmask[surf.faces], axis=1)]
     f_masked = idx_map[f_masked]
     mesh = trimesh.Trimesh(vertices=v_masked, faces=f_masked, process=False)
-
-    components = mesh.split(only_watertight=False)
-    if len(components) != 1:
-        raise ValueError(f'Masked mesh is not contiguous: {len(components)} connected components '
-                         'found. Try using a different medmask.')
     
+    # Validate the masked mesh before returning
+    check_surf(mesh)
+
     return mesh
+
+def check_surf(surf: trimesh.Trimesh) -> None:
+    """Check if the surface mesh is valid."""
+
+    # Check for unreferenced vertices
+    referenced = np.zeros(len(surf.vertices), dtype=bool)
+    referenced[surf.faces] = True
+    if not np.all(referenced):
+        raise ValueError(f'Surface mesh contains {np.sum(~referenced)} unreferenced '
+                         'vertices (i.e., not part of any face).')
+
+    # Check if the mesh is contiguous
+    components = surf.split(only_watertight=False)
+    if len(components) != 1:
+        raise ValueError(f'Surface mesh is not contiguous: {len(components)} connected components '
+                         'found.')
 
 def check_hetero(hetero: np.ndarray, r: float, gamma: float) -> None:
     """
