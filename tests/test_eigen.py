@@ -1,8 +1,9 @@
+import trimesh
 import pytest
 import numpy as np
 import nibabel as nib
 import importlib.resources
-from nsbtools.eigen import EigenSolver
+from nsbtools.eigen import EigenSolver, check_surf
 
 data_dir = importlib.resources.files('nsbtools.data')
 
@@ -25,6 +26,28 @@ def test_init_params(surf_medmask_hetero):
 def test_invalid_surf():
     with pytest.raises(ValueError, match="Surface must be a .*"):
         EigenSolver([1,2,3])
+
+def test_surf_unreferenced_verts():
+    # Create an invalid mesh with unreferenced vertices
+    vertices = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1], [2, 2, 2]])  # Last vertex unreferenced
+    faces = np.array([[0, 1, 2], [0, 2, 3]])  # Only uses first 4 vertices, vertex 4 is unreferenced
+    
+    # IMPORTANT: Use process=False to prevent trimesh from automatically cleaning up unreferenced vertices    
+    invalid_mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+   
+    # check_surf should raise ValueError due to unreferenced vertex
+    with pytest.raises(ValueError, match="Surface mesh contains .* unreferenced vertices"):
+        check_surf(invalid_mesh)
+
+def test_surf_not_contiguous():
+    # Create two separate triangles (disconnected components)
+    vertices = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [2, 0, 0], [3, 0, 0], [2, 1, 0]])
+    faces = np.array([[0, 1, 2], [3, 4, 5]])  # Two separate triangles
+    disconnected_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+    
+    # check_surf should raise ValueError due to multiple components
+    with pytest.raises(ValueError, match="Surface mesh is not contiguous.*connected components"):
+        check_surf(disconnected_mesh)
 
 def test_no_medmask(surf_medmask_hetero):
     surfpath, _, hetero = surf_medmask_hetero
@@ -53,12 +76,27 @@ def test_nan_inf_hetero(surf_medmask_hetero):
     with pytest.raises(ValueError, match="`hetero` must not contain NaNs or Infs."):
         EigenSolver(surfpath, hetero=hetero)
 
-def test_list_hetero(surf_medmask_hetero):
-    surfpath, _, hetero = surf_medmask_hetero
+def test_nan_inf_hetero_medmask(surf_medmask_hetero):
+    # Inject NaN/Inf at a cortical vertex (should raise error)
+    surfpath, medmask, hetero = surf_medmask_hetero
+    cortical_vertex = np.where(medmask)[0][0]
+    print(cortical_vertex)
+    hetero[cortical_vertex] = np.nan
+    with pytest.raises(ValueError, match="`hetero` must not contain NaNs or Infs."):
+        EigenSolver(surfpath, hetero=hetero)
+    hetero[cortical_vertex] = np.inf
+    with pytest.raises(ValueError, match="`hetero` must not contain NaNs or Infs."):
+        EigenSolver(surfpath, hetero=hetero)
 
-    list_hetero = hetero.tolist()
-    with pytest.raises(ValueError, match="`hetero` must be a numpy array or None."):
-        EigenSolver(surfpath, hetero=list_hetero)
+def test_nan_inf_hetero_medmask_ignored(surf_medmask_hetero):
+    # Inject NaN/Inf at a medial vertex (should be ignored)
+    surfpath, medmask, hetero = surf_medmask_hetero
+    medial_vertex = np.where(~medmask)[0][0]
+    print(medial_vertex)
+    hetero[medial_vertex] = np.nan
+    EigenSolver(surfpath, medmask=medmask, hetero=hetero)
+    hetero[medial_vertex] = np.inf  
+    EigenSolver(surfpath, medmask=medmask, hetero=hetero)
 
 def test_init_invalid_wave_speed(surf_medmask_hetero):
     surfpath, medmask, hetero = surf_medmask_hetero
@@ -133,7 +171,7 @@ def test_solve_lumped_mass(solve_modes, surf_medmask_hetero):
 
     assert np.allclose(abs(emodes), abs(emodes_lumped), atol=1e-3), \
         'Lumped mass modes do not approximately match original modes.'
-    for i in range(1, solver.nmodes):
+    for i in range(1, solver.n_modes):
         assert np.corrcoef(emodes[:, i], emodes_lumped[:, i])[0, 1] > 0.99, \
             'Lumped mass modes do not match original modes.'
 
@@ -142,10 +180,10 @@ def test_solutions(solve_modes):
     evals = solver.evals
 
     assert emodes.shape == (solver.n_verts,
-                           solver.nmodes), (f'Eigenmodes have shape {emodes.shape}, should be '
-                                            f'{(solver.n_verts, solver.nmodes)}.')
-    assert len(evals) == solver.nmodes, (f'Eigenvalues has length {len(evals)}, should be '
-                                         f'{solver.nmodes}.')
+                           solver.n_modes), (f'Eigenmodes have shape {emodes.shape}, should be '
+                                            f'{(solver.n_verts, solver.n_modes)}.')
+    assert len(evals) == solver.n_modes, (f'Eigenvalues has length {len(evals)}, should be '
+                                         f'{solver.n_modes}.')
     assert np.all(np.diff(evals) > 0), 'Eigenvalues are not sorted in descending order.'
 
 def test_constant_mode1(solve_modes):
@@ -175,12 +213,12 @@ def test_warn_orthonorm(solve_modes):
 def test_decompose_eigenmodes(solve_modes):
     solver, emodes = solve_modes
 
-    for i in range(solver.nmodes):
+    for i in range(solver.n_modes):
         data = emodes[:, i]  # Use an eigenmode as data
         beta = solver.decompose(data, emodes, mass=solver.mass)
 
         # The mode should load onto only itself due to orthogonality
-        beta_expected = np.zeros((solver.nmodes, 1))
+        beta_expected = np.zeros((solver.n_modes, 1))
         beta_expected[i, 0] = 1
         assert np.allclose(beta, beta_expected, atol=1e-4), f'Decomposition of mode {i+1} failed.'
 
@@ -232,7 +270,7 @@ def gen_eigenmap(solve_modes):
     # Use randomly weighted sums of modes to generate maps
     n_maps = 3
     np.random.seed(0)
-    weights = np.random.normal(loc=0, scale=0.5, size=(solver.nmodes, n_maps))
+    weights = np.random.normal(loc=0, scale=0.5, size=(solver.n_modes, n_maps))
     eigenmaps = emodes @ weights
 
     return solver, emodes, weights, eigenmaps

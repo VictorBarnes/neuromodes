@@ -9,7 +9,7 @@ import trimesh
 from lapy import Solver, TriaMesh
 from scipy.stats import zscore
 from scipy.integrate import solve_ivp
-import scipy.sparse
+from scipy import sparse
 from typing import Optional, Union, Any, List
 
 # Set up joblib memory caching
@@ -36,7 +36,7 @@ class EigenSolver(Solver):
         self,
         surf: Union[str, Path, trimesh.Trimesh, TriaMesh],
         medmask: Optional[Union[np.ndarray, list]] = None,
-        hetero: Optional[np.ndarray] = None,
+        hetero: Optional[Union[np.ndarray, list]] = None,
         n_modes: int = 100,
         alpha: float = 1.0,
         beta: float = 1.0,
@@ -56,10 +56,10 @@ class EigenSolver(Solver):
         surf : str, pathlib.Path, or BSPolyData
             The surface mesh to be used. Can be a file path to the surface mesh or a BSPolyData 
             object.
-        medmask : numpy.ndarray, optional
+        medmask : array-like, optional
             A boolean mask to exclude certain points (e.g., medial wall) from the surface mesh.
             Default is None.
-        hetero : numpy.ndarray, optional
+        hetero : array-like, optional
             A heterogeneity map to scale the Laplace-Beltrami operator. Default is None.
         n_modes : int, optional
             Number of eigenmodes to compute. Default is 100.
@@ -88,19 +88,31 @@ class EigenSolver(Solver):
         ValueError
             If the input mesh, mask, or parameters are not valid.
         """
-        self.nmodes = n_modes
-        self._r = r
-        self._gamma = gamma
-        self.alpha = alpha if hetero is not None else 0
-        self.beta = beta if hetero is not None else 0
-        self.scaling = scaling
-        self.verbose = verbose
+        if r <= 0:
+            raise ValueError("`r` must be positive.")
+        if gamma <= 0:
+            raise ValueError("`gamma` must be positive.")
+        if beta < 0:
+            raise ValueError("`beta` must be non-negative.")
+        if smoothit < 0:
+            raise ValueError("`smoothit` must be non-negative.")
+        self.n_modes = int(n_modes)
+        self._r = float(r)
+        self._gamma = float(gamma)
+        self.alpha = float(alpha) if hetero is not None else 0
+        self.beta = float(beta) if hetero is not None else 0
+        self.scaling = str(scaling)
+        self.verbose = bool(verbose)
+        self.smoothit = int(smoothit)
+        self.lump = bool(lump)
 
         # Initialize surface and convert to TriaMesh object
-        surf = check_surf(surf)
+        surf = read_surf(surf)
         if medmask is not None:
-            surf = mask_surf(surf, medmask)
-        self.medmask = medmask
+            self.medmask = np.asarray(medmask, dtype=bool)
+            surf = mask_surf(surf, self.medmask)
+        else:
+            self.medmask = None
         self.geometry = TriaMesh(surf.vertices, surf.faces)
         if normalize:
             self.geometry.normalize_()
@@ -108,7 +120,7 @@ class EigenSolver(Solver):
         self.hetero = hetero
 
         # Calculate the two matrices of the Laplace-Beltrami operator
-        self.laplace_beltrami(lump=lump, smoothit=smoothit)
+        self.laplace_beltrami()
 
     @property
     def r(self) -> float:
@@ -133,7 +145,7 @@ class EigenSolver(Solver):
         return self._hetero
 
     @hetero.setter
-    def hetero(self, hetero: Optional[np.ndarray]) -> None:
+    def hetero(self, hetero: Optional[Union[np.ndarray, List[float]]]) -> None:
         # Handle None case by setting to ones
         if hetero is None:
             if self.alpha != 0 or self.beta != 0:
@@ -142,19 +154,21 @@ class EigenSolver(Solver):
                 self.beta = 0
             self._hetero = np.ones(self.n_verts)
         else:
-            # Ensure hetero is valid
-            if not isinstance(hetero, np.ndarray):
-                raise ValueError("`hetero` must be a numpy array or None.")
-            if np.isnan(hetero).any() or np.isinf(hetero).any():
-                raise ValueError("`hetero` must not contain NaNs or Infs.")
+            hetero = np.asarray(hetero)
+
+            # Ensure hetero has correct length
             n_expected = len(self.medmask) if self.medmask is not None else self.n_verts
             if len(hetero) != n_expected:
                 raise ValueError(f"The number of elements in `hetero` ({len(hetero)}) must match "
                                  f"the number of vertices in the surface mesh ({n_expected}).")
-            # If medmask is provided, apply it
+                         
+            # Mask array if medmask is provided
             if self.medmask is not None:
                 hetero = hetero[self.medmask]
-
+            # Check for NaN/Inf values
+            if np.isnan(hetero).any() or np.isinf(hetero).any():
+                raise ValueError("`hetero` must not contain NaNs or Infs.")
+                
             # Scale the heterogeneity map
             hetero = scale_hetero(
                 hetero=hetero, 
@@ -168,7 +182,7 @@ class EigenSolver(Solver):
             # Assign to private attribute
             self._hetero = hetero
 
-    def laplace_beltrami(self, lump: bool = False, smoothit: int = 10) -> None:   
+    def laplace_beltrami(self) -> None:   
         """
         This method computes the Laplace-Beltrami operator using finite element methods on a
         triangular mesh, optionally incorporating spatial heterogeneity and smoothing of the
@@ -189,10 +203,10 @@ class EigenSolver(Solver):
                       f"{self.alpha})")
             else:
                 print("Solving eigenvalue problem with homogeneous Laplace-Beltrami")
-        u1, u2, _, _ = self.geometry.curvature_tria(smoothit=smoothit)
+        u1, u2, _, _ = self.geometry.curvature_tria(smoothit=self.smoothit)
 
         hetero_mat = np.tile(hetero_tri[:, np.newaxis], (1, 2))
-        self.stiffness, self.mass = self._fem_tria_aniso(self.geometry, u1, u2, hetero_mat, lump)
+        self.stiffness, self.mass = self._fem_tria_aniso(self.geometry, u1, u2, hetero_mat, self.lump)
 
     def solve(self, standardize: bool = True, fix_mode1: bool = True) -> None:
         """
@@ -215,7 +229,7 @@ class EigenSolver(Solver):
         """
         # Solve the eigenvalue problem
         self.use_cholmod = False
-        self.evals, emodes = self.eigs(k=self.nmodes)
+        self.evals, emodes = self.eigs(k=self.n_modes)
 
         assert not np.isnan(self.evals).any(), "Eigenvalues contain NaNs."
         if abs(self.evals[0]) > 1e-6:
@@ -237,7 +251,7 @@ class EigenSolver(Solver):
         data: Union[np.ndarray, List[List[float]]],
         emodes: Union[np.ndarray, List[List[float]]],
         method: str = 'orthogonal',
-        mass: Optional[Union[np.ndarray, List[List[float]], scipy.sparse._csc.csc_matrix]] = None,
+        mass: Optional[Union[np.ndarray, List[List[float]], sparse._csc.csc_matrix]] = None,
         return_norm_power: bool = False,
         check_orthonorm: bool = True
     ) -> np.ndarray:
@@ -281,12 +295,13 @@ class EigenSolver(Solver):
             if an invalid method is specified, or if the `mass` matrix is not provided when
             required.
         """
-        if isinstance(data, list):
-            data = np.array(data)
-        if isinstance(emodes, list):
-            emodes = np.array(emodes)
-        if isinstance(mass, list):
-            mass = np.array(mass)
+        data = np.asarray(data)
+        emodes = np.asarray(emodes)
+        if mass is not None:
+            mass = sparse.csc_matrix(mass)
+        if method not in ['orthogonal', 'regress']:
+            raise ValueError(f"Invalid eigen-decomposition method '{method}'; must be 'orthogonal' "
+                             "or 'regress'.")
 
         if np.shape(data)[0] != np.shape(emodes)[0]:
             raise ValueError(f"The number of elements in `data` ({np.shape(data)[0]}) must match "
@@ -299,7 +314,7 @@ class EigenSolver(Solver):
             check_orthonorm_modes(emodes, mass)
 
         if method == 'orthogonal':
-            if mass is None or mass.shape != (emodes.shape[0], emodes.shape[0]):
+            if mass is None or mass.get_shape() != (emodes.shape[0], emodes.shape[0]):
                 raise ValueError(f"Mass matrix of shape ({emodes.shape[0]}, {emodes.shape[0]}) must "
                                  "be provided when method is 'orthogonal'.")
             beta = emodes.T @ mass @ data
@@ -321,7 +336,7 @@ class EigenSolver(Solver):
         data: Union[np.ndarray, List[List[float]]],
         emodes: Union[np.ndarray, List[List[float]]],
         method: str = 'orthogonal',
-        mass: Optional[Union[np.ndarray, List[List[float]], scipy.sparse._csc.csc_matrix]] = None,
+        mass: Optional[Union[np.ndarray, List[List[float]], sparse._csc.csc_matrix]] = None,
         modesq: Optional[Union[np.ndarray, list]] = None,
         timeseries: bool = False,
         metric: str = "pearsonr",
@@ -382,6 +397,11 @@ class EigenSolver(Solver):
             if an invalid method or metric is specified, or if the `mass` matrix is not provided
             when required.
         """
+        data = np.asarray(data)
+        emodes = np.asarray(emodes)
+        if mass is not None:
+            mass = sparse.csc_matrix(mass)
+
         if metric not in ["pearsonr", "mse"]:
             raise ValueError(f"Invalid metric '{metric}'; must be 'pearsonr' or 'mse'.")
         if data.ndim == 1:
@@ -389,9 +409,8 @@ class EigenSolver(Solver):
         if check_orthonorm and mass is not None:
             check_orthonorm_modes(emodes, mass)
 
-        if modesq is None:
-            # Use all modes if not specified (except the first constant mode)
-            modesq = np.arange(1, np.shape(emodes)[1] + 1)
+        # Use all modes if not specified (except the first constant mode)
+        modesq = np.arange(1, np.shape(emodes)[1] + 1) if modesq is None else np.asarray(modesq)
         nq = len(modesq)
 
         n_verts, n_maps = np.shape(data)
@@ -408,7 +427,7 @@ class EigenSolver(Solver):
 
         # Decompose the data to get beta coefficients
         if method == 'orthogonal':
-            if mass is None or mass.shape != (emodes.shape[0], emodes.shape[0]):
+            if mass is None or mass.get_shape() != (emodes.shape[0], emodes.shape[0]):
                 raise ValueError(f"Mass matrix of shape ({emodes.shape[0]}, {emodes.shape[0]}) must "
                                  "be provided when method is 'orthogonal'.")
             tmp = EigenSolver.decompose(data, emodes[:, :np.max(modesq)], mass=mass,
@@ -488,7 +507,7 @@ class EigenSolver(Solver):
 
         Parameters
         ----------
-        ext_input : np.ndarray, optional
+        ext_input : array-like, optional
             External input array of shape (n_verts, n_timepoints). If None, random input is 
             generated.
         dt : float, optional
@@ -518,8 +537,16 @@ class EigenSolver(Solver):
             If the shape of ext_input does not match (n_verts, n_timepoints), or if either the
             eigen-decomposition or PDE method is invalid.
         """
-        if isinstance(ext_input, list):
-            ext_input = np.array(ext_input)
+        ext_input = np.asarray(ext_input) if ext_input is not None else None
+        if dt <= 0:
+            raise ValueError("`dt` must be positive.")
+        if nt <= 0 or not isinstance(nt, int):
+            raise ValueError("`nt` must be a positive integer.")
+        if eig_method not in ["orthogonal", "regress"]:
+            raise ValueError(f"Invalid eigen-decomposition method '{eig_method}'; must be "
+                             "'orthogonal' or 'regress'.")
+        if pde_method not in ["fourier", "ode"]:
+            raise ValueError(f"Invalid PDE method '{pde_method}'; must be 'fourier' or 'ode'.")
 
         # Ensure the eigenmodes are calculated
         if not hasattr(self, 'emodes'):
@@ -540,8 +567,8 @@ class EigenSolver(Solver):
                                       check_orthonorm=False)
 
         # Initialize simulated activity vector
-        mode_coeffs = np.zeros((self.nmodes, input_coeffs.shape[1]))
-        for mode_ind in range(self.nmodes):
+        mode_coeffs = np.zeros((self.n_modes, input_coeffs.shape[1]))
+        for mode_ind in range(self.n_modes):
             input_coeffs_i = input_coeffs[mode_ind, :]
             eval = self.evals[mode_ind]
 
@@ -580,31 +607,32 @@ class EigenSolver(Solver):
 
         return sim_activity
 
-def check_surf(surf: Union[str, Path, trimesh.Trimesh, TriaMesh]) -> trimesh.Trimesh:
-    """Validate surface type and load if a file name. Returns a trimesh.Trimesh object."""
+def read_surf(surf: Union[str, Path, trimesh.Trimesh, TriaMesh]) -> trimesh.Trimesh:
+    """Validate surface type and load if a file name. Returns a validated trimesh.Trimesh object."""
     if isinstance(surf, trimesh.Trimesh):
-        return surf
+        mesh = surf
     elif isinstance(surf, TriaMesh):
-        return trimesh.Trimesh(vertices=surf.v, faces=surf.t)
+        mesh = trimesh.Trimesh(vertices=surf.v, faces=surf.t)
     else:
         try:
             surf_str = str(surf)
             if surf_str.endswith('.vtk'):
-                mesh = TriaMesh.read_vtk(surf_str)
-                return trimesh.Trimesh(vertices=mesh.v, faces=mesh.t)
+                mesh_data = TriaMesh.read_vtk(surf_str)
+                mesh = trimesh.Trimesh(vertices=mesh_data.v, faces=mesh_data.t)
             else:
-                mesh = nib.load(surf_str).darrays
-                return trimesh.Trimesh(vertices=mesh[0].data, faces=mesh[1].data)
+                mesh_data = nib.load(surf_str).darrays
+                mesh = trimesh.Trimesh(vertices=mesh_data[0].data, faces=mesh_data[1].data)
         except Exception as e:
             raise ValueError('Surface must be a path-like string or an instance of either '
                              'trimesh.Trimesh or lapy.TriaMesh.') from e
+    
+    # Validate the mesh before returning
+    check_surf(mesh)
+
+    return mesh
 
 def mask_surf(surf: trimesh.Trimesh, medmask: Union[np.ndarray, list]) -> trimesh.Trimesh:
-    """Remove medial wall vertices from the surface mesh. Returns a trimesh.Trimesh object."""
-    try:
-        medmask = np.asarray(medmask, dtype=bool)
-    except Exception as e:
-        raise ValueError("`medmask` must be convertible to a boolean numpy array.") from e
+    """Remove medial wall vertices from the surface mesh. Returns a validated trimesh.Trimesh object."""
     if len(medmask) != surf.vertices.shape[0]:
         raise ValueError(f"The number of elements in `medmask` ({len(medmask)}) must match "
                          f"the number of vertices in the surface mesh ({surf.vertices.shape[0]}).")
@@ -618,13 +646,27 @@ def mask_surf(surf: trimesh.Trimesh, medmask: Union[np.ndarray, list]) -> trimes
     f_masked = surf.faces[np.all(medmask[surf.faces], axis=1)]
     f_masked = idx_map[f_masked]
     mesh = trimesh.Trimesh(vertices=v_masked, faces=f_masked, process=False)
-
-    components = mesh.split(only_watertight=False)
-    if len(components) != 1:
-        raise ValueError(f'Masked mesh is not contiguous: {len(components)} connected components '
-                         'found. Try using a different medmask.')
     
+    # Validate the masked mesh before returning
+    check_surf(mesh)
+
     return mesh
+
+def check_surf(surf: trimesh.Trimesh) -> None:
+    """Check if the surface mesh is valid."""
+
+    # Check for unreferenced vertices
+    referenced = np.zeros(len(surf.vertices), dtype=bool)
+    referenced[surf.faces] = True
+    if not np.all(referenced):
+        raise ValueError(f'Surface mesh contains {np.sum(~referenced)} unreferenced '
+                         'vertices (i.e., not part of any face).')
+
+    # Check if the mesh is contiguous
+    n_components = surf.body_count
+    if n_components != 1:
+        raise ValueError(f'Surface mesh is not contiguous: {n_components} connected components '
+                         'found.')
 
 def check_hetero(hetero: np.ndarray, r: float, gamma: float) -> None:
     """
@@ -650,7 +692,7 @@ def check_hetero(hetero: np.ndarray, r: float, gamma: float) -> None:
                          "m/s (> 150 m/s). Try using a smaller alpha value.")
 
 def scale_hetero(
-    hetero: Optional[np.ndarray] = None,
+    hetero: np.ndarray,
     alpha: float = 1.0,
     beta: float = 1.0,
     scaling: str = "sigmoid"
@@ -660,8 +702,8 @@ def scale_hetero(
     
     Parameters
     ----------
-    hetero : array-like, optional
-        The heterogeneity map to be scaled. If None, no operation is performed.
+    hetero : array-like
+        The heterogeneity map to be scaled.
     alpha : float, optional
         Scaling parameter controlling the strength of the transformation. Default is 1.0.
     scaling : str, optional
@@ -693,7 +735,7 @@ def scale_hetero(
 
 def check_orthonorm_modes(
         emodes: Union[np.ndarray, List[List[float]]],
-        mass: Union[np.ndarray, List[List[float]], scipy.sparse._csc.csc_matrix]
+        mass: Union[np.ndarray, List[List[float]], sparse._csc.csc_matrix]
 ) -> None:
     """
     Check if eigenmodes are approximately mass-orthonormal. Raises a warning if not.
@@ -716,10 +758,8 @@ def check_orthonorm_modes(
     decomposition, wave simulation), this function serves to ensure the validity of any calculated
     or provided eigenmodes.
     """
-    if isinstance(emodes, list):
-        emodes = np.array(emodes)
-    if isinstance(mass, list):
-        mass = np.array(mass)
+    emodes = np.asarray(emodes)
+    mass = sparse.csc_matrix(mass)
 
     prod = emodes.T @ mass @ emodes
     if not np.allclose(prod, np.eye(prod.shape[0]), atol=1e-3):
@@ -741,8 +781,7 @@ def standardize_modes(emodes: Union[np.ndarray, List[List[float]]]) -> np.ndarra
         The standardized eigenmodes array of shape (n_verts, n_modes), with the first element of
         each mode set to be positive.
     """
-    if isinstance(emodes, list):
-        emodes = np.array(emodes)
+    emodes = np.asarray(emodes)
 
     # Find the sign of the first non-zero element in each column
     signs = np.sign(emodes[np.argmax(emodes != 0, axis=0), np.arange(emodes.shape[1])])
@@ -848,9 +887,9 @@ def solve_wave_ode(
 
     Parameters
     ----------
-    mode_coeff : array_like
+    mode_coeff : np.ndarray
         Input drive to the system with the same length as t (written as qj in equation below).
-    t : array_like
+    t : np.ndarray
         Time points (must be increasing).
     gamma : float
         Damping coefficient.
