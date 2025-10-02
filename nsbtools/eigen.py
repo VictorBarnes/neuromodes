@@ -663,9 +663,9 @@ def check_surf(surf: trimesh.Trimesh) -> None:
                          'vertices (i.e., not part of any face).')
 
     # Check if the mesh is contiguous
-    components = surf.split(only_watertight=False)
-    if len(components) != 1:
-        raise ValueError(f'Surface mesh is not contiguous: {len(components)} connected components '
+    n_components = surf.body_count
+    if n_components != 1:
+        raise ValueError(f'Surface mesh is not contiguous: {n_components} connected components '
                          'found.')
 
 def check_hetero(hetero: np.ndarray, r: float, gamma: float) -> None:
