@@ -171,7 +171,7 @@ def test_solve_lumped_mass(solve_modes, surf_medmask_hetero):
 
     assert np.allclose(abs(emodes), abs(emodes_lumped), atol=1e-3), \
         'Lumped mass modes do not approximately match original modes.'
-    for i in range(1, solver.nmodes):
+    for i in range(1, solver.n_modes):
         assert np.corrcoef(emodes[:, i], emodes_lumped[:, i])[0, 1] > 0.99, \
             'Lumped mass modes do not match original modes.'
 
@@ -180,10 +180,10 @@ def test_solutions(solve_modes):
     evals = solver.evals
 
     assert emodes.shape == (solver.n_verts,
-                           solver.nmodes), (f'Eigenmodes have shape {emodes.shape}, should be '
-                                            f'{(solver.n_verts, solver.nmodes)}.')
-    assert len(evals) == solver.nmodes, (f'Eigenvalues has length {len(evals)}, should be '
-                                         f'{solver.nmodes}.')
+                           solver.n_modes), (f'Eigenmodes have shape {emodes.shape}, should be '
+                                            f'{(solver.n_verts, solver.n_modes)}.')
+    assert len(evals) == solver.n_modes, (f'Eigenvalues has length {len(evals)}, should be '
+                                         f'{solver.n_modes}.')
     assert np.all(np.diff(evals) > 0), 'Eigenvalues are not sorted in descending order.'
 
 def test_constant_mode1(solve_modes):
@@ -213,12 +213,12 @@ def test_warn_orthonorm(solve_modes):
 def test_decompose_eigenmodes(solve_modes):
     solver, emodes = solve_modes
 
-    for i in range(solver.nmodes):
+    for i in range(solver.n_modes):
         data = emodes[:, i]  # Use an eigenmode as data
         beta = solver.decompose(data, emodes, mass=solver.mass)
 
         # The mode should load onto only itself due to orthogonality
-        beta_expected = np.zeros((solver.nmodes, 1))
+        beta_expected = np.zeros((solver.n_modes, 1))
         beta_expected[i, 0] = 1
         assert np.allclose(beta, beta_expected, atol=1e-4), f'Decomposition of mode {i+1} failed.'
 
@@ -270,7 +270,7 @@ def gen_eigenmap(solve_modes):
     # Use randomly weighted sums of modes to generate maps
     n_maps = 3
     np.random.seed(0)
-    weights = np.random.normal(loc=0, scale=0.5, size=(solver.nmodes, n_maps))
+    weights = np.random.normal(loc=0, scale=0.5, size=(solver.n_modes, n_maps))
     eigenmaps = emodes @ weights
 
     return solver, emodes, weights, eigenmaps
