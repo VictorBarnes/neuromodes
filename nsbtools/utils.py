@@ -1,11 +1,12 @@
 import numpy as np
-from typing import Union
+from typing import Union, List
+from numpy.typing import NDArray
 
 def unmask(
-    data: np.ndarray,
-    medmask: np.ndarray,
+    data: Union[NDArray, List[List[float]]],
+    mask: Union[NDArray, List[bool]],
     val: float = np.nan
-) -> np.ndarray:
+) -> NDArray:
     """
     Unmasks data by inserting it into a full array with the same length as the medial wall mask.
 
@@ -13,7 +14,7 @@ def unmask(
     ----------
     data : numpy.ndarray
         The data to be unmasked. Can be 1D or 2D with shape (n_verts, n_maps).
-    medmask : numpy.ndarray
+    mask : numpy.ndarray
         A boolean array where True indicates the positions of the data in the full array.
     val : float, optional
         The value to fill in the positions outside the mask. Default is np.nan.
@@ -23,25 +24,26 @@ def unmask(
     numpy.ndarray
         The unmasked data, with the same shape as the medial mask.
     """
-    medmask = medmask.astype(bool)
+    data = np.asarray(data)
+    mask = mask.astype(bool)
+
+    n_verts = len(mask)
 
     if data.ndim == 1:
-        nverts = len(medmask)
-        map_reshaped = np.full(nverts, val)
-        map_reshaped[medmask] = data
+        map_reshaped = np.full(n_verts, val)
+        map_reshaped[mask] = data
     elif data.ndim == 2:
-        nverts = len(medmask)
         nfeatures = np.shape(data)[1]
-        map_reshaped = np.full((nverts, nfeatures), val)
-        map_reshaped[medmask, :] = data
+        map_reshaped = np.full((n_verts, nfeatures), val)
+        map_reshaped[mask, :] = data
 
     return map_reshaped
 
 def unparcellate(
-    data: np.ndarray,
-    parc: Union[np.ndarray, list],
+    data: Union[NDArray, List[List[float]], List[float]],
+    parc: Union[NDArray, List[int]],
     val: float = np.nan
-) -> np.ndarray:
+) -> NDArray:
     """
     Reconstructs a full array from parcellated data based on a parcellation map.
 
@@ -62,6 +64,9 @@ def unparcellate(
         The reconstructed full array, where each vertex is assigned the value from the corresponding
         parcel in `data`, or `val` if it does not belong to any parcel.
     """
+    data = np.asarray(data)
+    parc = np.asarray(parc)
+
     unique_parcels = np.unique(parc)
     unique_parcels = unique_parcels[unique_parcels != 0]
     if data.shape[0] != len(unique_parcels):

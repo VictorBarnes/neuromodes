@@ -1,0 +1,14 @@
+DATA_TYPE,SPECIES,TEMPLATE,DENSITY,HEMI,DESCRIPTION
+surf,human,fsLR,4k,L,Cortical midthickness surface mesh
+surf,human,fsLR,4k,R,Cortical midthickness surface mesh
+surf,human,fsLR,32k,L,Cortical midthickness surface mesh
+surf,human,fsLR,32k,R,Cortical midthickness surface mesh
+surf,macaque,fsLR,10k,L,Cortical midthickness surface mesh
+surf,marmoset,fsLR,10k,L,Cortical midthickness surface mesh
+medmask,human,fsLR,4k,L,Medial wall mask for midthickness
+medmask,human,fsLR,4k,R,Medial wall mask for midthickness
+medmask,human,fsLR,32k,L,Medial wall mask for midthickness
+medmask,human,fsLR,32k,R,Medial wall mask for midthickness
+medmask,macaque,fsLR,10k,L,Medial wall mask for midthickness
+medmask,marmoset,fsLR,10k,L,Medial wall mask for midthickness
+fcgradient1,human,fsLR,32k,L,First functional connectivity gradient from Margulies et al. 2016

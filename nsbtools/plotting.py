@@ -1,21 +1,24 @@
 import tempfile
+from pathlib import Path
 import numpy as np
-import matplotlib as mpl
+from matplotlib import colors
 import matplotlib.pyplot as plt
 from scipy.ndimage import zoom
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from surfplot import Plot
 from typing import Optional, List, Union, Tuple, Dict, Any
 import warnings
+from numpy.typing import NDArray
+from nsbtools.io import read_surf
 
-def plot_brain(
-    surf: str,
-    data: Union[np.ndarray, List[float], List[List[float]]],
+def plot_surf(
+    mesh: Union[str, Path],
+    data: Union[NDArray, List[float], List[List[float]]],
     layout: str = "row",
     views: List[str] = ["lateral", "medial"],
     color_range: Union[Tuple[float, float], str] = "individual",
     center: Optional[float] = None,
-    cmap: Union[str, mpl.colors.Colormap] = "viridis",
+    cmap: Union[str, colors.Colormap] = "viridis",
     cbar: bool = False,
     cbar_label: Optional[str] = None,
     cbar_kws: Optional[Dict[str, Any]] = None,
@@ -30,8 +33,8 @@ def plot_brain(
 
     Parameters
     ----------
-    surf : str
-        Path to the surface file.
+    mesh : str or pathlib.Path
+        The surface mesh to be used.
     data : array-like
         Data to be plotted on the surface. Can be 1D or 2D with shape (n_verts, n_maps). Note that 
         NaNs are not colored, but zeros are.
@@ -72,8 +75,8 @@ def plot_brain(
     matplotlib.figure.Figure or None
         The resulting figure if a new one is created, otherwise None.
     """
-    
-    # Validate inputs
+    data = np.asarray(data)
+
     cbar_kws_ = {**dict(pad=0.01, fontsize=20, aspect=25, shrink=1, decimals=2, location="bottom"),
                  **(cbar_kws or {})}
     label_kws_ = {**dict(fontsize=20), **(label_kws or {})}
@@ -130,7 +133,7 @@ def plot_brain(
                 crange = (center - vrange, center + vrange)
                     
             # Use surfplot to plot the data
-            p = Plot(surf_lh=surf, views=views, size=(500, 250), zoom=zoom)
+            p = Plot(surf_lh=mesh, views=views, size=(500, 250), zoom=zoom)
             p.add_layer(data=data[:, i], cmap=cmap, cbar=cbar, color_range=crange,
                         cbar_label=cbar_label, zero_transparent=False)
             if outline:
@@ -159,10 +162,10 @@ def plot_brain(
     return fig if ax is None else None
 
 def plot_heatmap(
-    data: Union[np.ndarray, List[List[float]]],
+    data: Union[NDArray, List[List[float]]],
     ax: Optional[plt.Axes] = None,
     center: Optional[float] = None,
-    cmap: Union[str, mpl.colors.Colormap] = "viridis",
+    cmap: Union[str, colors.Colormap] = "viridis",
     cbar: bool = False,
     square: bool = True,
     downsample: float = 1,
@@ -199,6 +202,7 @@ def plot_heatmap(
     matplotlib.axes.Axes
         The axes on which the heatmap is plotted.
     """
+    data = np.asarray(data)
 
     if ax is None:
         ax = plt.gca()
@@ -215,12 +219,12 @@ def plot_heatmap(
     if center is not None:
         # Compute a symmetric range around center
         vrange = max(abs(vmax - center), abs(center - vmin))
-        norm = mpl.colors.Normalize(vmin=center - vrange, vmax=center + vrange)
+        norm = colors.Normalize(vmin=center - vrange, vmax=center + vrange)
 
         # Remap colormap to the new range
         cmin, cmax = norm([vmin, vmax])
         cc = np.linspace(cmin, cmax, 256)
-        cmap = mpl.colors.ListedColormap(cmap(cc))
+        cmap = colors.ListedColormap(cmap(cc))
 
     # Plot heatmap with colorbar
     mesh = ax.pcolormesh(data, cmap=cmap, **{"vmin": vmin, "vmax": vmax})
