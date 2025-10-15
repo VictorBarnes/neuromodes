@@ -153,6 +153,34 @@ def test_seeded_modes(init_solver):
     assert not (emodes1 == emodes3).all(), 'Modes from different seeds are identical.'
     assert not (evals1 == evals3).all(), 'Eigenvalues from different seeds are identical.'
 
+def test_vector_seeded_modes(init_solver):
+    v0 = np.random.normal(size=init_solver.n_verts)
+    init_solver.solve(standardize=False, fix_mode1=False, seed_vector=v0)
+    emodes1 = init_solver.emodes
+    evals1 = init_solver.evals
+
+    # test seed override warning while we're here
+    with pytest.warns(UserWarning, match="`seed` is ignored when `seed_vector` is provided.*"):
+        init_solver.solve(standardize=False, fix_mode1=False, seed_vector=v0)
+    emodes2 = init_solver.emodes
+    evals2 = init_solver.evals
+
+    assert (emodes1 == emodes2).all(), 'Modes from same seed_vector are not identical.'
+    assert (evals1 == evals2).all(), 'Eigenvalues from same seed_vector are not identical.'
+
+    v0_diff = np.random.normal(size=init_solver.n_verts)
+    init_solver.solve(standardize=False, fix_mode1=False, seed_vector=v0_diff)
+    emodes3 = init_solver.emodes
+    evals3 = init_solver.evals
+
+    assert not (emodes1 == emodes3).all(), 'Modes from different seed_vectors are identical.'
+    assert not (evals1 == evals3).all(), 'Eigenvalues from different seed_vectors are identical.'
+
+def test_invalid_vector_seed(init_solver):
+    with pytest.raises(ValueError,
+                       match=r"`seed_vector` must have shape \((3636,)\), but has shape \((10,)\)."):
+        init_solver.solve(seed_vector=np.ones(10))
+
 @pytest.fixture
 def solve_modes(init_solver):
     solver = init_solver

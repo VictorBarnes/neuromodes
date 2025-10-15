@@ -192,7 +192,8 @@ class EigenSolver(Solver):
         self,
         standardize: bool = True,
         fix_mode1: bool = True,
-        seed: Optional[int] = None
+        seed: Optional[int] = None,
+        seed_vector: Optional[NDArray] = None
     ) -> None:
         """
         Solve the generalized eigenvalue problem for the Laplace-Beltrami operator and compute 
@@ -208,9 +209,14 @@ class EigenSolver(Solver):
             Default is True. See the check_orthonorm_modes function for details.
         seed : int, optional
             Random seed for reproducibility. Default is None.
+        seed_vector : array-like, optional
+            Initial vector for the eigenvalue solver, of shape (n_verts,) which overrides `seed` if 
+            provided. Default is None.
 
         Raises
         ------
+        ValueError
+            If `seed_vector` has an incorrect shape.
         AssertionError
             If the computed eigenmodes or eigenvalues contain NaN values.
         """
@@ -223,9 +229,17 @@ class EigenSolver(Solver):
             dtype=self.stiffness.dtype,
         )
 
-        # Set initial vector by sampling from uniform distribution over [0, 1)
-        rng = np.random.default_rng(seed)
-        v0 = rng.random(self.n_verts)
+        if seed_vector is None:
+            # Set initial vector by sampling from uniform distribution over [0, 1)
+            rng = np.random.default_rng(seed)
+            v0 = rng.random(self.n_verts)
+        else:
+            if seed is not None:
+                warnings.warn("`seed` is ignored because `seed_vector` is provided.")
+            v0 = np.asarray(seed_vector)
+            if v0.shape != (self.n_verts,):
+                raise ValueError(f"`seed_vector` must have shape ({self.n_verts},), but has shape "
+                                 f"{v0.shape}.")
 
         # Solve the eigenvalue problem
         self.evals, self.emodes = eigsh(
