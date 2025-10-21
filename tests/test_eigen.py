@@ -150,8 +150,8 @@ def test_seeded_modes(init_solver):
     emodes3 = init_solver.emodes
     evals3 = init_solver.evals
 
-    assert not (emodes1 == emodes3).all(), 'Modes from different seeds are identical.'
-    assert not (evals1 == evals3).all(), 'Eigenvalues from different seeds are identical.'
+    assert not (emodes1 == emodes3).all(), 'Modes from different seeds should not be identical.'
+    assert not (evals1 == evals3).all(), 'Eigenvalues from different seeds should not be identical.'
 
 def test_vector_seeded_modes(init_solver):
     v0 = np.random.normal(size=init_solver.n_verts)
@@ -159,9 +159,8 @@ def test_vector_seeded_modes(init_solver):
     emodes1 = init_solver.emodes
     evals1 = init_solver.evals
 
-    # test seed override warning while we're here
-    with pytest.warns(UserWarning, match="`seed` is ignored when `seed_vector` is provided.*"):
-        init_solver.solve(standardize=False, fix_mode1=False, seed_vector=v0)
+    # Reuse the same seed vector
+    init_solver.solve(standardize=False, fix_mode1=False, seed_vector=v0)
     emodes2 = init_solver.emodes
     evals2 = init_solver.evals
 

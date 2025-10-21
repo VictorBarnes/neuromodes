@@ -16,6 +16,14 @@ dependencies = [
     "trimesh>=4.8.1",
 ]
 
+[project.optional-dependencies]
+testing = [
+    "pytest>=8.4.2",
+]
+tutorials = [
+    "ipykernel>=6.31.0",
+]
+
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
@@ -25,9 +33,3 @@ packages = ["nsbtools"]
 
 [tool.setuptools.package-data]
 "nsbtools.data" = ["*"]
-
-[dependency-groups]
-dev = [
-    "ipykernel>=6.30.1",
-    "pytest>=8.4.2",
-]

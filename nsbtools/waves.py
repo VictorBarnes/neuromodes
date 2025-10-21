@@ -35,8 +35,7 @@ def simulate_waves(
 ) -> NDArray:
     """
     Simulate neural activity or BOLD signals on the surface mesh using the eigenmode 
-    decomposition. Consider discarding the first 50 time points to allow the system to reach a 
-    steady state. The simulation uses a Neural Field Theory wave model and optionally the
+    decomposition. The simulation uses a Neural Field Theory wave model and optionally the
     Balloon-Windkessel model for BOLD signal generation. 
 
     Parameters
@@ -52,7 +51,7 @@ def simulate_waves(
     dt : float, optional
         Time step for simulation in milliseconds. Default is 0.1.
     nt : int, optional
-        Number of time points to simulate (excluding steady-state period). Default is 1000.
+        Number of time points to simulate Default is 1000.
     r : float, optional
         Spatial length scale of wave propagation. Default is 28.9.
     gamma : float, optional
@@ -74,14 +73,19 @@ def simulate_waves(
     Returns
     -------
     sim_activity : np.ndarray
-        Simulated neural or BOLD activity of shape (n_verts, n_timepoints), starting after the 
-        steady-state period.
+        Simulated neural or BOLD activity of shape (n_verts, n_timepoints).
 
     Raises
     ------
     ValueError
         If the shape of ext_input does not match (n_verts, n_timepoints), or if either the
         eigen-decomposition or PDE method is invalid.
+
+    Notes
+    -----
+    Since the simulation begins at rest, consider discarding the first 50 timepoints to allow the
+    system to reach a steady state.
+
     """
     emodes = np.asarray(emodes)
     evals = np.asarray(evals)
@@ -89,6 +93,10 @@ def simulate_waves(
         mass = sparse.csc_matrix(mass)
     
     n_verts, n_modes = emodes.shape
+    if r <= 0 or not isinstance(r, (float, int)):
+        raise ValueError("Parameter `r` must be positive.")
+    if gamma <= 0 or not isinstance(gamma, (float, int)):
+        raise ValueError("Parameter `gamma` must be positive.")
     if len(evals) != n_modes:
         raise ValueError(f"The number of eigenvalues ({len(evals)}) must match the number of "
                             f"eigenmodes ({n_modes}).")

@@ -117,7 +117,7 @@ def plot_surf(
             vrange = max(abs(vmax - center), abs(center - vmin))
             crange = (center - vrange, center + vrange)
         else:
-            crange = (vmax, vmin)
+            crange = (vmin, vmax)
     else:
         crange = None
 

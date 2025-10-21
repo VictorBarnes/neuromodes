@@ -16,3 +16,4 @@ This tutorial covers the main features of ``nsbtools``, including geometric eige
 
    tutorials/calc_modes
    tutorials/GEM
+   tutorials/wave_model

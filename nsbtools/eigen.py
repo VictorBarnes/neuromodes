@@ -57,9 +57,11 @@ class EigenSolver(Solver):
         beta : float, optional
             Exponent for the sigmoid scaling of the heterogeneity map. Default is 1.0.
         r : float, optional
-            Axonal length scale for wave propagation. Default is 28.9.
+            Axonal length scale for wave propagation, used to ensure plausible wave speeds for 
+            activity simulation when hetero is provided. Default is 28.9.
         gamma : float, optional
-            Damping parameter for wave propagation. Default is 0.116.
+            Damping parameter for wave propagation, used to ensure plausible wave speeds for
+            activity simulation when hetero is provided. Default is 0.116.
         scaling : str, optional
             Scaling function to apply to the heterogeneity map. Must be "sigmoid" or "exponential". 
             Default is "sigmoid".
@@ -75,22 +77,27 @@ class EigenSolver(Solver):
         ValueError
             If the input mesh, mask, or parameters are not valid.
         """
-        if r <= 0:
+        if r <= 0 or not isinstance(r, (float, int)):
             raise ValueError("`r` must be positive.")
-        if gamma <= 0:
+        if gamma <= 0 or not isinstance(gamma, (float, int)):
             raise ValueError("`gamma` must be positive.")
-        if beta < 0:
+        if beta < 0 or not isinstance(beta, (float, int)):
             raise ValueError("`beta` must be non-negative.")
-        if smoothit < 0:
-            raise ValueError("`smoothit` must be non-negative.")
-        self.n_modes = int(n_modes)
-        self._r = float(r)
-        self._gamma = float(gamma)
-        self.alpha = float(alpha) if hetero is not None else 0
-        self.beta = float(beta) if hetero is not None else 0
-        self.scaling = str(scaling)
-        self.smoothit = int(smoothit)
-        self.lump = bool(lump)
+        if smoothit < 0 or not isinstance(smoothit, int):
+            raise ValueError("`smoothit` must be a non-negative integer.")
+        if n_modes <= 0 or not isinstance(n_modes, int):
+            raise ValueError("`n_modes` must be a positive integer.")
+        if not isinstance(lump, bool):
+            raise ValueError("`lump` must be a boolean value.")
+        
+        self.n_modes = n_modes
+        self._r = r
+        self._gamma = gamma
+        self.alpha = alpha if hetero is not None else 0
+        self.beta = beta if hetero is not None else 0
+        self.scaling = scaling
+        self.smoothit = smoothit
+        self.lump = lump
 
         # Initialize surface and convert to TriaMesh object
         mesh = read_surf(mesh)
@@ -192,8 +199,7 @@ class EigenSolver(Solver):
         self,
         standardize: bool = True,
         fix_mode1: bool = True,
-        seed: Optional[int] = None,
-        seed_vector: Optional[NDArray] = None
+        seed: Optional[Union[int, NDArray]] = None
     ) -> None:
         """
         Solve the generalized eigenvalue problem for the Laplace-Beltrami operator and compute 
@@ -209,9 +215,6 @@ class EigenSolver(Solver):
             Default is True. See the check_orthonorm_modes function for details.
         seed : int, optional
             Random seed for reproducibility. Default is None.
-        seed_vector : array-like, optional
-            Initial vector for the eigenvalue solver, of shape (n_verts,) which overrides `seed` if 
-            provided. Default is None.
 
         Raises
         ------
@@ -229,17 +232,18 @@ class EigenSolver(Solver):
             dtype=self.stiffness.dtype,
         )
 
-        if seed_vector is None:
+        if seed is None:
             # Set initial vector by sampling from uniform distribution over [0, 1)
             rng = np.random.default_rng(seed)
             v0 = rng.random(self.n_verts)
         else:
-            if seed is not None:
-                warnings.warn("`seed` is ignored because `seed_vector` is provided.")
-            v0 = np.asarray(seed_vector)
-            if v0.shape != (self.n_verts,):
-                raise ValueError(f"`seed_vector` must have shape ({self.n_verts},), but has shape "
-                                 f"{v0.shape}.")
+            if isinstance(seed, int):
+                rng = np.random.default_rng(seed)
+                v0 = rng.random(self.n_verts)
+            else:
+               v0 = np.asarray(seed)
+               if v0.shape != (self.n_verts,):
+                   raise ValueError(f"`seed` must be either an integer or an array of shape ({self.n_verts},).")
 
         # Solve the eigenvalue problem
         self.evals, self.emodes = eigsh(

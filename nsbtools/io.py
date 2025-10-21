@@ -1,6 +1,7 @@
 """Module for reading, validating, and manipulating surface meshes."""
 
 from trimesh import Trimesh
+import trimesh
 import numpy as np
 import nibabel as nib
 from pathlib import Path
@@ -39,13 +40,23 @@ def mask_surf(
     surf: Trimesh,
     mask: Union[NDArray, list]
 ) -> Trimesh:
-    """Remove medial wall vertices from the surface mesh. Returns a validated trimesh.Trimesh object."""
+    """Remove specified vertices from the surface mesh. Returns a validated trimesh.Trimesh object."""
     if len(mask) != surf.vertices.shape[0]:
         raise ValueError(f"The number of elements in `mask` ({len(mask)}) must match "
                          f"the number of vertices in the surface mesh ({surf.vertices.shape[0]}).")
     
-    face_mask = np.all(mask[surf.faces], axis=1)
-    mesh = surf.submesh([face_mask], only_watertight=False)[0]
+    # Mask vertices
+    v_masked = surf.vertices[mask]
+
+    # Map old vertex indices to new
+    idx_map = np.full(len(mask), -1, dtype=int)
+    idx_map[mask] = np.arange(np.sum(mask))
+
+    # Keep only faces where all vertices are in mask
+    f_masked = surf.faces[np.all(mask[surf.faces], axis=1)]
+    f_masked = idx_map[f_masked]
+
+    mesh = trimesh.Trimesh(vertices=v_masked, faces=f_masked, process=False)
 
     # Validate the mesh before returning
     check_surf(mesh)
