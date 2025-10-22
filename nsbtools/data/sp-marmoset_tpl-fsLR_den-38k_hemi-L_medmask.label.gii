@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<GIFTI xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:noNamespaceSchemaLocation="http://brainvis.wustl.edu/caret6/xml_schemas/GIFTI_Caret.xsd"
+       Version="1"
+       NumberOfDataArrays="1">
+   <MetaData>
+      <MD>
+         <Name><![CDATA[AnatomicalStructurePrimary]]></Name>
+         <Value><![CDATA[CortexLeft]]></Value>
+      </MD>
+      <MD>
+         <Name><![CDATA[ParentProvenance]]></Name>
+         <Value><![CDATA[/fs03/kg98/jamesp/atlases/NHP_NNP/Ting_2021_MBMv4/BIDS-preprocessed-surface-fMRI/regrBMWC0/sub-NIHm28/ses-01/sub-NIHm28_ses-01_task-rest_run-RL-1_desc-sm2.dtseries.nii:
+/usr/local/connectome/1.4.2/bin_rh_linux64/../exe_rh_linux64/wb_command -cifti-smoothing Ting_2021_MBMv4/BIDS-preprocessed-surface-fMRI/regrBMWC0/sub-NIHm28/ses-01/sub-NIHm28_ses-01_task-rest_run-RL-1.dtseries.nii 0.84932 0.84932 COLUMN Ting_2021_MBMv4/BIDS-preprocessed-surface-fMRI/regrBMWC0/sub-NIHm28/ses-01/sub-NIHm28_ses-01_task-rest_run-RL-1_desc-sm2.dtseries.nii -left-surface Marmoset_Brain_Mappping_v3.0.1/MBM_v3.0.1/surfFS.lh.sphere.surf.gii -right-surface Marmoset_Brain_Mappping_v3.0.1/MBM_v3.0.1/surfFS.rh.sphere.surf.gii -fix-zeros-volume -fix-zeros-surface
+
+]]></Value>
+      </MD>
+      <MD>
+         <Name><![CDATA[ProgramProvenance]]></Name>
+         <Value><![CDATA[Connectome Workbench
+Type: Command Line Application
+Version: 2.0.0
+Qt Compiled Version: 5.7.0
+Qt Runtime Version: 5.7.0
+Commit: a4824b22b46b2d5afa3e543a483f73faea27bcf5
+Commit Date: 2024-06-14 15:38:26 -0500
+Compiler: g++ (/opt/rh/devtoolset-7/root/usr/bin)
+Compiler Version: 7.3.1
+Compiled Debug: NO
+Operating System: Linux
+Compiled with OpenMP: YES
+]]></Value>
+      </MD>
+      <MD>
+         <Name><![CDATA[Provenance]]></Name>
+         <Value><![CDATA[/apps/connectome/2.0.0/bin_rh_linux64/../exe_rh_linux64/wb_command -cifti-separate /fs03/kg98/jamesp/atlases/NHP_NNP/Ting_2021_MBMv4/BIDS-preprocessed-surface-fMRI/regrBMWC0/sub-NIHm28/ses-01/sub-NIHm28_ses-01_task-rest_run-RL-1_desc-sm2.dtseries.nii COLUMN -metric CORTEX_LEFT /fs03/kg98/vbarnes/nhp_nnp/marmoset/fmri/sub-NIHm28_ses-01_space-fsLR_den-38k_hemi-L_desc-fmri_smooth-2.func.gii -roi /fs03/kg98/vbarnes/nhp_nnp/marmoset/space-fsLR_den-38k_hemi-L_desc-nomedialwall.func.gii]]></Value>
+      </MD>
+      <MD>
+         <Name><![CDATA[WorkingDirectory]]></Name>
+         <Value><![CDATA[/fs04/scratch2/kg98/oldscratch/vbarnes/nhp_nnp/marmoset]]></Value>
+      </MD>
+   </MetaData>
+   <LabelTable>
+      <Label Key="0" Red="1" Green="1" Blue="1" Alpha="0"><![CDATA[???]]></Label>
+   </LabelTable>
+<DataArray Intent="NIFTI_INTENT_NORMAL"
+           DataType="NIFTI_TYPE_FLOAT32"
+           ArrayIndexingOrder="RowMajorOrder"
+           Dimensionality="1"
+           Dim0="37974"
+           Encoding="GZipBase64Binary"
+           Endian="LittleEndian"
+           ExternalFileName=""
+           ExternalFileOffset="0">
+   <MetaData>
+   </MetaData>
+   <Data>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</Data>
+</DataArray>
+</GIFTI>
