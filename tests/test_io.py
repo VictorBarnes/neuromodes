@@ -1,7 +1,8 @@
 import numpy as np
 from trimesh import Trimesh
 from pytest import raises
-from nsbtools.io import check_surf, load_data
+from nsbtools.io import check_surf, load_data, read_surf
+from importlib.resources import files
 
 def test_surf_unreferenced_verts():
     # Create an invalid mesh with unreferenced vertices
@@ -44,3 +45,47 @@ def test_load_gradient():
 def test_load_invalid_type():
     with raises(ValueError, match="Data file 'sp-human_tpl-fsLR_den-32k_hemi-L_panshifu.func.gii'.*"):
         load_data('panshifu')
+
+def test_read_surf_dict():
+    mesh_data = {
+        'vertices': [[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]],
+        'faces': [[0, 1, 2], [1, 2, 3]]
+    }
+    mesh = read_surf(mesh_data)
+    assert isinstance(mesh, Trimesh)
+    assert mesh.vertices.shape == (4, 3)
+    assert mesh.faces.shape == (2, 3)
+    
+    mesh_data_numpy = {
+        'vertices': np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]]),
+        'faces': np.array([[0, 1, 2], [1, 2, 3]])
+    }
+    mesh = read_surf(mesh_data_numpy)
+    assert isinstance(mesh, Trimesh)
+    assert mesh.vertices.shape == (4, 3)
+    assert mesh.faces.shape == (2, 3)
+
+    invalid_data = {
+        'faces': np.array([[0, 1, 2]])
+    }
+    with raises(KeyError, match="'vertices'"):
+        read_surf(invalid_data)
+
+    invalid_data = {
+        'vertices': np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]])
+    }
+    with raises(KeyError, match="'faces'"):
+        read_surf(invalid_data)
+
+def test_read_surf_vtk():
+    vtk_path = files('nsbtools.data') / 'fsaverage5_10k_midthickness-lh.vtk'
+    vtk_mesh = read_surf(vtk_path)
+
+    assert isinstance(vtk_mesh, Trimesh)
+    assert vtk_mesh.vertices.shape == (10242, 3)
+    assert vtk_mesh.faces.shape == (20480, 3)
+
+def test_read_surf_invalid():
+    invalid_path = files('nsbtools.data') / 'invalid.surf.vtk'
+    with raises(ValueError, match="not a valid file path"):
+        read_surf(invalid_path)

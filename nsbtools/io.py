@@ -1,35 +1,41 @@
 """Module for reading, validating, and manipulating surface meshes."""
 
 from trimesh import Trimesh
-import trimesh
 import numpy as np
 import nibabel as nib
 from pathlib import Path
 from typing import Union
 from lapy import TriaMesh
-from numpy.typing import NDArray
+from numpy.typing import NDArray, ArrayLike
 from importlib.resources import files
 
 def read_surf(
-    surf: Union[str, Path, Trimesh, TriaMesh]
+    surf: Union[str, Path, Trimesh, TriaMesh, dict]
 ) -> Trimesh:
     """Validate surface type and load if a file name. Returns a validated trimesh.Trimesh object."""
     if isinstance(surf, Trimesh):
         mesh = surf
     elif isinstance(surf, TriaMesh):
         mesh = Trimesh(vertices=surf.v, faces=surf.t)
+    elif isinstance(surf, dict):
+        mesh = Trimesh(vertices=surf['vertices'], faces=surf['faces'])
     else:
-        try:
-            surf_str = str(surf)
-            if surf_str.endswith('.vtk'):
-                mesh_data = TriaMesh.read_vtk(surf_str)
-                mesh = Trimesh(vertices=mesh_data.v, faces=mesh_data.t)
-            else:
+        surf_str = str(surf)
+        # check that file exists
+        if not Path(surf_str).is_file():
+            raise ValueError('Converted string is not a valid file path.')
+        if surf_str.endswith('.vtk'):
+            mesh_data = TriaMesh.read_vtk(surf_str)
+            mesh = Trimesh(vertices=mesh_data.v, faces=mesh_data.t)
+        else:
+            try:
                 mesh_data = nib.load(surf_str).darrays
                 mesh = Trimesh(vertices=mesh_data[0].data, faces=mesh_data[1].data)
-        except Exception as e:
-            raise ValueError('Surface must be a path-like string or an instance of either '
-                             'trimesh.Trimesh or lapy.TriaMesh.') from e
+            except Exception as e:
+                raise ValueError(
+                    '`surf` must be a path-like string to a valid VTK or nibabel-supported file '
+                    '(e.g., GIFTI), or an instance of either trimesh.Trimesh or lapy.TriaMesh.'
+                    ) from e
     
     # Validate the mesh before returning
     check_surf(mesh)
@@ -38,25 +44,17 @@ def read_surf(
 
 def mask_surf(
     surf: Trimesh,
-    mask: Union[NDArray, list]
-) -> Trimesh:
-    """Remove specified vertices from the surface mesh. Returns a validated trimesh.Trimesh object."""
+    mask: ArrayLike
+) -> tuple[Trimesh, NDArray]:
+    """Remove specified vertices from the surface mesh. Returns a validated trimesh.Trimesh object
+    and the updated vertex mask."""
     if len(mask) != surf.vertices.shape[0]:
         raise ValueError(f"The number of elements in `mask` ({len(mask)}) must match "
                          f"the number of vertices in the surface mesh ({surf.vertices.shape[0]}).")
     
-    # Mask vertices
-    v_masked = surf.vertices[mask]
-
-    # Map old vertex indices to new
-    idx_map = np.full(len(mask), -1, dtype=int)
-    idx_map[mask] = np.arange(np.sum(mask))
-
-    # Keep only faces where all vertices are in mask
-    f_masked = surf.faces[np.all(mask[surf.faces], axis=1)]
-    f_masked = idx_map[f_masked]
-
-    mesh = trimesh.Trimesh(vertices=v_masked, faces=f_masked, process=False)
+    # Mask faces where all vertices are in the mask
+    face_mask = np.all(mask[surf.faces], axis=1)
+    mesh = surf.submesh([face_mask])[0]
 
     # Validate the mesh before returning
     check_surf(mesh)

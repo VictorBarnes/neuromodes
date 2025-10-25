@@ -34,23 +34,75 @@ API Reference
    :template: function.rst
    :toctree: generated/
 
+   nsbtools.eigen.EigenSolver.compute_lbo
    nsbtools.eigen.EigenSolver.solve
    nsbtools.eigen.EigenSolver.decompose
    nsbtools.eigen.EigenSolver.reconstruct
+   nsbtools.eigen.EigenSolver.generate_connectome
    nsbtools.eigen.EigenSolver.simulate_waves
 
 .. autosummary::
    :template: function.rst
    :toctree: generated/
 
-   check_surf
-   mask_surf
    check_hetero
    scale_hetero
-   check_orthonorm_modes
+   check_orthonormal_basis
    standardize_modes
-   gen_random_input
-   model_wave_fourier
-   solve_wave_ode
-   model_balloon_fourier
-   model_balloon_ode
+   calc_norm_power
+   decompose
+   reconstruct
+
+.. _ref_waves:
+
+:mod:`nsbtools.waves` - Run the simple wave model
+---------------------------------------------------------------
+
+.. automodule:: nsbtools.waves
+   :no-members:
+   :no-inherited-members:
+
+.. currentmodule:: nsbtools.waves
+
+.. autosummary::
+   :template: function.rst
+   :toctree: generated/
+
+   nsbtools.waves.simulate_waves
+
+.. _ref_connectome:
+
+:mod:`nsbtools.connectome` - Generative network modelling
+---------------------------------------------------------------
+
+.. automodule:: nsbtools.connectome
+   :no-members:
+   :no-inherited-members:
+
+.. currentmodule:: nsbtools.connectome
+
+.. autosummary::
+   :template: function.rst
+   :toctree: generated/
+
+   nsbtools.connectome.generate_connectome
+
+.. _ref_io:
+
+:mod:`nsbtools.io` - IO functions for cortical surface meshes and maps
+---------------------------------------------------------------
+
+.. automodule:: nsbtools.io
+   :no-members:
+   :no-inherited-members:
+
+.. currentmodule:: nsbtools.io
+
+.. autosummary::
+   :template: function.rst
+   :toctree: generated/
+
+   nsbtools.io.read_surf
+   nsbtools.io.mask_surf
+   nsbtools.io.check_surf
+   nsbtools.io.load_data

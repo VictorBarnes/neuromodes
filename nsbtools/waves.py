@@ -6,9 +6,9 @@ from scipy import sparse
 from pathlib import Path
 from joblib import Memory
 import importlib.resources
-from numpy.typing import NDArray
+from numpy.typing import NDArray, ArrayLike
 from scipy.integrate import solve_ivp
-from typing import Optional, Union, List
+from typing import Optional
 from nsbtools.eigen import decompose
 
 # Set up joblib memory caching
@@ -20,14 +20,14 @@ if CACHE_DIR is None or not os.path.exists(CACHE_DIR):
 memory = Memory(CACHE_DIR, verbose=0)
 
 def simulate_waves(
-    emodes: Union[NDArray, List[List[float]]],
-    evals: Union[NDArray, List[float]],
-    ext_input: Optional[Union[NDArray, List[List[float]]]] = None,
+    emodes: ArrayLike,
+    evals: ArrayLike,
+    ext_input: Optional[ArrayLike] = None,
     dt: float = 0.1,
     nt: int = 1000,
     r: float = 28.9,
     gamma: float = 0.116,
-    mass: Optional[Union[NDArray, List[List[float]], sparse._csc.csc_matrix]] = None,
+    mass: Optional[ArrayLike] = None,
     bold_out: bool = False,
     eig_method: str = "orthogonal",
     pde_method: str = "fourier",
@@ -72,7 +72,7 @@ def simulate_waves(
 
     Returns
     -------
-    sim_activity : np.ndarray
+    np.ndarray
         Simulated neural or BOLD activity of shape (n_verts, n_timepoints).
 
     Raises
@@ -85,7 +85,6 @@ def simulate_waves(
     -----
     Since the simulation begins at rest, consider discarding the first 50 timepoints to allow the
     system to reach a steady state.
-
     """
     emodes = np.asarray(emodes)
     evals = np.asarray(evals)

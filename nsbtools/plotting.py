@@ -8,12 +8,11 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from surfplot import Plot
 from typing import Optional, List, Union, Tuple, Dict, Any
 import warnings
-from numpy.typing import NDArray
-from nsbtools.io import read_surf
+from numpy.typing import NDArray, ArrayLike
 
 def plot_surf(
     mesh: Union[str, Path],
-    data: Union[NDArray, List[float], List[List[float]]],
+    data: ArrayLike,
     layout: str = "row",
     views: List[str] = ["lateral", "medial"],
     color_range: Union[Tuple[float, float], str] = "individual",

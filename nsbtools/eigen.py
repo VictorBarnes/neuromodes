@@ -1,5 +1,6 @@
 """
-Module for computing eigenmodes and performing eigen-decomposition/reconstruction on surface meshes.
+Module for computing geometric eigenmodes on cortical surface meshes and decomposing/reconstructing 
+cortical maps.
 """
 
 import warnings
@@ -10,8 +11,8 @@ from lapy import Solver, TriaMesh
 from scipy.stats import zscore
 from scipy import sparse
 from scipy.sparse.linalg import LinearOperator, eigsh, splu
-from numpy.typing import NDArray
-from typing import Optional, Union, Any, List
+from numpy.typing import NDArray, ArrayLike
+from typing import Optional, Union, Any, Tuple
 from nsbtools.io import read_surf, mask_surf
 
 class EigenSolver(Solver):
@@ -25,9 +26,9 @@ class EigenSolver(Solver):
 
     def __init__(
         self,
-        mesh: Union[str, Path, Trimesh, TriaMesh],
-        mask: Optional[Union[NDArray, List[bool]]] = None,
-        hetero: Optional[Union[NDArray, List[float]]] = None,
+        mesh: Union[str, Path, Trimesh, TriaMesh, dict],
+        mask: Optional[ArrayLike] = None,
+        hetero: Optional[ArrayLike] = None,
         n_modes: int = 100,
         alpha: float = 1.0,
         beta: float = 1.0,
@@ -75,7 +76,8 @@ class EigenSolver(Solver):
         Raises
         -------
         ValueError
-            If the input mesh, mask, or parameters are not valid.
+            Raised if any input parameter is invalid, such as negative or non-numeric values for  
+            `r`, `gamma`, or `beta`, or if `n_modes` is not a positive integer.
         """
         if r <= 0 or not isinstance(r, (float, int)):
             raise ValueError("`r` must be positive.")
@@ -138,7 +140,7 @@ class EigenSolver(Solver):
         return self._hetero
 
     @hetero.setter
-    def hetero(self, hetero: Optional[Union[NDArray, List[float]]]) -> None:
+    def hetero(self, hetero: Optional[ArrayLike]) -> None:
         # Handle None case by setting to ones
         if hetero is None:
             if self.alpha != 0 or self.beta != 0:
@@ -200,7 +202,7 @@ class EigenSolver(Solver):
         standardize: bool = True,
         fix_mode1: bool = True,
         seed: Optional[Union[int, NDArray]] = None
-    ) -> None:
+    ) -> Tuple[NDArray, NDArray]:
         """
         Solve the generalized eigenvalue problem for the Laplace-Beltrami operator and compute 
         eigenvalues and eigenmodes.
@@ -212,16 +214,23 @@ class EigenSolver(Solver):
             Default is False.
         fix_mode1 : bool, optional
             If True, sets the first eigenmode to a constant value and the first eigenvalue to zero. 
-            Default is True. See the check_orthonorm_modes function for details.
+            Default is True. See the check_orthonormal_basis function for details.
         seed : int, optional
             Random seed for reproducibility. Default is None.
+
+        Returns
+        -------
+        numpy.ndarray
+            The computed eigenmodes.
+        numpy.ndarray
+            The computed eigenvalues.
 
         Raises
         ------
         ValueError
-            If `seed_vector` has an incorrect shape.
+            If `seed` is an array-like but does not have the correct shape
         AssertionError
-            If the computed eigenmodes or eigenvalues contain NaN values.
+            If any computed eigenvalues are NaN.
         """
         
         sigma = -0.01
@@ -243,7 +252,8 @@ class EigenSolver(Solver):
             else:
                v0 = np.asarray(seed)
                if v0.shape != (self.n_verts,):
-                   raise ValueError(f"`seed` must be either an integer or an array of shape ({self.n_verts},).")
+                   raise ValueError("`seed` must be either an integer or an array-like of shape "
+                                    f"({self.n_verts},).")
 
         # Solve the eigenvalue problem
         self.evals, self.emodes = eigsh(
@@ -260,7 +270,7 @@ class EigenSolver(Solver):
             warnings.warn("Unfixed first eigenvalue (analytically expected to be 0) is not at least"
                           " 100 times smaller than the second.")
 
-        check_orthonorm_modes(self.emodes, self.mass)
+        check_orthonormal_basis(self.emodes, self.mass)
 
         if fix_mode1:
             self.emodes[:, 0] = np.full(self.n_verts, 1 / np.sqrt(self.mass.sum()))
@@ -268,8 +278,249 @@ class EigenSolver(Solver):
         if standardize:
             self.emodes = standardize_modes(self.emodes)
 
+        return self.emodes, self.evals
+    
+    def decompose(
+        self,
+        data: ArrayLike,
+        method: str = 'orthogonal',
+        check_orthonorm: bool = True
+    ) -> NDArray:
+        """
+        Calculate the decomposition of the given data onto an orthogonal basis set.
+
+        Parameters
+        ----------
+        data : array-like
+            The input data array of shape (n_verts, n_maps), where n_verts is the number of vertices 
+            and n_maps is the number of brain maps.
+        method : str, optional
+            The method used for the decomposition, either 'orthogonal' or 'regress'. Default is
+            'orthogonal'.
+        check_orthonorm : bool, optional
+            If True and mass is not None, checks that the basis set is mass-orthonormal. Default 
+            is True. See the check_orthonormal_basis function for details.
+
+        Returns
+        -------
+        numpy.ndarray
+            The beta coefficients array of shape (n_modes, n_maps), obtained from the decomposition.
+        
+        Raises
+        ------
+        ValueError
+            If the number of vertices in `data` and `vecs` do not match, if `vecs` contain NaNs,
+            or if an invalid method is specified.
+        """
+        if not hasattr(self, 'emodes'):
+            _ = self.solve()
+            print("Solved Laplace-Beltrami eigenvalue problem, "
+                  "stored in self.emodes and self.evals.")
+    
+        return decompose(
+            data,
+            self.emodes,
+            method=method,
+            mass=self.mass,
+            check_orthonorm=check_orthonorm
+        )
+    
+    def reconstruct(
+        self,
+        data: ArrayLike,
+        method: str = 'orthogonal',
+        vec_seq: Optional[ArrayLike] = None,
+        timeseries: bool = False,
+        metric: str = "pearsonr",
+        return_all: bool = False,
+        check_orthonorm: bool = True
+    ) -> Any:
+        """
+        Calculate and score the reconstruction of the given data using the provided orthogonal basis set.
+
+        Parameters
+        ----------
+        data : array-like
+            The input data array of shape (n_verts, n_maps), where n_verts is the number of vertices 
+            and n_maps is the number of brain maps.
+        method : str, optional
+            The method used for the decomposition, either 'orthogonal' or 'regress'. Default is
+            'orthogonal'.
+        vec_seq : array-like, optional
+            The sequence of vectors to be used for reconstruction. Default is None, which uses all 
+            vectors provided.
+        timeseries : bool, optional
+            Whether to treat brain maps as a time series of activity and reconstruct the functional
+            coupling matrix. Default is False.
+        metric : str, optional
+            The metric used for calculating reconstruction accuracy, either "pearsonr" or "mse".
+            Default is "pearsonr".
+        return_all : bool, optional
+            Whether to return the reconstructed timepoints when timeseries is True. Default is
+            False.
+        check_orthonorm : bool, optional
+            If True and mass is not None, checks that the basis set is mass-orthonormal. Default 
+            is True. See the check_orthonormal_basis function for details.
+
+        Returns
+        -------
+        list of numpy.ndarray
+            A list of beta coefficients calculated for each mode.
+        numpy.ndarray
+            The reconstructed data array of shape (n_verts, nq, n_maps).
+        numpy.ndarray
+            The correlation coefficients array of shape (nq, n_maps).
+        numpy.ndarray, optional
+            The functional connectivity reconstructed data array of shape (n_verts, n_verts, nq). 
+            Returned only if data_type is "timeseries".
+        numpy.ndarray, optional
+            The functional connectivity correlation coefficients array of shape (nq,). Returned only
+            if data_type is "timeseries".
+        
+        Raises
+        ------
+        ValueError
+            If the number of vertices in `data` and `vecs` do not match, if `vecs` contain NaNs,
+            or if an invalid method is specified.
+        """
+        if not hasattr(self, 'emodes'):
+            _ = self.solve()
+            print("Solved Laplace-Beltrami eigenvalue problem, "
+                  "stored in self.emodes and self.evals.")
+            
+        return reconstruct(
+            data,
+            self.emodes,
+            method=method,
+            mass=self.mass,
+            vec_seq=vec_seq,
+            timeseries=timeseries,
+            metric=metric,
+            return_all=return_all,
+            check_orthonorm=check_orthonorm
+        )
+    
+    def generate_connectome(
+        self,
+        r: float = 9.53,
+        k: int = 108
+    ) -> NDArray:
+        """
+        Generate a vertex-wise structural connectivity matrix using the Green's function approach
+        described in Normand et al., 2025.
+
+        Parameters
+        ----------
+        r : float, optional
+            Spatial scale parameter for the Green's function. Default is 9.53.
+        k : int, optional
+            Number of eigenmodes to use. Default is 108.
+
+        Returns
+        -------
+        np.ndarray
+            The generated vertex-wise structural connectivity matrix.
+
+        Raises
+        ------
+        ValueError
+            If any input parameter is invalid, such as negative or non-numeric values for  
+            `r`, or if `k` is not a positive integer within the valid range.
+
+        Notes
+        -----
+        If comparing this model to empirical connectomes, consider thresholding the generated 
+        connectome to match the density of the empirical data.
+        """
+        from nsbtools.connectome import generate_connectome
+
+        if not hasattr(self, 'emodes'):
+            _ = self.solve()
+            print("Solved Laplace-Beltrami eigenvalue problem, "
+                  "stored in self.emodes and self.evals.")
+
+        return generate_connectome(
+            emodes=self.emodes,
+            evals=self.evals,
+            r=r,
+            k=k
+        )
+    
+    def simulate_waves(
+        self,
+        ext_input: Optional[ArrayLike] = None,
+        dt: float = 0.1,
+        nt: int = 1000,
+        bold_out: bool = False,
+        eig_method: str = "orthogonal",
+        pde_method: str = "fourier",
+        seed: Optional[int] = None
+    ) -> NDArray:
+        """
+        Simulate neural activity or BOLD signals on the surface mesh using the eigenmode 
+        decomposition. The simulation uses a Neural Field Theory wave model and optionally the
+        Balloon-Windkessel model for BOLD signal generation. 
+
+        Parameters
+        ----------
+        ext_input : array-like, optional
+            External input array of shape (n_verts, n_timepoints). If None, random input is 
+            generated.
+        dt : float, optional
+            Time step for simulation in milliseconds. Default is 0.1.
+        nt : int, optional
+            Number of time points to simulate Default is 1000.
+        bold_out : bool, optional
+            If True, simulate BOLD signal using the balloon model. If False, simulate neural 
+            activity. Default is False.
+        eig_method : str, optional
+            Method for eigen-decomposition, either "orthogonal" or "regress". Default is
+            "orthogonal".
+        pde_method : str, optional
+            Method for solving the wave PDE. Either "fourier" or "ode". Default is "fourier".
+        seed : int, optional
+            Random seed for generating external input. Default is None.
+
+        Returns
+        -------
+        np.ndarray
+            Simulated neural or BOLD activity of shape (n_verts, n_timepoints).
+
+        Raises
+        ------
+        ValueError
+            If the shape of ext_input does not match (n_verts, n_timepoints), or if either the
+            eigen-decomposition or PDE method is invalid.
+
+        Notes
+        -----
+        Since the simulation begins at rest, consider discarding the first 50 timepoints to allow 
+        the system to reach a steady state.
+        """
+        from nsbtools.waves import simulate_waves
+
+        if not hasattr(self, 'emodes'):
+            _ = self.solve()
+            print("Solved Laplace-Beltrami eigenvalue problem, "
+                  "stored in self.emodes and self.evals.")
+
+        return simulate_waves(
+            emodes=self.emodes,
+            evals=self.evals,
+            r=self.r,
+            gamma=self.gamma,
+            ext_input=ext_input,
+            dt=dt,
+            nt=nt,
+            mass=self.mass,
+            bold_out=bold_out,
+            eig_method=eig_method,
+            pde_method=pde_method,
+            seed=seed
+        )
+
 def check_hetero(
-    hetero: NDArray,
+    hetero: ArrayLike,
     r: float,
     gamma: float
 ) -> None:
@@ -290,13 +541,15 @@ def check_hetero(
     ValueError
         If the computed wave speed exceeds 150 m/s, indicating non-physiological values.
     """
+    hetero = np.asarray(hetero)
+
     max_speed = np.max(r * gamma * np.sqrt(hetero))
     if max_speed > 150:
         raise ValueError(f"Alpha value results in non-physiological wave speeds of {max_speed:.2f} "
                          "m/s (> 150 m/s). Try using a smaller alpha value.")
 
 def scale_hetero(
-    hetero: NDArray,
+    hetero: ArrayLike,
     alpha: float = 1.0,
     beta: float = 1.0,
     scaling: str = "sigmoid"
@@ -316,7 +569,7 @@ def scale_hetero(
     
     Returns
     -------
-    hetero : ndarray
+    ndarray
         The scaled heterogeneity map.
 
     Raises
@@ -324,22 +577,24 @@ def scale_hetero(
     ValueError
         If the scaling parameter is not a supported function.
     """
+    hetero = np.asarray(hetero)
+
     # Z-score the heterogeneity map
-    hetero = zscore(hetero)
+    hetero_z = zscore(hetero)
 
     # Scale the heterogeneity map
     if scaling == "exponential":
-        hetero = np.exp(alpha * hetero)
+        hetero_scaled = np.exp(alpha * hetero_z)
     elif scaling == "sigmoid":
-        hetero = (2 / (1 + np.exp(-alpha * hetero)))**beta
+        hetero_scaled = (2 / (1 + np.exp(-alpha * hetero_z)))**beta
     else:
         raise ValueError(f"Invalid scaling '{scaling}'. Must be 'exponential' or 'sigmoid'.")
 
-    return hetero
+    return hetero_scaled
 
-def check_orthonorm_modes(
-    emodes: Union[NDArray, List[List[float]]],
-    mass: Union[NDArray, List[List[float]], sparse._csc.csc_matrix],
+def check_orthonormal_basis(
+    emodes: ArrayLike,
+    mass: Union[sparse._csc.csc_matrix, ArrayLike],
     atol: float = 1e-3
 ) -> None:
     """
@@ -371,7 +626,7 @@ def check_orthonorm_modes(
         warnings.warn('Eigenmodes are not mass-orthonormal.')
 
 def standardize_modes(
-    emodes: Union[NDArray, List[List[float]]]
+    emodes: ArrayLike
 ) -> NDArray:
     """
     Perform standardisation by flipping the modes such that the first element of each eigenmode is 
@@ -398,123 +653,131 @@ def standardize_modes(
     
     return standardized_modes
 
+def calc_norm_power(
+    beta: NDArray
+) -> NDArray:
+    """
+    Transform beta coefficients from a decomposition into normalised power.
+
+    Parameters
+    ----------
+    beta : numpy.ndarray
+        The beta coefficients array of shape (n_vects, n_maps), where n_vects is the number of 
+        orthogonal vectors and n_maps is the number of brain maps.
+
+    Returns
+    -------
+    numpy.ndarray
+        The normalized power array of shape (n_vects, n_maps), where each element represents the 
+        proportion of power contributed by the corresponding orthogonal vector to each brain map.
+    """
+    return beta**2 / np.sum(beta**2, axis=0)
+
 def decompose(
-    data: Union[NDArray, List[List[float]], List[float]],
-    emodes: Union[NDArray, List[List[float]]],
+    data: ArrayLike,
+    vecs: ArrayLike,
     method: str = 'orthogonal',
-    mass: Optional[Union[NDArray, List[List[float]], sparse._csc.csc_matrix]] = None,
-    return_norm_power: bool = False,
+    mass: Optional[Union[sparse._csc.csc_matrix, ArrayLike]] = None,
     check_orthonorm: bool = True
 ) -> NDArray:
     """
-    Calculate the eigen-decomposition of the given data using the specified method.
+    Calculate the decomposition of the given data onto an orthogonal basis set.
 
     Parameters
     ----------
     data : array-like
         The input data array of shape (n_verts, n_maps), where n_verts is the number of vertices 
         and n_maps is the number of brain maps.
-    emodes : array-like
-        The eigenmodes array of shape (n_verts, n_modes), where n_modes is the number of 
-        eigenmodes.
+    vecs : array-like
+        The basis set array of shape (n_verts, n_vects), where n_vects is the number of 
+        orthogonal vectors.
     method : str, optional
-        The method used for the eigen-decomposition, either 'orthogonal' or 'regress'. Default is
+        The method used for the decomposition, either 'orthogonal' or 'regress'. Default is
         'orthogonal'.
     mass : array-like, optional
-        The mass matrix of shape (n_verts, n_verts) used for the eigen-decomposition when method
-        is 'orthogonal'. If using EigenSolver, provide its self.mass. Default is None.
-    return_norm_power : bool, optional
-        If True, returns normalized power of each mode instead of beta coefficients. Default is
-        False.
+        The mass matrix of shape (n_verts, n_verts) used for the decomposition when method
+        is 'orthogonal'. If using EigenSolver, provide its self.mass. If using a basis set that is 
+        orthogonal in Euclidean space, provide an identity matrix. Default is None.
     check_orthonorm : bool, optional
-        If True and mass is not None, checks that the eigenmodes are mass-orthonormal. Default 
-        is True. See the check_orthonorm_modes function for details.
+        If True and mass is not None, checks that the basis set is mass-orthonormal. Default 
+        is True. See the check_orthonormal_basis function for details.
 
     Returns
     -------
-    beta : numpy.ndarray
-        The beta coefficients array of shape (n_modes, n_maps), obtained from the
-        eigen-decomposition.
-    norm_power : numpy.ndarray, optional
-        The normalized power array of shape (n_modes, n_maps), obtained from the
-        eigen-decomposition.
-
+    numpy.ndarray
+        The beta coefficients array of shape (n_modes, n_maps), obtained from the decomposition.
+    
     Raises
     ------
     ValueError
-        If the number of vertices in `data` and `emodes` do not match, if `emodes` contain NaNs,
-        if an invalid method is specified, or if the `mass` matrix is not provided when
-        required.
+        If the number of vertices in `data` and `vecs` do not match, if `vecs` contain NaNs,
+        or if an invalid method is specified.
     """
     data = np.asarray(data)
-    emodes = np.asarray(emodes)
+    vecs = np.asarray(vecs)
     if mass is not None:
         mass = sparse.csc_matrix(mass)
     if method not in ['orthogonal', 'regress']:
-        raise ValueError(f"Invalid eigen-decomposition method '{method}'; must be 'orthogonal' "
+        raise ValueError(f"Invalid decomposition method '{method}'; must be 'orthogonal' "
                             "or 'regress'.")
     
-    n_verts = emodes.shape[0]
+    n_verts = vecs.shape[0]
 
     if data.shape[0] != n_verts:
         raise ValueError(f"The number of elements in `data` ({data.shape[0]}) must match "
-                            f"the number of vertices in `emodes` ({n_verts}).")
-    if np.isnan(emodes).any() or np.isinf(emodes).any():
-        raise ValueError("`emodes` contains NaNs or Infs.")
+                            f"the number of vertices in `vecs` ({n_verts}).")
+    if np.isnan(vecs).any() or np.isinf(vecs).any():
+        raise ValueError("`vecs` contains NaNs or Infs.")
     if data.ndim == 1:
         data = np.expand_dims(data, axis=1)
     if check_orthonorm and mass is not None:
-        check_orthonorm_modes(emodes, mass)
+        check_orthonormal_basis(vecs, mass)
 
     if method == 'orthogonal':
-        if mass is None or mass.get_shape() != (n_verts, emodes.shape[0]):
-            raise ValueError(f"Mass matrix of shape ({emodes.shape[0]}, {emodes.shape[0]}) must "
+        if mass is None or mass.get_shape() != (n_verts, vecs.shape[0]):
+            raise ValueError(f"Mass matrix of shape ({vecs.shape[0]}, {vecs.shape[0]}) must "
                                 "be provided when method is 'orthogonal'.")
-        beta = emodes.T @ mass @ data
+        beta = vecs.T @ mass @ data
     elif method == 'regress':
-        beta = np.linalg.solve(emodes.T @ emodes, emodes.T @ data)
+        beta = np.linalg.solve(vecs.T @ vecs, vecs.T @ data)
     else:
-        raise ValueError(f"Invalid eigen-decomposition method '{method}'; must be 'orthogonal' "
+        raise ValueError(f"Invalid decomposition method '{method}'; must be 'orthogonal' "
                             "or 'regress'.")
 
-    if return_norm_power:
-        total_power = np.sum(beta**2, axis=0)
-        norm_power = beta**2 / total_power
-        return norm_power
-    else:
-        return beta
+    return beta
 
 def reconstruct(
-    data: Union[NDArray, List[List[float]], List[float]],
-    emodes: Union[NDArray, List[List[float]]],
+    data: ArrayLike,
+    vecs: ArrayLike,
     method: str = 'orthogonal',
-    mass: Optional[Union[NDArray, List[List[float]], sparse._csc.csc_matrix]] = None,
-    modesq: Optional[Union[NDArray, list]] = None,
+    mass: Optional[Union[sparse._csc.csc_matrix, ArrayLike]] = None,
+    vec_seq: Optional[ArrayLike] = None,
     timeseries: bool = False,
     metric: str = "pearsonr",
     return_all: bool = False,
     check_orthonorm: bool = True
 ) -> Any:
     """
-    Calculate the eigen-reconstruction of the given data using the provided eigenmodes.
+    Calculate and score the reconstruction of the given data using the provided orthogonal basis set.
 
     Parameters
     ----------
     data : array-like
         The input data array of shape (n_verts, n_maps), where n_verts is the number of vertices 
         and n_maps is the number of brain maps.
-    emodes : array-like
-        The eigenmodes array of shape (n_verts, n_modes), where n_modes is the number of 
-        eigenmodes.
+    vecs : array-like
+        The basis set array of shape (n_verts, n_vects), where n_vects is the number of orthogonal 
+        vectors.
     method : str, optional
-        The method used for the eigen-decomposition, either 'orthogonal' or 'regress'. Default is
+        The method used for the decomposition, either 'orthogonal' or 'regress'. Default is
         'orthogonal'.
     mass : array-like, optional
-        The mass matrix used for the eigen-decomposition when method is 'orthogonal'. If using
-        EigenSolver, provide its self.mass. Default is None.
-    modesq : array-like, optional
-        The sequence of modes to be used for reconstruction. Default is None, which uses all 
-        modes.
+        The mass matrix of shape (n_verts, n_verts) used for the decomposition when method is 
+        'orthogonal'. If using EigenSolver, provide its self.mass. If using a basis set that is 
+        orthogonal in Euclidean space, provide an identity matrix. Default is None.
+    vec_seq : array-like, optional
+        The sequence of vectors to be used for reconstruction. Default is None, which uses all 
+        vectors provided.
     timeseries : bool, optional
         Whether to treat brain maps as a time series of activity and reconstruct the functional
         coupling matrix. Default is False.
@@ -525,8 +788,8 @@ def reconstruct(
         Whether to return the reconstructed timepoints when timeseries is True. Default is
         False.
     check_orthonorm : bool, optional
-        If True and mass is not None, checks that the eigenmodes are mass-orthonormal. Default 
-        is True. See the check_orthonorm_modes function for details.
+        If True and mass is not None, checks that the basis set is mass-orthonormal. Default 
+        is True. See the check_orthonormal_basis function for details.
 
     Returns
     -------
@@ -546,12 +809,11 @@ def reconstruct(
     Raises
     ------
     ValueError
-        If the number of vertices in `data` and `emodes` do not match, if `emodes` contain NaNs,
-        if an invalid method or metric is specified, or if the `mass` matrix is not provided
-        when required.
+        If the number of vertices in `data` and `vecs` do not match, if `vecs` contain NaNs,
+        or if an invalid method is specified.
     """
     data = np.asarray(data)
-    emodes = np.asarray(emodes)
+    vecs = np.asarray(vecs)
     if mass is not None:
         mass = sparse.csc_matrix(mass)
 
@@ -560,11 +822,11 @@ def reconstruct(
     if data.ndim == 1:
         data = np.expand_dims(data, axis=1)
     if check_orthonorm and mass is not None:
-        check_orthonorm_modes(emodes, mass)
+        check_orthonormal_basis(vecs, mass)
 
     # Use all modes if not specified (except the first constant mode)
-    modesq = np.arange(1, np.shape(emodes)[1] + 1) if modesq is None else np.asarray(modesq)
-    nq = len(modesq)
+    vec_seq = np.arange(1, np.shape(vecs)[1] + 1) if vec_seq is None else np.asarray(vec_seq)
+    nq = len(vec_seq)
 
     n_verts, n_maps = np.shape(data)
 
@@ -580,15 +842,15 @@ def reconstruct(
 
     # Decompose the data to get beta coefficients
     if method == 'orthogonal':
-        if mass is None or mass.get_shape() != (emodes.shape[0], emodes.shape[0]):
-            raise ValueError(f"Mass matrix of shape ({emodes.shape[0]}, {emodes.shape[0]}) must "
+        if mass is None or mass.get_shape() != (vecs.shape[0], vecs.shape[0]):
+            raise ValueError(f"Mass matrix of shape ({vecs.shape[0]}, {vecs.shape[0]}) must "
                                 "be provided when method is 'orthogonal'.")
-        tmp = decompose(data, emodes[:, :np.max(modesq)], mass=mass,
+        tmp = decompose(data, vecs[:, :np.max(vec_seq)], mass=mass,
                                     check_orthonorm=False)
-        beta = [tmp[:mq] for mq in modesq]
+        beta = [tmp[:mq] for mq in vec_seq]
     else:
         beta = [
-            decompose(data, emodes[:, :modesq[i]], method=method)
+            decompose(data, vecs[:, :vec_seq[i]], method=method)
             for i in range(nq)
         ]
 
@@ -597,13 +859,13 @@ def reconstruct(
     recon_score = np.empty((nq, n_maps), dtype=data.dtype)
     for i in range(nq):
         # Reconstruct the data using the beta coefficients
-        recon[:, i, :] = emodes[:, :modesq[i]] @ beta[i]
+        recon[:, i, :] = vecs[:, :vec_seq[i]] @ beta[i]
 
         # Score reconstruction
         if return_all or timeseries is False:
             if metric == "pearsonr":
                 recon_score[i, :] = [
-                    0 if modesq[i] == 1 else np.corrcoef(data[:, j],
+                    0 if vec_seq[i] == 1 else np.corrcoef(data[:, j],
                                                             np.squeeze(recon[:, i, j]))[0, 1]
                     for j in range(n_maps)
                 ]
@@ -615,14 +877,14 @@ def reconstruct(
 
         if timeseries:
             # Calculate FC from the reconstruction
-            fc_recon[:, :, i] = 0 if modesq[i] == 1 else np.corrcoef(recon[:, i, :])
+            fc_recon[:, :, i] = 0 if vec_seq[i] == 1 else np.corrcoef(recon[:, i, :])
 
             # Clip FC at (-1, 1), then Fisher r-to-z transform
             fc_recon_z = np.arctanh(np.clip(fc_recon[:, :, i][triu_inds], -1+1e-6, 1-1e-6))
 
             # Score reconstruction of FC
             if metric == "pearsonr":
-                fc_recon_score[i] = 0 if modesq[i] == 1 else np.corrcoef(
+                fc_recon_score[i] = 0 if vec_seq[i] == 1 else np.corrcoef(
                     fc_orig_z, fc_recon_z  
                 )[0, 1]
             elif metric == "mse":
