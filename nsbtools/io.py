@@ -33,8 +33,8 @@ def read_surf(
                 mesh = Trimesh(vertices=mesh_data[0].data, faces=mesh_data[1].data)
             except Exception as e:
                 raise ValueError(
-                    '`surf` must be a path-like string to a valid VTK or nibabel-supported file '
-                    '(e.g., GIFTI), or an instance of either trimesh.Trimesh or lapy.TriaMesh.'
+                    '`surf` must be a path-like string to a valid nibabel-supported file (e.g., VTK'
+                    ', GIFTI), or an instance of either trimesh.Trimesh or lapy.TriaMesh.'
                     ) from e
     
     # Validate the mesh before returning
@@ -46,8 +46,8 @@ def mask_surf(
     surf: Trimesh,
     mask: ArrayLike
 ) -> tuple[Trimesh, NDArray]:
-    """Remove specified vertices from the surface mesh. Returns a validated trimesh.Trimesh object
-    and the updated vertex mask."""
+    """Remove specified vertices and corresponding faces from the surface mesh. Returns a validated 
+    trimesh.Trimesh object."""
     if len(mask) != surf.vertices.shape[0]:
         raise ValueError(f"The number of elements in `mask` ({len(mask)}) must match "
                          f"the number of vertices in the surface mesh ({surf.vertices.shape[0]}).")
@@ -64,7 +64,7 @@ def mask_surf(
 def check_surf(
     surf: Trimesh
 ) -> None:
-    """Check if the surface mesh is valid."""
+    """Check if the surface mesh is contiguous with no unreferenced vertices."""
 
     # Check for unreferenced vertices
     referenced = np.zeros(len(surf.vertices), dtype=bool)
