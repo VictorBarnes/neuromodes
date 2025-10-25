@@ -113,8 +113,7 @@ def simulate_waves(
         raise ValueError(f"External input shape is {ext_input.shape}, should be ({n_verts}, {nt}).")
 
     # Mode decomposition of external input
-    input_coeffs = decompose(ext_input, emodes, method=eig_method, mass=mass,
-                                    check_orthonorm=True)
+    input_coeffs = decompose(ext_input, emodes, method=eig_method, mass=mass)
     
     t = np.linspace(0, dt * (nt - 1), nt)
 

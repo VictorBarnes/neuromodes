@@ -1,6 +1,5 @@
 import pytest
 import numpy as np
-import nibabel as nib
 from nsbtools.io import load_data
 from nsbtools.eigen import EigenSolver
 from nsbtools.waves import simulate_waves

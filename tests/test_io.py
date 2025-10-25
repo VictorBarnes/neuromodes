@@ -32,10 +32,10 @@ def test_load_surf():
     assert mesh.vertices.shape == (32492, 3)
 
 def test_load_medmask():
-    medmask = load_data('medmask', species='marmoset', density='10k')
+    medmask = load_data('medmask', species='marmoset', density='38k')
     assert isinstance(medmask, np.ndarray)
     assert medmask.dtype == bool
-    assert medmask.shape == (10242,)
+    assert medmask.shape == (37974,)
 
 def test_load_gradient():
     grad = load_data('fcgradient1')

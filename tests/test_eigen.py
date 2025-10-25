@@ -3,7 +3,7 @@ import numpy as np
 from lapy import TriaMesh
 from importlib.resources import files
 from nsbtools.io import load_data, mask_surf
-from nsbtools.eigen import EigenSolver, decompose, reconstruct, calc_norm_power
+from nsbtools.eigen import EigenSolver, decompose, reconstruct, calc_norm_power, check_orthonormal_vecs
 
 @pytest.fixture
 def surf_medmask_hetero():
@@ -221,11 +221,8 @@ def test_warn_orthonorm(solver):
     emodes = solver.emodes
     emodes[:, 0] += 0.1 # Destroy mass-orthonormality by changing first mode's value
 
-    # Solver and static methods should warn by default
-    with pytest.warns(Warning, match='Eigenmodes are not mass-orthonormal.*'):
-        _ = decompose(emodes[:, 1], emodes, mass=solver.mass)
-    with pytest.warns(Warning, match='Eigenmodes are not mass-orthonormal.*'):
-        _ = reconstruct(emodes[:, 1], emodes, mass=solver.mass)
+    with pytest.warns(Warning, match=r'mass-orthonormal \(atol=0.001\)'):
+        check_orthonormal_vecs(emodes, solver.mass)
 
 def test_decompose_eigenmodes(solver):
     emodes = solver.emodes
