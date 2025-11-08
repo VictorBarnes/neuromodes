@@ -43,8 +43,9 @@ def generate_connectome(
     """
     emodes = np.asarray(emodes)
     evals = np.asarray(evals)
+    r = float(r)
 
-    if not isinstance(r, (float, int)) or r <= 0:
+    if r <= 0:
         raise ValueError("Parameter `r` must be positive.")
     if emodes.ndim != 2:
         raise ValueError("`emodes` must be a 2D array (vertices x modes).")

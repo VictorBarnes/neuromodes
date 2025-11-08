@@ -1,15 +1,14 @@
 import pytest
 import numpy as np
-from nsbtools.io import load_data
+from nsbtools.io import fetch_surf
 from nsbtools.eigen import EigenSolver
 from nsbtools.waves import simulate_waves
 
 @pytest.fixture
 def solver():
-    surf = load_data('surf', species='human', template='fsLR', density='4k', hemi='L')
-    medmask = load_data('medmask', species='human', template='fsLR', density='4k', hemi='L')
-    solver = EigenSolver(surf, mask=medmask)
-    solver.solve()
+    surf = fetch_surf(density='4k')
+    solver = EigenSolver(surf['mesh'], mask=surf['medmask'], n_modes=100)
+    _ = solver.solve()
     return solver
 
 def test_simulate_waves_impulse(solver):

@@ -45,9 +45,9 @@ API Reference
    :template: function.rst
    :toctree: generated/
 
-   check_hetero
+   is_valid_hetero
    scale_hetero
-   check_orthonormal_basis
+   is_mass_orthonormal_modes
    standardize_modes
    calc_norm_power
    decompose
@@ -105,4 +105,5 @@ API Reference
    nsbtools.io.read_surf
    nsbtools.io.mask_surf
    nsbtools.io.check_surf
-   nsbtools.io.load_data
+   nsbtools.io.fetch_surf
+   nsbtools.io.fetch_map

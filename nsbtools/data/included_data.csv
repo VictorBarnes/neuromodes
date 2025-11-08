@@ -3,12 +3,16 @@ surf,human,fsLR,4k,L,Glasser et al. (2011) J Neurosci,Cortical midthickness surf
 surf,human,fsLR,4k,R,Glasser et al. (2011) J Neurosci,Cortical midthickness surface mesh (Conte69)
 surf,human,fsLR,32k,L,Glasser et al. (2011) J Neurosci,Cortical midthickness surface mesh (Conte69)
 surf,human,fsLR,32k,R,Glasser et al. (2011) J Neurosci,Cortical midthickness surface mesh (Conte69)
-surf,macaque,fsLR,10k,L,Donahue et al. (2016) J Neurosci,Cortical midthickness surface mesh (Yerkes19)
-surf,marmoset,fsLR,38k,L,Liu et al. (2021) NeuroImage,Cortical midthickness surface mesh (MBMv3)
+surf,macaque,fsLR,32k,L,Donahue et al. (2016) J Neurosci,Cortical midthickness surface mesh (Yerkes19)
+surf,macaque,fsLR,32k,R,Donahue et al. (2016) J Neurosci,Cortical midthickness surface mesh (Yerkes19)
+surf,marmoset,fsLR,32k,L,Liu et al. (2021) NeuroImage,Cortical midthickness surface mesh (MBMv3)
+surf,marmoset,fsLR,32k,R,Liu et al. (2021) NeuroImage,Cortical midthickness surface mesh (MBMv3)
 medmask,human,fsLR,4k,L,Glasser et al. (2016) J Neurosci,Medial wall mask for midthickness
 medmask,human,fsLR,4k,R,Glasser et al. (2016) J Neurosci,Medial wall mask for midthickness
 medmask,human,fsLR,32k,L,Glasser et al. (2016) J Neurosci,Medial wall mask for midthickness
 medmask,human,fsLR,32k,R,Glasser et al. (2016) J Neurosci,Medial wall mask for midthickness
-medmask,macaque,fsLR,10k,L,Donahue et al. (2016) J Neurosci,Medial wall mask for midthickness
-medmask,marmoset,fsLR,38k,L,Liu et al. (2021) NeuroImage,Medial wall mask for midthickness
+medmask,macaque,fsLR,32k,L,Donahue et al. (2016) J Neurosci,Medial wall mask for midthickness
+medmask,macaque,fsLR,32k,R,Donahue et al. (2016) J Neurosci,Medial wall mask for midthickness
+medmask,marmoset,fsLR,32k,L,Liu et al. (2021) NeuroImage,Medial wall mask for midthickness
+medmask,marmoset,fsLR,32k,R,Liu et al. (2021) NeuroImage,Medial wall mask for midthickness
 fcgradient1,human,fsLR,32k,L,Margulies et al. (2016) PNAS,First functional connectivity gradient

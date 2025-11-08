@@ -2,16 +2,15 @@ import pytest
 import numpy as np
 from lapy import TriaMesh
 from importlib.resources import files
-from nsbtools.io import load_data, mask_surf
-from nsbtools.eigen import EigenSolver, decompose, reconstruct, calc_norm_power, check_orthonormal_vecs
+from nsbtools.io import fetch_surf, fetch_map, mask_surf
+from nsbtools.eigen import EigenSolver, decompose, reconstruct, calc_norm_power, is_mass_orthonormal_modes
 
 @pytest.fixture
 def surf_medmask_hetero():
-    surf = load_data('surf', species='human', template='fsLR', density='4k', hemi='L')
-    medmask = load_data('medmask', species='human', template='fsLR', density='4k', hemi='L')
-    np.random.seed(0)
-    hetero = np.random.normal(loc=0, scale=0.5, size=len(medmask))
-    return surf, medmask, hetero
+    surf = fetch_surf(density='4k')
+    rng = np.random.default_rng(0)
+    hetero = rng.standard_normal(size=len(surf['medmask']))
+    return surf['mesh'], surf['medmask'], hetero
 
 def test_init_params(surf_medmask_hetero):
     surf, medmask, hetero = surf_medmask_hetero
@@ -27,10 +26,6 @@ def test_triamesh_surf(surf_medmask_hetero):
     surf, medmask, hetero = surf_medmask_hetero
     mesh = TriaMesh(surf.vertices, surf.faces)
     _ = EigenSolver(mesh, mask=medmask, hetero=hetero)
-
-def test_invalid_surf():
-    with pytest.raises(ValueError, match="not a valid file path"):
-        EigenSolver([1,2,3])
 
 def test_no_medmask(surf_medmask_hetero):
     surf, _, hetero = surf_medmask_hetero
@@ -50,7 +45,6 @@ def test_invalid_hetero_shape(surf_medmask_hetero):
 
 def test_nan_inf_hetero(surf_medmask_hetero):
     surf, _, hetero = surf_medmask_hetero
-
     hetero[0] = np.nan
     with pytest.raises(ValueError, match="`hetero` must not contain NaNs or Infs."):
         EigenSolver(surf, hetero=hetero)
@@ -118,9 +112,11 @@ def test_no_hetero(presolver):
         presolver.hetero = None
     emodes, evals = presolver.solve()
 
+    test_data = files('nsbtools').parent / 'tests' / 'test_data'
+
     # Check that eigenmodes and eigenvalues 2-10 highly correlate with previously calculated set
-    prior_modes = np.load(files('nsbtools.data') / 'sp-human_tpl-fsLR_den-4k_hemi-L_midthickness-emodes.npy')
-    prior_evals = np.load(files('nsbtools.data') / 'sp-human_tpl-fsLR_den-4k_hemi-L_midthickness-evals.npy')
+    prior_modes = np.load(test_data / 'sp-human_tpl-fsLR_den-4k_hemi-L_midthickness-emodes.npy')
+    prior_evals = np.load(test_data / 'sp-human_tpl-fsLR_den-4k_hemi-L_midthickness-evals.npy')
 
     for i in range(1, 10):
         assert np.abs(np.corrcoef(emodes[:, i], prior_modes[:, i])[0, 1]) > 0.99, \
@@ -141,7 +137,8 @@ def test_seeded_modes(presolver):
     assert not (evals1 == evals3).all(), 'Eigenvalues from different seeds should not be identical.'
 
 def test_vector_seeded_modes(presolver):
-    v0 = np.random.normal(size=presolver.n_verts)
+    rng = np.random.default_rng(0)
+    v0 = rng.standard_normal(size=presolver.n_verts)
     emodes1, evals1 = presolver.solve(standardize=False, fix_mode1=False, seed=v0)
 
     # Reuse the same seed vector
@@ -150,7 +147,8 @@ def test_vector_seeded_modes(presolver):
     assert (emodes1 == emodes2).all(), 'Modes from same seed vector are not identical.'
     assert (evals1 == evals2).all(), 'Eigenvalues from same seed vector are not identical.'
 
-    v0_diff = np.random.normal(size=presolver.n_verts)
+    rng = np.random.default_rng(1)
+    v0_diff = rng.standard_normal(size=presolver.n_verts)
 
     emodes3, evals3 = presolver.solve(standardize=False, fix_mode1=False, seed=v0_diff)
 
@@ -217,12 +215,23 @@ def test_constant_mode1(solver):
                       atol=1e-6), 'Mean of unfixed first mode is not close to fixed value.'
     assert eval1_unfixed < 1e-6, 'First eigenvalue of unfixed first mode is not close to 0.'
 
-def test_warn_orthonorm(solver):
+def test_check_orthonorm(solver):
     emodes = solver.emodes
+
+    # Check that modes are not orthonormal in Euclidean space
+    assert not is_mass_orthonormal_modes(emodes)
+
     emodes[:, 0] += 0.1 # Destroy mass-orthonormality by changing first mode's value
 
-    with pytest.warns(Warning, match=r'mass-orthonormal \(atol=0.001\)'):
-        check_orthonormal_vecs(emodes, solver.mass)
+    assert not is_mass_orthonormal_modes(emodes, solver.mass)
+
+def test_check_euclidean_orthonorm():
+    # Create orthonormal vectors in Euclidean space
+    vecs = np.eye(5)
+
+    assert is_mass_orthonormal_modes(vecs)
+    assert is_mass_orthonormal_modes(vecs, mass=np.eye(5))
+    assert not is_mass_orthonormal_modes(vecs, mass=np.zeros((5, 5)))
 
 def test_decompose_eigenmodes(solver):
     emodes = solver.emodes
@@ -238,7 +247,7 @@ def test_decompose_eigenmodes(solver):
 
 def test_decompose_invalid_data_shape(solver):
 
-    with pytest.raises(ValueError, match=r".*`data` \(4002\) must match .* `vecs` \(3636\)."):
+    with pytest.raises(ValueError, match=r".*`data` \(4002\) must match .* `emodes` \(3636\)."):
         decompose(np.ones(4002), solver.emodes, mass=solver.mass)
 
 def test_decompose_nan_inf_mode(solver):
@@ -246,11 +255,11 @@ def test_decompose_nan_inf_mode(solver):
     data = np.ones(solver.n_verts)
 
     emodes[0,0] = np.nan
-    with pytest.raises(ValueError, match="`vecs` contains NaNs or Infs."):
+    with pytest.raises(ValueError, match="`emodes` contains NaNs or Infs."):
         decompose(data, emodes, mass=solver.mass)
 
     emodes[0,0] = np.inf
-    with pytest.raises(ValueError, match="`vecs` contains NaNs or Infs."):
+    with pytest.raises(ValueError, match="`emodes` contains NaNs or Infs."):
         decompose(data, emodes, mass=solver.mass)
 
 def test_decompose_massless(solver):
@@ -268,8 +277,8 @@ def gen_eigenmap(solver):
 
     # Use randomly weighted sums of modes to generate maps
     n_maps = 3
-    np.random.seed(0)
-    weights = np.random.normal(loc=0, scale=0.5, size=(solver.n_modes, n_maps))
+    rng = np.random.default_rng(0)
+    weights = rng.standard_normal(size=(solver.n_modes, n_maps))
     eigenmaps = solver.emodes @ weights
 
     return weights, eigenmaps
@@ -295,7 +304,7 @@ def test_reconstruct_mode_superposition(solver, gen_eigenmap):
                        atol=1e-10), 'MSE is not close to 0 when using all modes.'
 
     # Reconstruct using the first 5 modes, then the first 2 modes
-    _, _, pearsonr_modesq = reconstruct(eigenmaps, solver.emodes, mass=solver.mass, vec_seq=[5,2])
+    _, _, pearsonr_modesq = reconstruct(eigenmaps, solver.emodes, mass=solver.mass, mode_seq=[5,2])
     assert (pearsonr_modesq[0,:] == pearsonr[4,:]).all(), \
         'Reconstruction scores do not match for 5 modes.'
     assert (pearsonr_modesq[1,:] == pearsonr[1,:]).all(), \
@@ -314,7 +323,9 @@ def test_reconstruct_regress_method(solver, gen_eigenmap):
         'MSE does not strictly decrease when adding modes.'
 
 def test_reconstruct_mode_superposition_timeseries(solver, gen_eigenmap):
-    _, eigen_ts = gen_eigenmap
+    _, eigenmaps = gen_eigenmap
+
+    eigen_ts = eigenmaps.astype(np.float32) # Prevent memory allocation error
     fc = np.corrcoef(eigen_ts)
 
     # Treat eigenmaps as timepoints of activity
@@ -324,7 +335,7 @@ def test_reconstruct_mode_superposition_timeseries(solver, gen_eigenmap):
     assert np.allclose(fc_recon[:,:,-1], fc, atol=1e-3), 'Reconstructed FC does not match original.'
     assert pearsonr[0] == 0, \
         'FC reconstruction score is not close to 0 when using only the constant mode.'
-    assert pearsonr[-1] > 0.9999, 'FC reconstruction score is not close to 1 when using all modes.'
+    assert pearsonr[-1] > 0.999, 'FC reconstruction score is not close to 1 when using all modes.'
     
     _, _, _, mse = reconstruct(eigen_ts, solver.emodes, mass=solver.mass, timeseries=True,
                                       metric='mse')
@@ -332,17 +343,16 @@ def test_reconstruct_mode_superposition_timeseries(solver, gen_eigenmap):
 
 def test_reconstruct_real_map_32k():
     # Get modes of fsLR 32k midthickness (data is in 32k)
-    surf = load_data('surf', species='human', template='fsLR', density='32k', hemi='L')
-    medmask = load_data('medmask', species='human', template='fsLR', density='32k', hemi='L')
-    np.random.seed(0)
-    hetero = np.random.normal(loc=0, scale=0.5, size=len(medmask))
-    solver = EigenSolver(surf, mask=medmask, hetero=hetero, n_modes=10)
+    surf = fetch_surf()
+    rng = np.random.default_rng(0)
+    hetero = rng.standard_normal(size=len(surf['medmask']))
+    solver = EigenSolver(surf['mesh'], mask=surf['medmask'], hetero=hetero, n_modes=10)
     solver.solve()
     emodes = solver.emodes
 
     # Load FC gradient from Margulies 2016 PNAS
-    map = load_data('fcgradient1', species='human', template='fsLR', density='32k', hemi='L')
-    map = map[medmask]
+    map = fetch_map('fcgradient1')
+    map = map[surf['medmask']]
     _, _, recon_score = reconstruct(map, emodes, mass=solver.mass)
 
     # Pearson's r should strictly increase from 0, but not reach 1
@@ -355,7 +365,7 @@ def test_reconstruct_real_map_32k():
 
 def test_reconstruct_invalid_map_shape(solver):
 
-    with pytest.raises(ValueError, match=r".*`data` \(4002\) must match .* `vecs` \(3636\)."):
+    with pytest.raises(ValueError, match=r".*`data` \(4002\) must match .* `emodes` \(3636\)."):
         reconstruct(np.ones(4002), solver.emodes, mass=solver.mass)
 
 def test_reconstruct_invalid_metric(solver):

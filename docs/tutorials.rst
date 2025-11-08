@@ -15,5 +15,6 @@ These tutorials cover the main features of ``nsbtools``, including computing geo
    :caption: Contents:
 
    tutorials/calc_modes
-   tutorials/GEM
+   tutorials/recon_maps
    tutorials/wave_model
+   tutorials/GEM
