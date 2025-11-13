@@ -122,7 +122,7 @@ def fetch_surf(
             data_dir / f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_medmask.label.gii'
             ).darrays[0].data.astype(bool)
         
-        return {"mesh": mesh, "medmask": medmask}
+        return mesh, medmask
     except Exception as e:
         raise ValueError(
             f"Surface data not found. Please see {data_dir}/included_data.csv or "

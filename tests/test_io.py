@@ -28,12 +28,12 @@ def test_mesh_not_contiguous():
         check_surf(disconnected_mesh)
 
 def test_fetch_surf():
-    mesh = fetch_surf()['mesh']
+    mesh, _ = fetch_surf()
     assert isinstance(mesh, Trimesh)
     assert mesh.vertices.shape == (32492, 3)
 
 def test_fetch_medmask():
-    medmask = fetch_surf(species='marmoset')['medmask']
+    _, medmask = fetch_surf(species='marmoset')
     assert isinstance(medmask, np.ndarray)
     assert medmask.dtype == bool
     assert medmask.shape == (32492,)

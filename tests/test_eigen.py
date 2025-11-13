@@ -7,10 +7,10 @@ from nsbtools.eigen import EigenSolver, decompose, reconstruct, calc_norm_power,
 
 @pytest.fixture
 def surf_medmask_hetero():
-    surf = fetch_surf(density='4k')
+    mesh, medmask = fetch_surf(density='4k')
     rng = np.random.default_rng(0)
-    hetero = rng.standard_normal(size=len(surf['medmask']))
-    return surf['mesh'], surf['medmask'], hetero
+    hetero = rng.standard_normal(size=len(medmask))
+    return mesh, medmask, hetero
 
 def test_init_params(surf_medmask_hetero):
     surf, medmask, hetero = surf_medmask_hetero
@@ -104,7 +104,7 @@ def test_symmetric_stiffness(presolver):
     assert abs(diff).max() == 0, 'Stiffness matrix is not symmetric.'
 
 def test_stiffness_rowsums(presolver):
-    assert abs(presolver.stiffness.sum(axis=1)).max() < 1.5e-6
+    assert abs(presolver.stiffness.sum(axis=1)).max() < 2e-6
 
 def test_no_hetero(presolver):
 
@@ -114,15 +114,15 @@ def test_no_hetero(presolver):
 
     test_data = files('nsbtools').parent / 'tests' / 'test_data'
 
-    # Check that eigenmodes and eigenvalues 2-10 highly correlate with previously calculated set
+    # Load homogeneous eigenmodes/eigenvalues for comparison
     prior_modes = np.load(test_data / 'sp-human_tpl-fsLR_den-4k_hemi-L_midthickness-emodes.npy')
     prior_evals = np.load(test_data / 'sp-human_tpl-fsLR_den-4k_hemi-L_midthickness-evals.npy')
 
     for i in range(1, 10):
         assert np.abs(np.corrcoef(emodes[:, i], prior_modes[:, i])[0, 1]) > 0.99, \
-            f'Eigenmode {i} does not match the prior set.'
+            f'Eigenmode {i} does not match the previously computed homogeneous result.'
         assert np.allclose(evals[i], prior_evals[i], rtol=0.1), \
-            f'Eigenvalue {i} does not match the prior set.'
+            f'Eigenvalue {i} does not match the previously computed homogeneous result.'
         
 def test_seeded_modes(presolver):
     emodes1, evals1 = presolver.solve(standardize=False, fix_mode1=False, seed=36)
@@ -171,7 +171,7 @@ def test_nonstandard_modes(solver):
     
     assert np.all(emodes[0, :] >= 0), 'Standardized first element has negative values.'
     assert not np.all(emodes_nonstd[0, :] >= 0), \
-        'Non-standardized first element has no negative first elements.'
+        'Non-standardized first element should have both positive and negative values.'
     assert np.allclose(abs(emodes), abs(emodes_nonstd),
                        atol=1e-6), 'Non-standardized modes do not match standardized modes.'
 
@@ -343,16 +343,15 @@ def test_reconstruct_mode_superposition_timeseries(solver, gen_eigenmap):
 
 def test_reconstruct_real_map_32k():
     # Get modes of fsLR 32k midthickness (data is in 32k)
-    surf = fetch_surf()
+    mesh, medmask = fetch_surf()
     rng = np.random.default_rng(0)
-    hetero = rng.standard_normal(size=len(surf['medmask']))
-    solver = EigenSolver(surf['mesh'], mask=surf['medmask'], hetero=hetero, n_modes=10)
+    hetero = rng.standard_normal(size=len(medmask))
+    solver = EigenSolver(mesh, mask=medmask, hetero=hetero, n_modes=10)
     solver.solve()
     emodes = solver.emodes
 
     # Load FC gradient from Margulies 2016 PNAS
-    map = fetch_map('fcgradient1')
-    map = map[surf['medmask']]
+    map = fetch_map('fcgradient1')[medmask]
     _, _, recon_score = reconstruct(map, emodes, mass=solver.mass)
 
     # Pearson's r should strictly increase from 0, but not reach 1

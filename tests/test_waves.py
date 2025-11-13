@@ -6,8 +6,8 @@ from nsbtools.waves import simulate_waves
 
 @pytest.fixture
 def solver():
-    surf = fetch_surf(density='4k')
-    solver = EigenSolver(surf['mesh'], mask=surf['medmask'], n_modes=100)
+    mesh, medmask = fetch_surf(density='4k')
+    solver = EigenSolver(mesh, mask=medmask, n_modes=100)
     _ = solver.solve()
     return solver
 
