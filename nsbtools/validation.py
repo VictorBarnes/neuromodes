@@ -1,8 +1,8 @@
 import numpy as np
-from typing import Union, List
+from numpy.typing import ArrayLike
 
 def check_orthonormal_matrix(
-    matrix: Union[np.ndarray, List[List[float]]],
+    matrix: ArrayLike,
     tol: float = 1e-6
 ) -> bool:
     """
@@ -33,7 +33,7 @@ def check_orthonormal_matrix(
            check_normalized_vectors(matrix, colvec=False, tol=tol))
 
 def check_orthogonal_vectors(
-    matrix: Union[np.ndarray, List[List[float]]],
+    matrix: ArrayLike,
     colvec: bool = True,
     tol: float = 1e-6
 ) -> bool:
@@ -83,7 +83,7 @@ def check_orthogonal_vectors(
     return np.allclose(off_diag, 0, atol=tol)
 
 def check_normalized_vectors(
-    matrix: Union[np.ndarray, List[List[float]]],
+    matrix: ArrayLike,
     colvec: bool = True,
     tol: float = 1e-6
 ) -> bool:

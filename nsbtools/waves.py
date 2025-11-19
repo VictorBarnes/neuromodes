@@ -5,31 +5,30 @@ import numpy as np
 from scipy import sparse
 from pathlib import Path
 from joblib import Memory
-import importlib.resources
-from numpy.typing import NDArray
+from numpy.typing import NDArray, ArrayLike
 from scipy.integrate import solve_ivp
-from typing import Optional, Union, List
+from typing import Optional
 from nsbtools.eigen import decompose
 
 # Set up joblib memory caching
 CACHE_DIR = os.getenv("CACHE_DIR")
 if CACHE_DIR is None or not os.path.exists(CACHE_DIR):
-    nsbtools = importlib.resources.files('nsbtools')
-    CACHE_DIR = Path(nsbtools) / '.eigencache'
+    CACHE_DIR = Path.home() / ".nsbtools_cache"
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"Using default cache directory at {CACHE_DIR}")
 memory = Memory(CACHE_DIR, verbose=0)
 
 def simulate_waves(
-    emodes: Union[NDArray, List[List[float]]],
-    evals: Union[NDArray, List[float]],
-    ext_input: Optional[Union[NDArray, List[List[float]]]] = None,
+    emodes: ArrayLike,
+    evals: ArrayLike,
+    ext_input: Optional[ArrayLike] = None,
     dt: float = 0.1,
     nt: int = 1000,
     r: float = 28.9,
     gamma: float = 0.116,
-    mass: Optional[Union[NDArray, List[List[float]], sparse._csc.csc_matrix]] = None,
+    mass: Optional[ArrayLike] = None,
     bold_out: bool = False,
-    eig_method: str = "orthogonal",
+    decomp_method: str = "project",
     pde_method: str = "fourier",
     seed: Optional[int] = None
 ) -> NDArray:
@@ -46,8 +45,7 @@ def simulate_waves(
     evals : array-like
         The eigenvalues array of shape (n_modes,).
     ext_input : array-like, optional
-        External input array of shape (n_verts, n_timepoints). If None, random input is 
-        generated.
+        External input array of shape (n_verts, n_timepoints). If None, random input is generated.
     dt : float, optional
         Time step for simulation in milliseconds. Default is 0.1.
     nt : int, optional
@@ -56,15 +54,20 @@ def simulate_waves(
         Spatial length scale of wave propagation. Default is 28.9.
     gamma : float, optional
         Damping rate of wave propagation. Default is 0.116.
-    mass : array-like or sparse matrix, optional
-        Mass matrix of the eigenmodes, of shape (n_verts, n_verts), used for mode decomposition.
-        Default is None.
+    mass : array-like, optional
+        The mass matrix of shape (n_verts, n_verts) used for the decomposition when method is 
+        'project'. If using EigenSolver, provide its self.mass. Default is None.
     bold_out : bool, optional
-        If True, simulate BOLD signal using the balloon model. If False, simulate neural 
-        activity. Default is False.
-    eig_method : str, optional
-        Method for eigen-decomposition, either "orthogonal" or "regress". Default is
-        "orthogonal".
+        If True, simulate BOLD signal using the balloon model. If False, simulate neural activity.
+        Default is False.
+    decomp_method : str, optional
+        The method used for the eigendecomposition, either 'project' to project data into a 
+        mass-orthonormal space or 'regress' for least-squares fitting. Note that the beta values
+        from 'regress' tend towards those from 'project' when more modes are provided. Default is 
+        'project'.
+    mass : array-like, optional
+        The mass matrix of shape (n_verts, n_verts) used for the decomposition when method is 
+        'project'. If using EigenSolver, provide its self.mass. Default is None.
     pde_method : str, optional
         Method for solving the wave PDE. Either "fourier" or "ode". Default is "fourier".
     seed : int, optional
@@ -72,7 +75,7 @@ def simulate_waves(
 
     Returns
     -------
-    sim_activity : np.ndarray
+    np.ndarray
         Simulated neural or BOLD activity of shape (n_verts, n_timepoints).
 
     Raises
@@ -85,17 +88,18 @@ def simulate_waves(
     -----
     Since the simulation begins at rest, consider discarding the first 50 timepoints to allow the
     system to reach a steady state.
-
     """
     emodes = np.asarray(emodes)
     evals = np.asarray(evals)
+    r = float(r)
+    gamma = float(gamma)
     if mass is not None:
         mass = sparse.csc_matrix(mass)
     
     n_verts, n_modes = emodes.shape
-    if r <= 0 or not isinstance(r, (float, int)):
+    if r <= 0:
         raise ValueError("Parameter `r` must be positive.")
-    if gamma <= 0 or not isinstance(gamma, (float, int)):
+    if gamma <= 0:
         raise ValueError("Parameter `gamma` must be positive.")
     if len(evals) != n_modes:
         raise ValueError(f"The number of eigenvalues ({len(evals)}) must match the number of "
@@ -104,18 +108,17 @@ def simulate_waves(
         raise ValueError("`dt` must be positive.")
     if nt <= 0 or not isinstance(nt, int):
         raise ValueError("`nt` must be a positive integer.")
-    if eig_method not in ["orthogonal", "regress"]:
-        raise ValueError(f"Invalid eigen-decomposition method '{eig_method}'; must be "
-                            "'orthogonal' or 'regress'.")
-    if pde_method not in ["fourier", "ode"]:
-        raise ValueError(f"Invalid PDE method '{pde_method}'; must be 'fourier' or 'ode'.")
-    ext_input = _gen_random_input(n_verts, nt, seed=seed) if ext_input is None else np.asarray(ext_input)
-    if ext_input.shape != (n_verts, nt):
-        raise ValueError(f"External input shape is {ext_input.shape}, should be ({n_verts}, {nt}).")
+
+    if ext_input is None:
+        ext_input = _gen_random_input(n_verts, nt, seed=seed)
+    else:
+        ext_input = np.asarray(ext_input)
+        if ext_input.shape != (n_verts, nt):
+            raise ValueError(f"External input shape is {ext_input.shape}, should be ({n_verts}, "
+                             f"{nt}).")
 
     # Mode decomposition of external input
-    input_coeffs = decompose(ext_input, emodes, method=eig_method, mass=mass,
-                                    check_orthonorm=True)
+    input_coeffs = decompose(ext_input, emodes, method=decomp_method, mass=mass)
     
     t = np.linspace(0, dt * (nt - 1), nt)
 
@@ -167,9 +170,8 @@ def _gen_random_input(
     seed: Optional[int] = None
 ) -> NDArray:
     """Generates external input with caching to avoid redundant recomputation."""
-    if seed is not None:
-        np.random.seed(seed)
-    return np.random.randn(n_verts, n_timepoints)
+    rng = np.random.default_rng(seed)
+    return rng.standard_normal(size=(n_verts, n_timepoints))
 
 def _model_wave_fourier(
     mode_coeff: NDArray,
@@ -217,19 +219,17 @@ def _model_wave_fourier(
       3. Apply the frequency response (transfer function)
       4. Use fft to return to the time domain (with appropriate shifts)
     """
-    nt = len(mode_coeff) - 1
-    t_full = np.linspace(-nt * dt, nt * dt, 2 * nt + 1)  # Symmetric time vector
-    nt_full = len(t_full)
+    nt = len(mode_coeff)
 
     # Pad input with zeros on negative side to ensure causality (system is only driven for t >= 0)
     # This is required for the correct Green's function solution of the damped wave equation.
-    mode_coeff_padded = np.concatenate([np.zeros(nt), mode_coeff])
-
-    # Frequencies for full signal
-    omega = 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(nt_full, d=dt))
+    mode_coeff_padded = np.concatenate([np.zeros(nt-1), mode_coeff])
 
     # Apply inverse Fourier transform to get frequency-domain representation of the causal signal.
     mode_coeff_f = np.fft.fftshift(np.fft.ifft(mode_coeff_padded))
+
+    # Frequencies for full signal
+    omega = 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(2*nt-1, d=dt))
 
     # Compute transfer function
     denom = -omega**2 - 2j * omega * gamma + gamma**2 * (1 + r**2 * eval)
@@ -242,7 +242,7 @@ def _model_wave_fourier(
     out_full = np.real(np.fft.fft(np.fft.ifftshift(out_fft)))
 
     # Return only the non-negative time part (t >= 0)
-    return out_full[nt:]
+    return out_full[nt-1:]
 
 def _solve_wave_ode(
     mode_coeff: NDArray,

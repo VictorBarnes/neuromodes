@@ -1,11 +1,11 @@
 import numpy as np
 from typing import Union, List, Optional
 from warnings import warn
-from numpy.typing import NDArray
+from numpy.typing import NDArray, ArrayLike
 
 def unmask(
-    data: Union[NDArray, List[List[float]]],
-    mask: Union[NDArray, List[bool]],
+    data: ArrayLike,
+    mask: ArrayLike,
     val: float = np.nan
 ) -> NDArray:
     """
@@ -41,8 +41,8 @@ def unmask(
     return map_reshaped
 
 def unparcellate(
-    data: Union[NDArray, List[List[float]], List[float]],
-    parc: Union[NDArray, List[int]],
+    data: ArrayLike,
+    parc: ArrayLike,
     val: float = np.nan
 ) -> NDArray:
     """
@@ -87,7 +87,7 @@ def unparcellate(
     return out.squeeze()
 
 def threshold_matrix(
-    matrix: Union[NDArray, List[List[float]]],
+    matrix: ArrayLike,
     threshold: float
 ) -> NDArray:
     """
@@ -129,8 +129,8 @@ def threshold_matrix(
     return thresholded_matrix
     
 def resample_matrix(
-    template: Union[NDArray, List[List[float]]],
-    noise: Union[str, NDArray, List[float]] = 'gaussian',
+    template: ArrayLike,
+    noise: Union[str, ArrayLike] = 'gaussian',
     rand_params: List[float] = [0.5, 0.1],
     ignore_repeats: bool = True,
     preserve_zeros: bool = True,
@@ -160,7 +160,7 @@ def resample_matrix(
 
     Returns
     -------
-    spatial_noise : np.ndarray
+    np.ndarray
         The resampled noise matrix.
     """
 

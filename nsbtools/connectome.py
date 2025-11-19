@@ -1,12 +1,11 @@
 """Module for generating structural connectomes using geometric eigenmodes of the cortex."""
 
 import numpy as np
-from typing import Union, List
-from numpy.typing import NDArray
+from numpy.typing import NDArray, ArrayLike
 
 def generate_connectome(
-    emodes: Union[NDArray, List[List[float]]],
-    evals: Union[NDArray, List[float]],
+    emodes: ArrayLike,
+    evals: ArrayLike,
     r: float = 9.53,
     k: int = 108
 ) -> NDArray:
@@ -25,23 +24,28 @@ def generate_connectome(
         Spatial scale parameter for the Green's function. Default is 9.53.
     k : int, optional
         Number of eigenmodes to use. Default is 108.
-    threshold : float, optional
-        Percentile under which to zero out connection weights from the output matrix, between 0 and
-        100. Default is 0.
-    resample_weights_gaussian : bool, optional
-        Whether to apply Gaussian resampling to the weights.
-    seed : int, optional
-        Random seed for weight resampling.
 
     Returns
     -------
     np.ndarray
         The generated vertex-wise structural connectivity matrix.
+
+    Raises
+    ------
+    ValueError
+        If any input parameter is invalid, such as negative or non-numeric values for  
+        `r`, or if `k` is not a positive integer within the valid range.
+
+    Notes
+    -----
+    If comparing this model to empirical connectomes, consider thresholding the generated connectome
+    to match the density of the empirical data.
     """
     emodes = np.asarray(emodes)
     evals = np.asarray(evals)
+    r = float(r)
 
-    if r <= 0 or not isinstance(r, (float, int)):
+    if r <= 0:
         raise ValueError("Parameter `r` must be positive.")
     if emodes.ndim != 2:
         raise ValueError("`emodes` must be a 2D array (vertices x modes).")

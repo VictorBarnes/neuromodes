@@ -8,17 +8,16 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from surfplot import Plot
 from typing import Optional, List, Union, Tuple, Dict, Any
 import warnings
-from numpy.typing import NDArray
-from nsbtools.io import read_surf
+from numpy.typing import NDArray, ArrayLike
 
 def plot_surf(
     mesh: Union[str, Path],
-    data: Union[NDArray, List[float], List[List[float]]],
+    data: ArrayLike,
     layout: str = "row",
     views: List[str] = ["lateral", "medial"],
     color_range: Union[Tuple[float, float], str] = "individual",
     center: Optional[float] = None,
-    cmap: Union[str, colors.Colormap] = "viridis",
+    cmap: Union[str, colors.Colormap] = "turbo",
     cbar: bool = False,
     cbar_label: Optional[str] = None,
     cbar_kws: Optional[Dict[str, Any]] = None,
@@ -165,7 +164,7 @@ def plot_heatmap(
     data: Union[NDArray, List[List[float]]],
     ax: Optional[plt.Axes] = None,
     center: Optional[float] = None,
-    cmap: Union[str, colors.Colormap] = "viridis",
+    cmap: Union[str, colors.Colormap] = "turbo",
     cbar: bool = False,
     square: bool = True,
     downsample: float = 1,

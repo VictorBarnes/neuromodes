@@ -1,62 +1,85 @@
 """Module for reading, validating, and manipulating surface meshes."""
 
 from trimesh import Trimesh
-import trimesh
 import numpy as np
-import nibabel as nib
+from nibabel import load
+from nibabel.freesurfer import read_geometry
 from pathlib import Path
-from typing import Union
+from typing import Union, Tuple
 from lapy import TriaMesh
-from numpy.typing import NDArray
+from numpy.typing import NDArray, ArrayLike
 from importlib.resources import files
 
 def read_surf(
-    surf: Union[str, Path, Trimesh, TriaMesh]
+    mesh: Union[str, Path, Trimesh, TriaMesh, dict]
 ) -> Trimesh:
-    """Validate surface type and load if a file name. Returns a validated trimesh.Trimesh object."""
-    if isinstance(surf, Trimesh):
-        mesh = surf
-    elif isinstance(surf, TriaMesh):
-        mesh = Trimesh(vertices=surf.v, faces=surf.t)
+    """Load and validate a surface mesh.
+
+    Parameters
+    ----------
+    mesh : str, Path, trimesh.Trimesh, lapy.TriaMesh, or dict
+        Surface mesh specified as a file path (string or Path) to a VTK (.vtk), GIFTI (.gii), or
+        FreeSurfer file (.white, .pial, .inflated, .orig, .sphere, .smoothwm, .qsphere, .fsaverage),
+        an instance of trimesh.Trimesh or lapy.TriaMesh, or a dictionary with "vertices" and
+        "faces" keys.
+
+    Returns
+    -------
+    trimesh.Trimesh
+        Validated surface mesh with vertices and faces.
+    """
+    if isinstance(mesh, Trimesh):
+        trimesh = mesh
+    elif isinstance(mesh, TriaMesh):
+        trimesh = Trimesh(vertices=mesh.v, faces=mesh.t)
+    elif isinstance(mesh, dict):
+        trimesh = Trimesh(vertices=mesh['vertices'], faces=mesh['faces'])
     else:
-        try:
-            surf_str = str(surf)
-            if surf_str.endswith('.vtk'):
-                mesh_data = TriaMesh.read_vtk(surf_str)
-                mesh = Trimesh(vertices=mesh_data.v, faces=mesh_data.t)
-            else:
-                mesh_data = nib.load(surf_str).darrays
-                mesh = Trimesh(vertices=mesh_data[0].data, faces=mesh_data[1].data)
-        except Exception as e:
-            raise ValueError('Surface must be a path-like string or an instance of either '
-                             'trimesh.Trimesh or lapy.TriaMesh.') from e
+        mesh_str = str(mesh)
+        # check that file exists
+        if not Path(mesh_str).is_file():
+            raise ValueError(f'File not found: {mesh_str}')
+
+        # Handle different file types
+        if mesh_str.endswith('.vtk'):
+            mesh_lapy = TriaMesh.read_vtk(mesh_str)
+            trimesh = Trimesh(vertices=mesh_lapy.v, faces=mesh_lapy.t)
+        elif mesh_str.endswith('.gii'):
+            mesh_data = load(mesh_str).darrays
+            trimesh = Trimesh(vertices=mesh_data[0].data, faces=mesh_data[1].data)
+        elif mesh_str.endswith(
+            ('white', 'pial', 'inflated', 'orig', 'sphere', 'smoothwm', 'qsphere', 'fsaverage')
+            ):
+            vertices, faces = read_geometry(mesh_str)
+            trimesh = Trimesh(vertices=vertices, faces=faces)
+        else:
+            raise ValueError(
+                '`surf` must be a path-like string to a valid VTK (.vtk), GIFTI (.gii), or '
+                'FreeSurfer file (.white, .pial, .inflated, .orig, .sphere, .smoothwm, .qsphere, '
+                '.fsaverage), an instance of trimesh.Trimesh or lapy.TriaMesh, or a dictionary of '
+                '"faces" and "vertices".'
+                )
     
     # Validate the mesh before returning
-    check_surf(mesh)
+    check_surf(trimesh)
 
-    return mesh
+    return trimesh
 
 def mask_surf(
     surf: Trimesh,
-    mask: Union[NDArray, list]
+    mask: ArrayLike
 ) -> Trimesh:
-    """Remove specified vertices from the surface mesh. Returns a validated trimesh.Trimesh object."""
+    """Remove specified vertices and corresponding faces from the surface mesh. Returns a validated 
+    trimesh.Trimesh object."""
+    mask = np.asarray(mask, dtype=bool)
+
     if len(mask) != surf.vertices.shape[0]:
         raise ValueError(f"The number of elements in `mask` ({len(mask)}) must match "
                          f"the number of vertices in the surface mesh ({surf.vertices.shape[0]}).")
     
-    # Mask vertices
-    v_masked = surf.vertices[mask]
-
-    # Map old vertex indices to new
-    idx_map = np.full(len(mask), -1, dtype=int)
-    idx_map[mask] = np.arange(np.sum(mask))
-
-    # Keep only faces where all vertices are in mask
-    f_masked = surf.faces[np.all(mask[surf.faces], axis=1)]
-    f_masked = idx_map[f_masked]
-
-    mesh = trimesh.Trimesh(vertices=v_masked, faces=f_masked, process=False)
+    # Mask faces where all vertices are in the mask
+    face_mask = np.all(mask[surf.faces], axis=1)
+    mesh = surf.submesh([face_mask])[0]
 
     # Validate the mesh before returning
     check_surf(mesh)
@@ -66,7 +89,7 @@ def mask_surf(
 def check_surf(
     surf: Trimesh
 ) -> None:
-    """Check if the surface mesh is valid."""
+    """Check if the surface mesh is contiguous with no unreferenced vertices."""
 
     # Check for unreferenced vertices
     referenced = np.zeros(len(surf.vertices), dtype=bool)
@@ -81,27 +104,50 @@ def check_surf(
         raise ValueError(f'Surface mesh is not contiguous: {n_components} connected components '
                          'found.')
 
-def load_data(
-    data_type: str,
+def fetch_surf(
+    surf: str = 'midthickness',
     species: str = 'human',
     template: str = 'fsLR',
     density: str = '32k',
     hemi: str = 'L'
-) -> Union[NDArray, Trimesh]:
+) -> Tuple[Trimesh, NDArray]:
+    """Load cortical surface mesh and medial wall mask from nsbtools data directory."""
+    data_dir = files('nsbtools.data')
+
+    try:
+        mesh = read_surf(
+            data_dir / f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_{surf}.surf.gii'
+            )
+        medmask = load(
+            data_dir / f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_medmask.label.gii'
+            ).darrays[0].data.astype(bool)
+        
+        return mesh, medmask
+    except Exception as e:
+        raise ValueError(
+            f"Surface data not found. Please see {data_dir}/included_data.csv or "
+            "https://github.com/NSBLab/nsbtools/tree/main/nsbtools/data/included_data.csv for a "
+            "list of available surfaces."
+            ) from e
+
+def fetch_map(
+    data: str,
+    species: str = 'human',
+    template: str = 'fsLR',
+    density: str = '32k',
+    hemi: str = 'L'
+) -> NDArray:
     """Load data from nsbtools data directory."""
     data_dir = files('nsbtools.data')
 
-    if data_type == 'surf':
-        surf_path = data_dir / f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_midthickness.surf.gii'
-        return read_surf(surf_path)
-    elif data_type == 'medmask':
-        medmask_path = data_dir / f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_medmask.label.gii'
-        return nib.load(medmask_path).darrays[0].data.astype(bool)
-    else:
-        try:
-            filename = f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_{data_type}.func.gii'
-            return nib.load(data_dir / filename).darrays[0].data
-        except Exception as e:
-            raise ValueError(f"Data file '{filename}' not found. Please see {data_dir}/included_dat"
-                             "a.csv or https://github.com/NSBLab/nsbtools/tree/main/nsbtools/data/i"
-                             "ncluded_data.csv for a list of available data files.") from e
+    try:
+        filename = f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_{data}.func.gii'
+        return load(data_dir / filename).darrays[0].data
+    
+    except Exception as e:
+        raise ValueError(
+            f"Map '{filename}' not found. Please see {data_dir}/included_data.csv or "
+            "https://github.com/NSBLab/nsbtools/tree/main/nsbtools/data/included_data.csv for a "
+            "list of available data files."
+        ) from e
+        
