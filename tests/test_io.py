@@ -1,4 +1,4 @@
-from importlib.resources import files
+from pathlib import Path
 from pytest import raises
 import numpy as np
 from trimesh import Trimesh
@@ -85,7 +85,7 @@ def test_read_surf_dict():
 
 def test_read_surf_vtk():
     vtk_mesh = read_surf(
-        files('nsbtools').parent / 'tests' / 'test_data' / 'sp-human_tpl-fsaverage5_den-10k_hemi-L_midthickness.vtk'
+        Path(__file__).parent / 'test_data' / 'sp-human_tpl-fsaverage5_den-10k_hemi-L_midthickness.vtk'
         )
 
     assert isinstance(vtk_mesh, Trimesh)
@@ -93,14 +93,14 @@ def test_read_surf_vtk():
     assert vtk_mesh.faces.shape == (20480, 3)
 
 def test_read_surf_invalid():
-    invalid_path = files('nsbtools.data') / 'civilised_lunch.surf.vtk'
+    invalid_path = Path(__file__).parent / 'test_data' / 'civilised_lunch.surf.vtk'
     with raises(ValueError, match="File not found: .*civilised_lunch.surf.vtk"):
         read_surf(invalid_path)
 
 def test_read_surf_freesurfer():
     for surf_type in ['inflated', 'orig', 'pial', 'smoothwm', 'sphere', 'white']:
         fs_mesh = read_surf(
-            files('nsbtools').parent / 'tests' / 'test_data' / f'fsaverage-lh.{surf_type}'
+            Path(__file__).parent / 'test_data' / f'fsaverage-lh.{surf_type}'
             )
          
         assert isinstance(fs_mesh, Trimesh)

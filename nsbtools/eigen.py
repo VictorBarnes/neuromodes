@@ -224,7 +224,7 @@ class EigenSolver(Solver):
             for details.
         atol : float, optional
             Absolute tolerance for mass-orthonormality validation. Default is 1e-3.
-        seed : int, optional
+        seed : int or array-like, optional
             Random seed for reproducibility. Default is None.
 
         Returns

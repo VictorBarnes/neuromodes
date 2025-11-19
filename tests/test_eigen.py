@@ -1,7 +1,7 @@
+from pathlib import Path
 import pytest
 import numpy as np
 from lapy import TriaMesh
-from importlib.resources import files
 from nsbtools.io import fetch_surf, fetch_map, mask_surf
 from nsbtools.eigen import EigenSolver, decompose, reconstruct, calc_norm_power, is_mass_orthonormal_modes
 
@@ -112,7 +112,7 @@ def test_no_hetero(presolver):
         presolver.hetero = None
     emodes, evals = presolver.solve()
 
-    test_data = files('nsbtools').parent / 'tests' / 'test_data'
+    test_data = Path(__file__).parent / 'test_data'
 
     # Load homogeneous eigenmodes/eigenvalues for comparison
     prior_modes = np.load(test_data / 'sp-human_tpl-fsLR_den-4k_hemi-L_midthickness-emodes.npy')

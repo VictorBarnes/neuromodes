@@ -5,7 +5,7 @@ import numpy as np
 from nibabel import load
 from nibabel.freesurfer import read_geometry
 from pathlib import Path
-from typing import Union
+from typing import Union, Tuple
 from lapy import TriaMesh
 from numpy.typing import NDArray, ArrayLike
 from importlib.resources import files
@@ -110,8 +110,8 @@ def fetch_surf(
     template: str = 'fsLR',
     density: str = '32k',
     hemi: str = 'L'
-) -> dict[str, Union[Trimesh, NDArray]]:
-    """Load cortical surface mesh and medial wall mask from nsbtools data directory into a dictionary."""
+) -> Tuple[Trimesh, NDArray]:
+    """Load cortical surface mesh and medial wall mask from nsbtools data directory."""
     data_dir = files('nsbtools.data')
 
     try:

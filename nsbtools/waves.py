@@ -5,7 +5,6 @@ import numpy as np
 from scipy import sparse
 from pathlib import Path
 from joblib import Memory
-import importlib.resources
 from numpy.typing import NDArray, ArrayLike
 from scipy.integrate import solve_ivp
 from typing import Optional
@@ -14,9 +13,9 @@ from nsbtools.eigen import decompose
 # Set up joblib memory caching
 CACHE_DIR = os.getenv("CACHE_DIR")
 if CACHE_DIR is None or not os.path.exists(CACHE_DIR):
-    nsbtools = importlib.resources.files('nsbtools')
-    CACHE_DIR = Path(nsbtools) / '.eigencache'
+    CACHE_DIR = Path.home() / ".nsbtools_cache"
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"Using default cache directory at {CACHE_DIR}")
 memory = Memory(CACHE_DIR, verbose=0)
 
 def simulate_waves(
