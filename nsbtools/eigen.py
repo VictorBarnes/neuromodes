@@ -244,12 +244,13 @@ class EigenSolver(Solver):
         
         sigma = -0.01
         lu = splu(self.stiffness - sigma * self.mass)
-        op_inv = LinearOperator(
-            matvec=lu.solve,
+        op_inv = LinearOperator( 
+            matvec=lu.solve, # type: ignore
             shape=self.stiffness.shape,
             dtype=self.stiffness.dtype,
         )
 
+        # Set intitialization vector (if desired) for reproducibile eigenvectors 
         if seed is None or isinstance(seed, int):
             rng = np.random.default_rng(seed)
             v0 = rng.random(self.n_verts)
@@ -564,7 +565,7 @@ def is_valid_hetero(
     hetero = np.asarray(hetero)
     max_speed = np.max(r * gamma * np.sqrt(hetero))
 
-    return max_speed <= 150
+    return bool(max_speed <= 150)
 
 def scale_hetero(
     hetero: ArrayLike,
@@ -612,7 +613,7 @@ def scale_hetero(
 
 def is_mass_orthonormal_modes(
     emodes: ArrayLike,
-    mass: Optional[ArrayLike] = None,
+    mass: Optional[Union[ArrayLike,sparse.spmatrix]] = None,
     atol: float = 1e-3
 ) -> bool:
     """
@@ -702,7 +703,7 @@ def decompose(
     data: ArrayLike,
     emodes: ArrayLike,
     method: str = 'project',
-    mass: ArrayLike = None
+    mass: Optional[Union[ArrayLike,sparse.spmatrix]] = None
 ) -> NDArray:
     """
     Calculate the decomposition of the given data onto a basis set.
@@ -736,9 +737,9 @@ def decompose(
     """
     data = np.asarray(data)
     emodes = np.asarray(emodes)
-    if mass is not None:
-        mass = sparse.csc_matrix(mass)
-    
+    if mass is not None and not isinstance(mass,sparse.spmatrix):
+        mass = np.asarray(mass)
+
     n_verts = emodes.shape[0]
 
     if data.shape[0] != n_verts:
@@ -754,7 +755,7 @@ def decompose(
             warn("Provided `emodes` are orthonormal in Euclidean space; ignoring mass matrix.")
             beta = emodes.T @ data
         else:
-            if mass is None or mass.get_shape() != (n_verts, n_verts):
+            if mass is None or mass.shape != (n_verts, n_verts):
                 raise ValueError(f"Mass matrix of shape ({n_verts}, {n_verts}) must be provided "
                                  "when method is 'project' and `emodes` is not an orthonormal basis"
                                  " set in Euclidean space.")
@@ -771,7 +772,7 @@ def reconstruct(
     data: ArrayLike,
     emodes: ArrayLike,
     method: str = 'project',
-    mass: Optional[ArrayLike] = None,
+    mass: Optional[Union[ArrayLike,sparse.spmatrix]] = None,
     mode_seq: Optional[ArrayLike] = None,
     timeseries: bool = False,
     metric: str = "pearsonr",
@@ -832,8 +833,8 @@ def reconstruct(
     """
     data = np.asarray(data)
     emodes = np.asarray(emodes)
-    if mass is not None:
-        mass = sparse.csc_matrix(mass)
+    if mass is not None and not isinstance(mass,sparse.spmatrix):
+        mass = np.asarray(mass)
 
     if metric not in ["pearsonr", "mse"]:
         raise ValueError(f"Invalid metric '{metric}'; must be 'pearsonr' or 'mse'.")

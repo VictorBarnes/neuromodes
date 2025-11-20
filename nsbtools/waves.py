@@ -7,7 +7,7 @@ from pathlib import Path
 from joblib import Memory
 from numpy.typing import NDArray, ArrayLike
 from scipy.integrate import solve_ivp
-from typing import Optional
+from typing import Optional, Union
 from nsbtools.eigen import decompose
 
 # Set up joblib memory caching
@@ -26,7 +26,7 @@ def simulate_waves(
     nt: int = 1000,
     r: float = 28.9,
     gamma: float = 0.116,
-    mass: Optional[ArrayLike] = None,
+    mass: Optional[Union[ArrayLike,sparse.spmatrix]] = None,
     bold_out: bool = False,
     decomp_method: str = "project",
     pde_method: str = "fourier",
@@ -93,8 +93,8 @@ def simulate_waves(
     evals = np.asarray(evals)
     r = float(r)
     gamma = float(gamma)
-    if mass is not None:
-        mass = sparse.csc_matrix(mass)
+    if mass is not None and not isinstance(mass,sparse.spmatrix):
+        mass = np.asarray(mass)
     
     n_verts, n_modes = emodes.shape
     if r <= 0:
