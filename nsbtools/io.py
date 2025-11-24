@@ -139,9 +139,9 @@ def fetch_map(
 ) -> NDArray:
     """Load data from nsbtools data directory."""
     data_dir = files('nsbtools.data')
+    filename = f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_{data}.func.gii'
 
     try:
-        filename = f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_{data}.func.gii'
         return load(data_dir / filename).darrays[0].data
     
     except Exception as e:
