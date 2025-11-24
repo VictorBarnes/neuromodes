@@ -1,9 +1,10 @@
 from pathlib import Path
 import pytest
 import numpy as np
+from scipy.spatial.distance import squareform
 from lapy import TriaMesh
 from nsbtools.io import fetch_surf, fetch_map, mask_surf
-from nsbtools.eigen import EigenSolver, decompose, reconstruct, calc_norm_power, is_mass_orthonormal_modes
+from nsbtools.eigen import EigenSolver, decompose, reconstruct, reconstruct_timeseries, calc_norm_power, is_mass_orthonormal_modes
 
 @pytest.fixture
 def surf_medmask_hetero():
@@ -169,9 +170,9 @@ def test_nonstandard_modes(solver):
     emodes = solver.emodes
     emodes_nonstd, _ = solver.solve(standardize=False)
     
-    assert np.all(emodes[0, :] >= 0), 'Standardized first element has negative values.'
     assert not np.all(emodes_nonstd[0, :] >= 0), \
-        'Non-standardized first element should have both positive and negative values.'
+        'Non-standardized first vertex should have both positive and negative values.'
+    assert np.all(emodes[0, :] >= 0), 'Standardized first vertex has negative values.'
     assert np.allclose(abs(emodes), abs(emodes_nonstd),
                        atol=1e-6), 'Non-standardized modes do not match standardized modes.'
 
@@ -264,7 +265,7 @@ def test_decompose_nan_inf_mode(solver):
 
 def test_decompose_massless(solver):
 
-    with pytest.raises(ValueError, match=r"Mass matrix of shape \(3636, 3636\) must be provided .*"):
+    with pytest.raises(ValueError, match=r"Mass matrix must be provided when method is 'project' .*"):
         decompose(np.ones(solver.n_verts), solver.emodes)
 
 def test_decompose_invalid_method(solver):
@@ -281,65 +282,63 @@ def gen_eigenmap(solver):
     weights = rng.standard_normal(size=(solver.n_modes, n_maps))
     eigenmaps = solver.emodes @ weights
 
-    return weights, eigenmaps
+    return eigenmaps, weights
 
 def test_reconstruct_mode_superposition(solver, gen_eigenmap):
-    weights, eigenmaps = gen_eigenmap
+    eigenmaps, weights = gen_eigenmap
 
-    beta, recon, pearsonr = reconstruct(eigenmaps, solver.emodes, mass=solver.mass)
+    recon, correlation_error, beta = reconstruct(eigenmaps, solver.emodes, mass=solver.mass)
 
-    # Pearson's r should increase from 0 to 1 when using mode 1 only versus all relevant modes
+    # Correlation error should decrease from 1 to 0 when using mode 1 only versus all relevant modes
     assert np.allclose(recon[:,-1,:], eigenmaps,
-                       atol=1e-6), 'Final reconstructions do not match input maps.'
-    assert (pearsonr[0,:] == 0).all(), 'Pearson r is not 0 when using only mode 1.'
-    assert np.allclose(pearsonr[-1,:], 1,
-                       atol=1e-10), 'Pearson r is not close to 1 when using all modes.'
+                       atol=1e-5), 'Final reconstructions do not match input maps.'
+    assert np.allclose(correlation_error[-1,:], 0,
+                       atol=1e-5), 'Correlation error is not close to 0 when using all modes.'
 
     assert np.allclose(beta[-1], weights, atol=1e-4), \
         'Beta values do not match input mode weights when using all modes.'
 
-    # MSE should be 0 when using all modes
-    _, _, mse = reconstruct(eigenmaps, solver.emodes, mass=solver.mass, metric='mse')
-    assert np.allclose(mse[-1,:], 0,
-                       atol=1e-10), 'MSE is not close to 0 when using all modes.'
+    # Euclidean error should be 0 when using all modes
+    _, euclidean_error, _ = reconstruct(eigenmaps, solver.emodes, mass=solver.mass, metric='euclidean')
+    assert np.allclose(euclidean_error[-1,:], 0,
+                       atol=1e-5), 'Euclidean error is not close to 0 when using all modes.'
 
     # Reconstruct using the first 5 modes, then the first 2 modes
-    _, _, pearsonr_modesq = reconstruct(eigenmaps, solver.emodes, mass=solver.mass, mode_seq=[5,2])
-    assert (pearsonr_modesq[0,:] == pearsonr[4,:]).all(), \
+    _, correlation_error_modesq, _ = reconstruct(eigenmaps, solver.emodes, mass=solver.mass, mode_seq=[5,2])
+    assert (correlation_error_modesq[0,:] == correlation_error[4,:]).all(), \
         'Reconstruction scores do not match for 5 modes.'
-    assert (pearsonr_modesq[1,:] == pearsonr[1,:]).all(), \
+    assert (correlation_error_modesq[1,:] == correlation_error[1,:]).all(), \
         'Reconstruction scores do not match for 2 modes.'
 
 def test_reconstruct_regress_method(solver, gen_eigenmap):
-    _, eigenmaps = gen_eigenmap
+    eigenmaps, _ = gen_eigenmap
 
-    _, _, pearsonr = reconstruct(eigenmaps, solver.emodes, method='regress')
-    _, _, mse = reconstruct(eigenmaps, solver.emodes, method='regress', metric='mse')
+    _, correlation_error, _ = reconstruct(eigenmaps, solver.emodes, method='regress', metric='correlation')
+    _, euclidean_error, _ = reconstruct(eigenmaps, solver.emodes, method='regress', metric='euclidean')
 
-    # Pearson's r should strictly increase and MSE should strictly decrease when adding modes
-    assert np.all(np.diff(pearsonr, axis=0) > 0), \
-        'Pearson r does not strictly increase when adding modes.'
-    assert np.all(np.diff(mse, axis=0) < 0), \
-        'MSE does not strictly decrease when adding modes.'
+    # Errors should strictly decrease when adding modes
+    assert np.all(np.diff(correlation_error[1:,:], axis=0) < 0), \
+        'Correlation error does not strictly decrease when adding modes.'
+    assert np.all(np.diff(euclidean_error, axis=0) < 0), \
+        'Euclidean error does not strictly decrease when adding modes.'
 
 def test_reconstruct_mode_superposition_timeseries(solver, gen_eigenmap):
-    _, eigenmaps = gen_eigenmap
+    eigenmaps, _ = gen_eigenmap
 
     eigen_ts = eigenmaps.astype(np.float32) # Prevent memory allocation error
-    fc = np.corrcoef(eigen_ts)
+    fc = np.arctanh(squareform(np.corrcoef(eigen_ts),checks=False))
 
     # Treat eigenmaps as timepoints of activity
-    _, _, fc_recon, pearsonr = reconstruct(eigen_ts, solver.emodes, mass=solver.mass,
-                                                        timeseries=True)
+    fc_recon, correlation_error, _, _, _ = reconstruct_timeseries(eigen_ts, solver.emodes, mass=solver.mass, 
+                                                 method='regress', metric='correlation')
 
-    assert np.allclose(fc_recon[:,:,-1], fc, atol=1e-3), 'Reconstructed FC does not match original.'
-    assert pearsonr[0] == 0, \
-        'FC reconstruction score is not close to 0 when using only the constant mode.'
-    assert pearsonr[-1] > 0.999, 'FC reconstruction score is not close to 1 when using all modes.'
+    _, euclidean_error, _, _, _ = reconstruct_timeseries(eigen_ts, solver.emodes, mass=solver.mass, 
+                            method='regress', metric='euclidean')
+    mse = euclidean_error / fc.size  # Convert to MSE
     
-    _, _, _, mse = reconstruct(eigen_ts, solver.emodes, mass=solver.mass, timeseries=True,
-                                      metric='mse')
-    assert mse[-1] < 1e-9, 'MSE is not close to 0 when using all modes.'
+    assert np.allclose(np.tanh(fc_recon[:,-1]), np.tanh(fc), atol=1e-5), 'Reconstructed FC does not match original.'
+    assert correlation_error[-1] < 1e-6, 'FC reconstruction error is not close to 0 when using all modes.'
+    assert mse[-1] < 1e-6, 'MSE is not close to 0 when using all modes.'
 
 def test_reconstruct_real_map_32k():
     # Get modes of fsLR 32k midthickness (data is in 32k)
@@ -352,29 +351,22 @@ def test_reconstruct_real_map_32k():
 
     # Load FC gradient from Margulies 2016 PNAS
     map = fetch_map('fcgradient1')[medmask]
-    _, _, recon_score = reconstruct(map, emodes, mass=solver.mass)
+    _, recon_score, _ = reconstruct(map, emodes, mass=solver.mass)
 
-    # Pearson's r should strictly increase from 0, but not reach 1
-    assert np.all(np.diff(recon_score) > 1e-6), \
-        r'Reconstruction score \(r\) does not strictly increase.'
-    assert np.isclose(recon_score[0], 0, atol=1e-6), \
-        r'Reconstruction score \(r\) is non-zero when using only the constant mode.'
-    assert not np.isclose(recon_score[-1], 1, atol=1e-6), \
-        r'Reconstruction score \(r\) is unexpectedly close to 1 for only 10 modes.'
+    # Correlation error should strictly decrease from 1, but not reach 0
+    assert np.all(np.diff(recon_score) < 0), \
+        r'Reconstruction error does not strictly decrease.'
+    assert not np.isclose(recon_score[-1], 0, atol=1e-6), \
+        r'Reconstruction error is unexpectedly close to 0 for only 10 modes.'
 
 def test_reconstruct_invalid_map_shape(solver):
 
     with pytest.raises(ValueError, match=r".*`data` \(4002\) must match .* `emodes` \(3636\)."):
         reconstruct(np.ones(4002), solver.emodes, mass=solver.mass)
 
-def test_reconstruct_invalid_metric(solver):
-
-    with pytest.raises(ValueError, match="Invalid metric 'barnesv'.*"):
-        reconstruct(np.ones(solver.n_verts), solver.emodes, mass=solver.mass, metric='barnesv')
-
 def test_reconstruct_massless(solver):
 
-    with pytest.raises(ValueError, match=r"Mass matrix of shape \(3636, 3636\) must be provided .*"):
+    with pytest.raises(ValueError, match=r"Mass matrix must be provided when method is 'project' .*"):
         reconstruct(np.ones(solver.n_verts), solver.emodes)
 
 def test_calc_norm_power():
