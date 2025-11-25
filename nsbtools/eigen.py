@@ -8,13 +8,14 @@ from warnings import warn
 from typing import Optional, Union, Any, Tuple, TYPE_CHECKING
 import numpy as np
 from numpy.typing import NDArray, ArrayLike
-from scipy import sparse
 from scipy.stats import zscore
-from scipy.spatial.distance import cdist, squareform
+from scipy.sparse import csc_matrix
 from scipy.sparse.linalg import LinearOperator, eigsh, splu
 from trimesh import Trimesh
 from lapy import Solver, TriaMesh
+
 from nsbtools.io import read_surf, mask_surf
+from nsbtools.validation import is_mass_orthonormal_modes
 
 if TYPE_CHECKING:
     from scipy.spatial.distance import _MetricCallback, _MetricKind 
@@ -229,7 +230,11 @@ class EigenSolver(Solver):
         atol : float, optional
             Absolute tolerance for mass-orthonormality validation. Default is 1e-3.
         seed : int or array-like, optional
-            Random seed for reproducibility. Default is None.
+            Random seed for reproducibile generation of eigenvectors (which otherwise use an iterative 
+            algorithm that starts with a random vector, meaning that repeated generation of eigenmodes 
+            on the same surface can have different orientations). Specify as in int (to set the seed) 
+            or a vector with n_verts elements (to directly set the initialisation vector). 
+            Default is None (not reproducible).
 
         Returns
         -------
@@ -326,6 +331,8 @@ class EigenSolver(Solver):
             If the number of vertices in `data` and `emodes` do not match, if `emodes` contain NaNs,
             or if an invalid method is specified.
         """
+        from nsbtools.basis import decompose
+
         if not hasattr(self, 'emodes'):
             _ = self.solve(**kwargs)
             print("Solved Laplace-Beltrami eigenvalue problem, "
@@ -389,6 +396,8 @@ class EigenSolver(Solver):
             If the number of vertices in `data` and `emodes` do not match, if `emodes` contain NaNs,
             or if an invalid method is specified.
         """
+        from nsbtools.basis import reconstruct
+        
         if not hasattr(self, 'emodes'):
             _ = self.solve(**kwargs)
             print("Solved Laplace-Beltrami eigenvalue problem, "
@@ -460,6 +469,7 @@ class EigenSolver(Solver):
             If the number of vertices in `data` and `emodes` do not match, if `emodes` contain NaNs,
             or if an invalid method is specified.
         """
+        from nsbtools.basis import reconstruct_timeseries
 
         if not hasattr(self, 'emodes'):
             _ = self.solve(**kwargs)
@@ -676,50 +686,6 @@ def scale_hetero(
 
     return hetero_scaled
 
-def is_mass_orthonormal_modes(
-    emodes: ArrayLike,
-    mass: Optional[Union[ArrayLike,sparse.spmatrix]] = None,
-    rtol: float = 1e-05, atol: float = 1e-03
-) -> bool:
-    """
-    Check if a set of vectors is approximately mass-orthonormal 
-    (i.e., `emodes.T @ mass @ emodes == I`).
-
-    Parameters
-    ----------
-    emodes : array-like
-        The vectors array of shape (n_verts, n_vecs), where n_vecs is the number of vectors.
-    mass : array-like, optional
-        The mass matrix of shape (n_verts, n_verts). If using EigenSolver, provide its self.mass. If 
-        None, an identity matrix will be used, corresponding to Euclidean orthonormality. Default is 
-        None.
-    atol : float, optional
-        Absolute tolerance for the orthonormality check. Default is 1e-3.
-
-    Notes
-    -----
-    Under discretization, the set of solutions for the generalized eigenvalue problem is expected to
-    be mass-orthogonal (mode_i^T * mass matrix * mode_j = 0 for i ≠ j), rather than orthogonal with
-    respect to the standard Euclidean inner (dot) product (mode_i^T * mode_j = 0 for i ≠ j). 
-    Eigenmodes are also expected to be mass-normal (mode_i^T * mass matrix * mode_i = 1). It follows
-    that the first mode is expected to be a specific constant, but precision error during
-    computation can introduce spurious spatial heterogeneity. Since many eigenmode analyses rely on
-    mass-orthonormality (e.g., decomposition, wave simulation), this function serves to ensure the
-    validity of any calculated or provided eigenmodes.
-    """
-    # Format inputs
-    emodes = np.asarray(emodes)
-    if mass is not None and not isinstance(mass,sparse.spmatrix):
-        mass = np.asarray(mass)
-
-    # Check inputs (ie mass matrix shape)
-    n_verts = emodes.shape[0]
-    if mass is not None and (mass.shape != (n_verts, n_verts)):
-        raise ValueError(f"The mass matrix must have shape ({n_verts}, {n_verts}).")
-
-    prod = emodes.T @ emodes if mass is None else emodes.T @ mass @ emodes
-    return np.allclose(prod, np.eye(emodes.shape[1]), rtol=rtol, atol=atol, equal_nan=False)
-
 def standardize_modes(
     emodes: ArrayLike
 ) -> NDArray:
@@ -770,237 +736,4 @@ def calc_norm_power(
     total_power = np.sum(beta_sq, axis=0)
 
     return beta_sq / total_power
-
-def decompose(
-    data: ArrayLike,
-    emodes: ArrayLike,
-    method: str = 'project',
-    mass: Optional[Union[ArrayLike,sparse.spmatrix]] = None
-) -> NDArray:
-    """
-    Calculate the decomposition of the given data onto a basis set.
-
-    Parameters
-    ----------
-    data : array-like
-        The input data array of shape (n_verts, n_maps), where n_verts is the number of vertices
-        and n_maps is the number of brain maps.
-    emodes : array-like
-        The vectors array of shape (n_verts, n_vecs), where n_vecs is the number of basis vectors.
-    method : str, optional
-        The method used for the decomposition, either 'project' to project data into a 
-        mass-orthonormal space or 'regress' for least-squares fitting. Note that the beta values
-        from 'regress' tend towards those from 'project' when more basis vectors are provided. For a 
-        non-orthonormal basis set, 'regress' must be used. Default is 'project'.
-    mass : array-like, optional
-        The mass matrix of shape (n_verts, n_verts) used for the decomposition when method
-        is 'project'. If using EigenSolver, provide its self.mass. Default is None.
-
-    Returns
-    -------
-    numpy.ndarray
-        The beta coefficients array of shape (n_vecs, n_maps), obtained from the decomposition.
-    
-    Raises
-    ------
-    ValueError
-        If the number of vertices in `data` and `emodes` do not match, if `emodes` contain NaNs,
-        or if an invalid method is specified.
-    """
-    # Format inputs
-    data = np.asarray(data)
-    data = np.expand_dims(data, axis=1) if data.ndim == 1 else data
-    emodes = np.asarray(emodes)        
-    if mass is not None and not isinstance(mass,sparse.spmatrix):
-        mass = np.asarray(mass)
-
-    # Check inputs (mass matrix shape checked in is_mass_orthonormal_modes later if needed)
-    if data.shape[0] != emodes.shape[0]:
-        raise ValueError(f"The number of elements in `data` ({data.shape[0]}) must match "
-                            f"the number of vertices in `emodes` ({emodes.shape[0]}).")
-    if np.isnan(emodes).any() or np.isinf(emodes).any():
-        raise ValueError("`emodes` contains NaNs or Infs.")   
-        
-    # Decomposition
-    if method == 'project':
-        if is_mass_orthonormal_modes(emodes):
-            if mass is not None and not is_mass_orthonormal_modes(emodes, mass):
-                warn("Provided `emodes` are orthonormal in Euclidean space; ignoring mass matrix.")
-            beta = emodes.T @ data
-        elif mass is None:
-            raise ValueError(f"Mass matrix must be provided when method is 'project' and "
-                             "`emodes` is not an orthonormal basis set in Euclidean space.")
-        elif not is_mass_orthonormal_modes(emodes, mass):
-            raise ValueError(f"`emodes` are not mass-orthonormal (with or without provided mass matrix).")
-        else:
-            beta = emodes.T @ mass @ data
-    elif method == 'regress':
-        beta = np.linalg.lstsq(emodes, data)[0]
-    else:
-        raise ValueError(f"Invalid decomposition method '{method}'; must be 'project' "
-                            "or 'regress'.")
-
-    return beta
-
-def reconstruct(
-    data: ArrayLike,
-    emodes: ArrayLike,
-    method: str = 'project',
-    mass: Optional[Union[ArrayLike,sparse.spmatrix]] = None,
-    mode_seq: Optional[ArrayLike] = None,
-    metric: Optional[Union['_MetricCallback', '_MetricKind']] = 'euclidean'
-) -> Tuple[NDArray, NDArray, list[NDArray]]:
-    """
-    Calculate and score the reconstruction of the given data using the provided orthogonal vectors.
-
-    Parameters
-    ----------
-    data : array-like
-        The input data array of shape (n_verts, n_maps), where n_verts is the number of vertices 
-        and n_maps is the number of maps.
-    emodes : array-like
-        The vectors array of shape (n_verts, n_vects), where n_vects is the number of orthogonal 
-        vectors.
-    method : str, optional
-        The method used for the decomposition, either 'project' to project data into a 
-        mass-orthonormal space or 'regress' for least-squares fitting. Note that the beta values
-        from 'regress' tend towards those from 'project' when more basis vectors are provided. For a 
-        non-orthonormal basis set, 'regress' must be used. Default is 'project'.
-    mass : array-like, optional
-        The mass matrix of shape (n_verts, n_verts) used for the decomposition when method is 
-        'project'. If using EigenSolver, provide its self.mass. Default is None.
-    mode_seq : array-like, optional
-        The sequence of vectors to be used for reconstruction. Default is None, which uses all 
-        vectors provided.
-    metric : str, optional
-        The metric used for calculating reconstruction error. Should be one of the options from 
-        scipy cdist, or None if no scoring is required. Default is 'euclidean'.
-
-    Returns
-    -------
-    recon : numpy.ndarray
-        The reconstructed data array of shape (n_verts, nq, n_maps), where nq is the number of different 
-        reconstructions ordered in `mode_seq`. Each slice is the independent reconstruction of each map.
-    recon_error : numpy.ndarray
-        The reconstruction error array of shape (nq, n_maps). Each value represents the reconstruction 
-        error of one map. If `metric` is None, this will be empty. 
-    beta : list of numpy.ndarray
-        A list of beta coefficients calculated for each mode.
-    
-    Raises
-    ------
-    ValueError
-        If the number of vertices in `data` and `emodes` do not match, if `emodes` contain NaNs,
-        or if an invalid method is specified.
-    """
-
-    # Format inputs
-    data = np.asarray(data)
-    data = np.expand_dims(data, axis=1) if data.ndim == 1 else data
-    emodes = np.asarray(emodes)
-    mode_seq = np.arange(emodes.shape[1])+1 if mode_seq is None else np.asarray(mode_seq)
-
-    # Decompose the data to get beta coefficients
-    if method == 'project':
-        # only need to decompose once (with n=max modes) if using orthogonal method
-        tmp = decompose(data, emodes[:, :np.max(mode_seq)], mass=mass, 
-                          method=method)
-        beta = [tmp[:mq,:] for mq in mode_seq]
-    else:
-        beta = [
-            decompose(data, emodes[:, :mq], mass=mass, 
-                        method=method)
-            for mq in mode_seq
-        ]
-
-    # Reconstruct and calculate error
-    recon = np.stack([emodes[:, :mode_seq[i]] @ beta[i] for i in range(len(beta))], axis=1)
-    recon_error = np.stack([
-        cdist(recon[:, :, i].T, data[:, [i]].T, metric=metric)
-        for i in range(data.shape[1])
-    ], axis=1) if metric is not None else np.empty(0)
-
-    return recon, recon_error, beta
-
-def reconstruct_timeseries(
-    data: ArrayLike,
-    emodes: ArrayLike,
-    method: str = 'project',
-    mass: Optional[Union[ArrayLike,sparse.spmatrix]] = None,
-    mode_seq: Optional[ArrayLike] = None,
-    metric: Optional[Union['_MetricCallback', '_MetricKind']] = 'euclidean'
-) -> Tuple[NDArray, NDArray, NDArray, NDArray, list[NDArray]]:
-    """
-    Calculate and score the reconstruction of the given data using the provided orthogonal vectors.
-
-    Parameters
-    ----------
-    data : array-like
-        The input data array of shape (n_verts, n_timepoints), where n_verts is the number of vertices 
-        and n_timepoints is the number of timepoints.
-    emodes : array-like
-        The vectors array of shape (n_verts, n_vects), where n_vects is the number of orthogonal 
-        vectors.
-    method : str, optional
-        The method used for the decomposition, either 'project' to project data into a 
-        mass-orthonormal space or 'regress' for least-squares fitting. Note that the beta values
-        from 'regress' tend towards those from 'project' when more basis vectors are provided. For a 
-        non-orthonormal basis set, 'regress' must be used. Default is 'project'.
-    mass : array-like, optional
-        The mass matrix of shape (n_verts, n_verts) used for the decomposition when method is 
-        'project'. If using EigenSolver, provide its self.mass. Default is None.
-    mode_seq : array-like, optional
-        The sequence of vectors to be used for reconstruction. Default is None, which uses all 
-        vectors provided.
-    metric : str, optional
-        The metric used for calculating reconstruction error. Should be one of the options from 
-        scipy cdist, or None if no scoring is required. Default is 'euclidean'.
-
-    Returns
-    -------
-    fc_recon : numpy.ndarray
-        The functional connectivity reconstructed data array of shape (ne, nq). The FC matrix is r-to-z 
-        (arctanh) transformed and vectorized; ne is the number of edges (n_verts*(n_verts-1)/2) and nq is 
-        the number of different reconstructions ordered in `mode_seq`.
-    fc_recon_error : numpy.ndarray
-        The functional reconstruction accuracy of shape (nq,). If `metric` is None, this will be empty.
-    recon : numpy.ndarray
-        The reconstructed data array of shape (n_verts, nq, n_timepoints), where nq is the number of different 
-        reconstructions ordered in `mode_seq`. Each slice is the independent reconstruction of each timepoint.
-    recon_error : numpy.ndarray
-        The reconstruction error array of shape (nq, n_timepoints). Each value represents the reconstruction 
-        error at one timepoint. If `metric` is None, this will be empty. 
-    beta : list of numpy.ndarray
-        A list of beta coefficients calculated for each mode.
-    
-    Raises
-    ------
-    ValueError
-        If the number of vertices in `data` and `emodes` do not match, if `emodes` contain NaNs,
-        or if an invalid method is specified.
-    """
-
-    # Format/check inputs    
-    data = np.asarray(data)
-    if data.ndim != 2: 
-        raise ValueError("`data` must be a 2D array of shape (n_verts, n_timepoints).")
-    
-    # Use reconstruct to get independent reconstructions
-    recon, recon_error, beta = reconstruct(
-        data,
-        emodes, 
-        method=method,
-        mass=mass,
-        mode_seq=mode_seq,
-        metric=metric
-    )
-
-    # Concatenate/get FC, reconstruct and calculate error
-    calculate_vectorized_FC = lambda x: np.arctanh(squareform(np.corrcoef(x), checks=False)) # returns 1D vector
-    fc = calculate_vectorized_FC(data)[np.newaxis,:] # original FC
-    fc_recon = np.stack([calculate_vectorized_FC(recon[:, i, :]) for i in range(recon.shape[1])], axis=1)
-    fc_recon_error = cdist(fc_recon.T, fc, metric=metric).ravel() if metric is not None else np.empty(0)
-
-    return fc_recon, fc_recon_error, recon, recon_error, beta
-
 

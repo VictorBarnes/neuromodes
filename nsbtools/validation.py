@@ -1,5 +1,7 @@
 import numpy as np
 from numpy.typing import ArrayLike
+from scipy import sparse
+from typing import Optional, Union
 
 def check_orthonormal_matrix(
     matrix: ArrayLike,
@@ -126,3 +128,47 @@ def check_normalized_vectors(
     assert np.isrealobj(matrix), "Input array must contain only real values."
 
     return np.allclose(np.linalg.norm(matrix, axis=0), 1.0, atol=tol)
+
+def is_mass_orthonormal_modes(
+    emodes: ArrayLike,
+    mass: Optional[Union[ArrayLike,sparse.spmatrix]] = None,
+    rtol: float = 1e-05, atol: float = 1e-03
+) -> bool:
+    """
+    Check if a set of vectors is approximately mass-orthonormal 
+    (i.e., `emodes.T @ mass @ emodes == I`).
+
+    Parameters
+    ----------
+    emodes : array-like
+        The vectors array of shape (n_verts, n_vecs), where n_vecs is the number of vectors.
+    mass : array-like, optional
+        The mass matrix of shape (n_verts, n_verts). If using EigenSolver, provide its self.mass. If 
+        None, an identity matrix will be used, corresponding to Euclidean orthonormality. Default is 
+        None.
+    atol : float, optional
+        Absolute tolerance for the orthonormality check. Default is 1e-3.
+
+    Notes
+    -----
+    Under discretization, the set of solutions for the generalized eigenvalue problem is expected to
+    be mass-orthogonal (mode_i^T * mass matrix * mode_j = 0 for i ≠ j), rather than orthogonal with
+    respect to the standard Euclidean inner (dot) product (mode_i^T * mode_j = 0 for i ≠ j). 
+    Eigenmodes are also expected to be mass-normal (mode_i^T * mass matrix * mode_i = 1). It follows
+    that the first mode is expected to be a specific constant, but precision error during
+    computation can introduce spurious spatial heterogeneity. Since many eigenmode analyses rely on
+    mass-orthonormality (e.g., decomposition, wave simulation), this function serves to ensure the
+    validity of any calculated or provided eigenmodes.
+    """
+    # Format inputs
+    emodes = np.asarray(emodes)
+    if mass is not None and not isinstance(mass,sparse.spmatrix):
+        mass = np.asarray(mass)
+
+    # Check inputs (ie mass matrix shape)
+    n_verts = emodes.shape[0]
+    if mass is not None and (mass.shape != (n_verts, n_verts)):
+        raise ValueError(f"The mass matrix must have shape ({n_verts}, {n_verts}).")
+
+    prod = emodes.T @ emodes if mass is None else emodes.T @ mass @ emodes
+    return np.allclose(prod, np.eye(emodes.shape[1]), rtol=rtol, atol=atol, equal_nan=False)

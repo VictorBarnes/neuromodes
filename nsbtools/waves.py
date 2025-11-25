@@ -8,7 +8,7 @@ from joblib import Memory
 from numpy.typing import NDArray, ArrayLike
 from scipy.integrate import solve_ivp
 from typing import Optional, Union
-from nsbtools.eigen import decompose
+from nsbtools.basis import decompose
 
 # Set up joblib memory caching
 CACHE_DIR = os.getenv("CACHE_DIR")

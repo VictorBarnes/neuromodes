@@ -3,8 +3,11 @@ import pytest
 import numpy as np
 from scipy.spatial.distance import squareform
 from lapy import TriaMesh
+
 from nsbtools.io import fetch_surf, fetch_map, mask_surf
-from nsbtools.eigen import EigenSolver, decompose, reconstruct, reconstruct_timeseries, calc_norm_power, is_mass_orthonormal_modes
+from nsbtools.eigen import EigenSolver, calc_norm_power
+from nsbtools.basis import decompose, reconstruct, reconstruct_timeseries
+from nsbtools.validation import is_mass_orthonormal_modes
 
 @pytest.fixture
 def surf_medmask_hetero():
