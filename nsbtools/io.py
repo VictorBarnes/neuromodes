@@ -2,13 +2,14 @@
 
 from trimesh import Trimesh
 import numpy as np
-from nibabel import load
-from nibabel.freesurfer import read_geometry
+from nibabel.gifti.gifti import GiftiImage
+from nibabel.loadsave import load
+from nibabel.freesurfer.io import read_geometry
 from pathlib import Path
-from typing import Union, Tuple
+from typing import Union, Tuple, cast
 from lapy import TriaMesh
 from numpy.typing import NDArray, ArrayLike
-from importlib.resources import files
+from importlib.resources import files, as_file
 
 def read_surf(
     mesh: Union[str, Path, Trimesh, TriaMesh, dict]
@@ -45,13 +46,13 @@ def read_surf(
             mesh_lapy = TriaMesh.read_vtk(mesh_str)
             trimesh = Trimesh(vertices=mesh_lapy.v, faces=mesh_lapy.t)
         elif mesh_str.endswith('.gii'):
-            mesh_data = load(mesh_str).darrays
+            mesh_data = cast(GiftiImage, load(mesh_str)).darrays
             trimesh = Trimesh(vertices=mesh_data[0].data, faces=mesh_data[1].data)
         elif mesh_str.endswith(
             ('white', 'pial', 'inflated', 'orig', 'sphere', 'smoothwm', 'qsphere', 'fsaverage')
             ):
-            vertices, faces = read_geometry(mesh_str)
-            trimesh = Trimesh(vertices=vertices, faces=faces)
+            vertices, faces = read_geometry(mesh_str, read_metadata=False, read_stamp=False) # will only return two outputs now # type: ignore
+            trimesh = Trimesh(vertices=vertices, faces=faces) # type: ignore
         else:
             raise ValueError(
                 '`surf` must be a path-like string to a valid VTK (.vtk), GIFTI (.gii), or '
@@ -79,7 +80,7 @@ def mask_surf(
     
     # Mask faces where all vertices are in the mask
     face_mask = np.all(mask[surf.faces], axis=1)
-    mesh = surf.submesh([face_mask])[0]
+    mesh = surf.submesh([face_mask])[0] #type: ignore # submesh returns a list by default
 
     # Validate the mesh before returning
     check_surf(mesh)
@@ -113,14 +114,14 @@ def fetch_surf(
 ) -> Tuple[Trimesh, NDArray]:
     """Load cortical surface mesh and medial wall mask from nsbtools data directory."""
     data_dir = files('nsbtools.data')
+    meshname = f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_{surf}.surf.gii'
+    maskname = f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_medmask.label.gii'
 
     try:
-        mesh = read_surf(
-            data_dir / f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_{surf}.surf.gii'
-            )
-        medmask = load(
-            data_dir / f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_medmask.label.gii'
-            ).darrays[0].data.astype(bool)
+        with as_file(data_dir / meshname) as fpath:
+            mesh = read_surf(fpath)
+        with as_file(data_dir / maskname) as fpath:
+            medmask = cast(GiftiImage, load(fpath)).darrays[0].data.astype(bool)
         
         return mesh, medmask
     except Exception as e:
@@ -142,7 +143,8 @@ def fetch_map(
     filename = f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_{data}.func.gii'
 
     try:
-        return load(data_dir / filename).darrays[0].data
+        with as_file(data_dir / filename) as fpath:
+            return cast(GiftiImage, load(fpath)).darrays[0].data
     
     except Exception as e:
         raise ValueError(
