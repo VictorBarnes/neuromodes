@@ -33,3 +33,8 @@ packages = ["nsbtools"]
 
 [tool.setuptools.package-data]
 "nsbtools.data" = ["*"]
+
+[tool.pytest.ini_options]
+python_functions = ["test_"]
+python_files = ["test_*.py",]
+testpaths = ["tests",]
