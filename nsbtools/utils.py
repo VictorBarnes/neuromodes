@@ -26,7 +26,7 @@ def unmask(
         The unmasked data, with the same shape as the medial mask.
     """
     data = np.asarray(data)
-    mask = mask.astype(bool)
+    mask = np.asarray(mask).astype(bool)
 
     n_verts = len(mask)
 
@@ -37,6 +37,8 @@ def unmask(
         nfeatures = np.shape(data)[1]
         map_reshaped = np.full((n_verts, nfeatures), val)
         map_reshaped[mask, :] = data
+    else: 
+        raise ValueError("Data must be 1D or 2D.")
 
     return map_reshaped
 
@@ -132,9 +134,9 @@ def resample_matrix(
     template: ArrayLike,
     noise: Union[str, ArrayLike] = 'gaussian',
     rand_params: List[float] = [0.5, 0.1],
-    ignore_repeats: bool = True,
-    preserve_zeros: bool = True,
-    resymmetrize: bool = True,
+    preserve_repeats: bool = False,
+    preserve_zeros: bool = False,
+    preserve_symmetry: bool = False,
     seed: Optional[int] = None
 ) -> NDArray:
     """
@@ -145,15 +147,15 @@ def resample_matrix(
     template : np.ndarray
         Input template matrix.
     noise : str or np.ndarray, optional
-        Type of noise ('gaussian', 'uniform', 'integers', or custom array).
+        Type of noise ('gaussian', 'uniform', 'integer', or custom array).
     rand_params : list, optional
         Parameters for the random distribution. For 'gaussian', [mean, std]; 
-        for 'uniform' and 'integers', [min, max].
-    ignore_repeats : bool, optional
+        for 'uniform' and 'integer', [min, max].
+    preserve_repeats : bool, optional
         Whether to ignore repeated values in the template.
     preserve_zeros : bool, optional
         Whether to preserve the template's zero entries in the output matrix.
-    resymmetrize : bool, optional
+    preserve_symmetry : bool, optional
         Whether to resymmetrize the noise matrix if the template is symmetric.
     seed : int, optional
         Random seed.
@@ -164,12 +166,14 @@ def resample_matrix(
         The resampled noise matrix.
     """
 
+    template = np.asarray(template) # not great for sparse matrices, but they should be resampled differently
+
     # Set random seed if specified
     if seed is not None:
         np.random.seed(seed)
 
     # Make noise
-    if ignore_repeats:
+    if preserve_repeats:
         u, uc = np.unique(template, return_inverse=True)
         n_rand = len(u)
     else:
@@ -178,36 +182,37 @@ def resample_matrix(
     if isinstance(noise, str):
         if noise == 'gaussian':
             mean, std = rand_params
-            sorted_noise = np.sort(np.random.randn(n_rand) * std + mean)
+            noise = np.random.randn(n_rand) * std + mean
         elif noise == 'uniform':
             min, max = rand_params
-            sorted_noise = np.sort(np.random.rand(n_rand) * (max - min) + min)
-        elif noise == 'integers':
+            noise = np.random.rand(n_rand) * (max - min) + min
+        elif noise == 'integer':
             min, max = rand_params
-            sorted_noise = np.sort(np.random.randint(min, max + 1, size=n_rand))
+            noise = np.random.randint(int(min), int(max) + 1, size=n_rand)
         else:
             raise ValueError("Invalid noise type")
 
     elif isinstance(noise, np.ndarray) or isinstance(noise, list):
-        noise = np.asarray(noise)
+        noise = np.asarray(noise).flatten()
+        if noise.size != n_rand:
+            raise ValueError(f"Custom noise array must have {n_rand} elements, "
+                             "but has {noise.size}.")
 
-        assert noise.size == n_rand, (
-            f"Custom noise array must have {n_rand} elements, but has {noise.size}."
-        )
-        sorted_noise = np.sort(noise.flatten())
     else:
         raise ValueError("Noise input not valid")
+    
+    sorted_noise = np.sort(noise)
 
     # Organise noise
-    if ignore_repeats:
-        spatial_noise = sorted_noise[uc].reshape(template.shape)
+    if preserve_repeats:
+        spatial_noise = sorted_noise[uc].reshape(template.shape) # type: ignore
     else:
         idx = np.argsort(template.flatten())
         spatial_noise = np.zeros_like(template.flatten())
         spatial_noise[idx] = sorted_noise
         spatial_noise = spatial_noise.reshape(template.shape)
 
-    if resymmetrize:
+    if preserve_symmetry:
         if not np.allclose(template, template.T):
             warn("Template matrix is not approximately symmetric.")
 
