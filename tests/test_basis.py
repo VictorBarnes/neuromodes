@@ -4,8 +4,8 @@ import numpy as np
 from scipy.spatial.distance import squareform
 
 from nsbtools.io import fetch_surf, fetch_map
-from nsbtools.eigen import EigenSolver, calc_norm_power
-from nsbtools.basis import decompose, reconstruct, reconstruct_timeseries
+from nsbtools.eigen import EigenSolver
+from nsbtools.basis import decompose, reconstruct, reconstruct_timeseries, calc_norm_power
 
 @pytest.fixture
 def surf_medmask_hetero():
@@ -17,12 +17,12 @@ def surf_medmask_hetero():
 @pytest.fixture
 def presolver(surf_medmask_hetero):
     surf, medmask, hetero = surf_medmask_hetero
-    presolver = EigenSolver(surf, mask=medmask, hetero=hetero, n_modes=10)
+    presolver = EigenSolver(surf, mask=medmask, hetero=hetero)
     return presolver
 
 @pytest.fixture
 def solver(presolver):
-    _, _ = presolver.solve()
+    presolver.solve(n_modes=10)
     return presolver
 
 def test_decompose_eigenmodes(solver):
@@ -95,7 +95,7 @@ def test_reconstruct_mode_superposition(solver, gen_eigenmap):
                        atol=1e-5), 'Euclidean error is not close to 0 when using all modes.'
 
     # Reconstruct using the first 5 modes, then the first 2 modes
-    _, correlation_error_modesq, _ = reconstruct(eigenmaps, solver.emodes, mass=solver.mass, mode_seq=[5,2])
+    _, correlation_error_modesq, _ = reconstruct(eigenmaps, solver.emodes, mass=solver.mass, mode_counts=[5,2])
     assert (correlation_error_modesq[0,:] == correlation_error[4,:]).all(), \
         'Reconstruction scores do not match for 5 modes.'
     assert (correlation_error_modesq[1,:] == correlation_error[1,:]).all(), \
@@ -136,8 +136,8 @@ def test_reconstruct_real_map_32k():
     mesh, medmask = fetch_surf()
     rng = np.random.default_rng(0)
     hetero = rng.standard_normal(size=len(medmask))
-    solver = EigenSolver(mesh, mask=medmask, hetero=hetero, n_modes=10)
-    solver.solve()
+    solver = EigenSolver(mesh, mask=medmask, hetero=hetero)
+    solver.solve(n_modes=10)
     emodes = solver.emodes
 
     # Load FC gradient from Margulies 2016 PNAS
