@@ -9,7 +9,6 @@ from nsbtools.validation import is_mass_orthonormal_modes
 if TYPE_CHECKING:
     from scipy.spatial.distance import _MetricCallback, _MetricKind 
 
-
 def decompose(
     data: ArrayLike,
     emodes: ArrayLike,
@@ -205,7 +204,7 @@ def reconstruct_timeseries(
     ------
     ValueError
         If the number of vertices in `data` and `emodes` do not match, if `emodes` contain NaNs,
-        or if an invalid method is specified.
+        or if an invalid method/mass matrix is specified.
     """
 
     # Format/check inputs    
