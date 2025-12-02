@@ -35,10 +35,8 @@ class EigenSolver(Solver):
         mask: Optional[ArrayLike] = None,
         normalize: bool = False,
         hetero: Optional[ArrayLike] = None,
-        alpha: float = 1.0,
-        r: float = 28.9,
-        gamma: float = 0.116,
-        scaling: str = "sigmoid"
+        scaling: Optional[str] = None, # default to "sigmoid" if hetero given (and remains None)
+        alpha: Optional[float] = None  # default to 1.0 if hetero given (and remains None)
     ):
         """
         Initialize the EigenSolver class with surface, and optionally with a heterogeneity map.
@@ -53,20 +51,13 @@ class EigenSolver(Solver):
             A boolean mask to exclude certain points (e.g., medial wall) from the surface mesh.
             Default is None.
         normalize : bool, optional
-            Whether to normalize the surface mesh. Default is False.
+            Whether to normalize the surface mesh to have unit surface area and centroid at the origin (modifies the vertices). Default is False.
         hetero : array-like, optional
             A heterogeneity map to scale the Laplace-Beltrami operator. Default is None.
-        alpha : float, optional
-            Scaling factor for the heterogeneity map. Default is 1.0.
-        r : float, optional
-            Axonal length scale for wave propagation, used to ensure plausible wave speeds for 
-            activity simulation when hetero is provided. Default is 28.9.
-        gamma : float, optional
-            Damping parameter for wave propagation, used to ensure plausible wave speeds for
-            activity simulation when hetero is provided. Default is 0.116.
         scaling : str, optional
-            Scaling function to apply to the heterogeneity map. Must be "sigmoid" or "exponential". 
-            Default is "sigmoid".
+            Scaling function to apply to the heterogeneity map. Must be "sigmoid" or "exponential". If a heterogenity map is specified, the default is "sigmoid". Otherwise, this value is ignored (and is set to None).
+        alpha : float, optional
+            Scaling parameter for the heterogeneity map. If a heterogenity map is specified, the default is 1.0. Otherwise, this value is ignored (and is set to None). 
 
         Raises
         -------
@@ -86,84 +77,42 @@ class EigenSolver(Solver):
             self.geometry.normalize_()
         self.n_verts = surf.vertices.shape[0]
 
-        # hetero inputs and checks (r and gamma checked in hetero setter)
-        self._r = float(r)
-        self._gamma = float(gamma)
-        self.alpha = alpha if hetero is not None else 0
-        self.scaling = scaling
-        self.hetero = hetero
-
-    @property
-    def r(self) -> float:
-        return self._r
-
-    @r.setter
-    def r(self, r: float) -> None:
-        if r <= 0:
-            raise ValueError("`r` must be positive.")
-        if not is_valid_hetero(hetero=self.hetero, r=r, gamma=self.gamma):
-            raise ValueError(f"Alpha value results in non-physiological wave speeds above 150 m/s. "
-                             "Try using a smaller alpha value.")
-        self._r = r
-
-    @property
-    def gamma(self) -> float:
-        return self._gamma
-
-    @gamma.setter
-    def gamma(self, gamma: float) -> None:
-        if gamma <= 0:
-            raise ValueError("`gamma` must be positive.")
-        if not is_valid_hetero(hetero=self.hetero, r=self.r, gamma=gamma):
-            raise ValueError(f"Alpha value results in non-physiological wave speeds above 150 m/s. "
-                             "Try using a smaller alpha value.")
-        self._gamma = gamma
-
-    @property
-    def hetero(self) -> NDArray:
-        return self._hetero
-
-    @hetero.setter
-    def hetero(self, hetero: Optional[ArrayLike]) -> None:
-        # Handle None case by setting to ones
-        if hetero is None:
-            if self.alpha != 0:
-                warn('Setting `alpha` to 0 because `hetero` is None.')
-                self.alpha = 0
-            self._hetero = np.ones(self.n_verts)
-            return
-
-        # Ensure hetero has correct length
-        hetero = np.asarray(hetero)
-        if len(hetero) == self.n_verts:
-            pass
-        elif self.mask is None: 
-            raise ValueError(f"The number of elements in `hetero` ({len(hetero)}) must match "
-                            f"the number of vertices in the surface mesh ({self.n_verts}).")
-        elif len(hetero) == len(self.mask):
-            hetero = hetero[self.mask]
+        # Hetero inputs
+        self._raw_hetero = hetero
+        if hetero is None: # Handle None case by setting to ones
+            if scaling is not None: 
+                warn("`scaling` is ignored (and set to None) as `hetero` is None.")
+            if alpha is not None:
+                warn("`alpha` is ignored (and set to None) as `hetero` is None.")
+            self._scaling = None
+            self._alpha = None
+            self.hetero = np.ones(self.n_verts)
         else:
-            raise ValueError(f"The number of elements in `hetero` ({len(hetero)}) must match "
-                             f"the number of vertices in the surface mesh ({self.n_verts}) "
-                             f"or the surface mask (of size {len(self.mask)}).") 
+            hetero = np.asarray(hetero)
+            alpha = 1.0 if alpha is None else float(alpha)
+            scaling = "sigmoid" if scaling is None else scaling
 
-        # Check for NaN/Inf values
-        if np.isnan(hetero).any() or np.isinf(hetero).any():
-            raise ValueError("`hetero` must not contain NaNs or Infs.")
-            
-        # Scale the heterogeneity map
-        hetero = scale_hetero(
-            hetero=hetero, 
-            alpha=self.alpha, 
-            scaling=self.scaling
-        )
+            # Ensure hetero has correct length (masked or unmasked)
+            if len(hetero) == self.n_verts:
+                pass
+            elif self.mask is None: 
+                raise ValueError(f"The number of elements in `hetero` ({len(hetero)}) must match "
+                                f"the number of vertices in the surface mesh ({self.n_verts}).")
+            elif len(hetero) == len(self.mask):
+                hetero = hetero[self.mask]
+            else:
+                raise ValueError(f"The number of elements in `hetero` ({len(hetero)}) must match "
+                                f"the number of vertices in the surface mesh ({self.n_verts}) "
+                                f"or the surface mask (of size {len(self.mask)}).") 
 
-        if not is_valid_hetero(hetero=hetero, r=self.r, gamma=self.gamma):
-            raise ValueError(f"Alpha value results in non-physiological wave speeds above "
-                                "150 m/s. Try using a smaller alpha value.")
-
-        # Assign to private attribute
-        self._hetero = hetero
+            # Scale and assign the heterogeneity map
+            self._scaling = scaling    
+            self._alpha = alpha
+            self.hetero = scale_hetero(
+                hetero=hetero, 
+                alpha=self._alpha, 
+                scaling=self._scaling
+            )
 
     def compute_lbo(
         self, 
@@ -330,7 +279,7 @@ class EigenSolver(Solver):
         data: ArrayLike,
         method: str = 'project',
         mode_counts: Optional[ArrayLike] = None,
-        metric: Optional[Union['_MetricCallback', '_MetricKind']] = 'euclidean'
+        metric: Optional[Union['_MetricCallback', '_MetricKind']] = 'correlation'
     ) -> Any:
         """
         Calculate and score the reconstruction of the given data using the provided orthogonal vectors.
@@ -347,7 +296,7 @@ class EigenSolver(Solver):
             The sequence of vectors to be used for reconstruction. For example, `mode_counts=np.asarray([10,20,30])` will run three analyses: with the first 10 modes, with the first 20 modes, and with the first 30 modes. Default is None, which uses all vectors provided.
         metric : str, optional
             The metric used for calculating reconstruction error. Should be one of the options from 
-            scipy cdist, or None if no scoring is required. Default is 'euclidean'.
+            scipy cdist, or None if no scoring is required. Default is 'correlation'.
 
         Returns
         -------
@@ -383,7 +332,7 @@ class EigenSolver(Solver):
         data: ArrayLike,
         method: str = 'project',
         mode_counts: Optional[ArrayLike] = None,
-        metric: Optional[Union['_MetricCallback', '_MetricKind']] = 'euclidean'
+        metric: Optional[Union['_MetricCallback', '_MetricKind']] = 'correlation'
     ) -> Any:
         """
         Calculate and score the reconstruction of the given data using the provided orthogonal vectors.
@@ -400,7 +349,7 @@ class EigenSolver(Solver):
             The sequence of vectors to be used for reconstruction. For example, `mode_counts=np.asarray([10,20,30])` will run three analyses: with the first 10 modes, with the first 20 modes, and with the first 30 modes. Default is None, which uses all vectors provided.
         metric : str, optional
             The metric used for calculating reconstruction error. Should be one of the options from 
-            scipy cdist, or None if no scoring is required. Default is 'euclidean'.
+            scipy cdist, or None if no scoring is required. Default is 'correlation'.
 
         Returns
         -------
@@ -437,6 +386,7 @@ class EigenSolver(Solver):
     
     def model_connectome(
         self,
+        r: float = 9.53,
         k: int = 108
     ) -> NDArray:
         """
@@ -472,7 +422,7 @@ class EigenSolver(Solver):
         return model_connectome(
             emodes=self.emodes,
             evals=self.evals,
-            r=self.r,
+            r=r,
             k=k
         )
     
@@ -481,6 +431,8 @@ class EigenSolver(Solver):
         ext_input: Optional[ArrayLike] = None,
         dt: float = 0.1,
         nt: int = 1000,
+        r: float = 28.9,
+        gamma: float = 0.116,
         bold_out: bool = False,
         decomp_method: str = "project",
         pde_method: str = "fourier",
@@ -529,14 +481,19 @@ class EigenSolver(Solver):
         """
         from nsbtools.waves import simulate_waves
 
+        if np.max(estimate_wave_speed(self.hetero, r, gamma)) > 150.0:
+            warn("The combination of heterogeneity, r, and gamma may lead to "
+                 "non-physiological wave speeds (>150 m/s). Consider adjusting "
+                 "these parameters.")
+
         if not hasattr(self, 'emodes'):
             raise ValueError("Eigenmodes not found. Please run the solve() method first.")
 
         return simulate_waves(
             emodes=self.emodes,
             evals=self.evals,
-            r=self.r,
-            gamma=self.gamma,
+            r=r,
+            gamma=gamma,
             ext_input=ext_input,
             dt=dt,
             nt=nt,
@@ -547,11 +504,11 @@ class EigenSolver(Solver):
             seed=seed
         )
 
-def is_valid_hetero(
+def estimate_wave_speed(
     hetero: ArrayLike,
     r: float,
     gamma: float
-) -> bool:
+) -> NDArray:
     """
     Check if the heterogeneity map values result in physiologically plausible wave speeds.
     
@@ -566,13 +523,11 @@ def is_valid_hetero(
     
     Returns
     -------
-    bool
-        If the computed wave speed exceeds 150 m/s, indicating non-physiological values.
+    float
+        Estimation of the speed at each vertex.
     """
     hetero = np.asarray(hetero)
-    max_speed = np.max(r * gamma * np.sqrt(hetero))
-
-    return bool(max_speed <= 150)
+    return r * gamma * np.sqrt(hetero)
 
 def scale_hetero(
     hetero: ArrayLike,
@@ -602,10 +557,17 @@ def scale_hetero(
     ValueError
         If the scaling parameter is not a supported function.
     """
+    # z-score the heterogeneity map
     hetero = np.asarray(hetero)
+    if np.any(np.isnan(hetero)) or np.any(np.isinf(hetero)):
+        raise ValueError("`hetero` must not contain NaNs or Infs; check input values.")
 
-    # Z-score the heterogeneity map
     hetero_z = zscore(hetero)
+    if np.any(np.isnan(hetero_z)):
+        raise ValueError("z-scored `hetero` must not contain NaNs; check input values.")
+
+    if alpha == 0:
+        warn("`alpha` is set to 0, meaning heterogeneity map will have no effect.")
 
     # Scale the heterogeneity map
     if scaling == "exponential":

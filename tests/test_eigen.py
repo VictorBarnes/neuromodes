@@ -41,6 +41,29 @@ def test_invalid_mask_shape(surf_medmask_hetero):
     with pytest.raises(ValueError, match=r"`mask` \(10\) must match .* mesh \(4002\)."):
         EigenSolver(surf, mask=bad_mask)
 
+def test_no_hetero(surf_medmask_hetero):
+    surf, medmask, _ = surf_medmask_hetero
+    homogenous_solver = EigenSolver(surf, mask=medmask, hetero=None)
+    homogenous_solver.solve(10) # hardcoded to 10 to match the saved prior_modes
+
+    # Load homogeneous eigenmodes/eigenvalues for comparison
+    test_data = Path(__file__).parent / 'test_data'
+    prior_modes = np.load(test_data / 'sp-human_tpl-fsLR_den-4k_hemi-L_midthickness-emodes.npy')
+    prior_evals = np.load(test_data / 'sp-human_tpl-fsLR_den-4k_hemi-L_midthickness-evals.npy')
+
+    for i in range(1, homogenous_solver.n_modes):
+        assert np.abs(np.corrcoef(homogenous_solver.emodes[:, i], prior_modes[:, i])[0, 1]) > 0.99, \
+            f'Eigenmode {i} does not match the previously computed homogeneous result.'
+        assert np.allclose(homogenous_solver.evals[i], prior_evals[i], rtol=0.1), \
+            f'Eigenvalue {i} does not match the previously computed homogeneous result.'
+        
+def test_no_hetero_alpha_scaling(surf_medmask_hetero):
+    surf, medmask, _ = surf_medmask_hetero
+    with pytest.warns(UserWarning, match="`alpha` is ignored.*"):
+        EigenSolver(surf, mask=medmask, hetero=None, alpha=0.5)
+    with pytest.warns(UserWarning, match="`scaling` is ignored.*"):
+        EigenSolver(surf, mask=medmask, hetero=None, scaling='exponential')
+
 def test_invalid_hetero_shape(surf_medmask_hetero):
     surf, _, _ = surf_medmask_hetero
     bad_hetero = np.ones(10)
@@ -56,6 +79,13 @@ def test_nan_inf_hetero(surf_medmask_hetero):
     hetero[0] = np.inf
     with pytest.raises(ValueError, match="`hetero` must not contain NaNs or Infs."):
         EigenSolver(surf, hetero=hetero)
+
+def test_constant_hetero(surf_medmask_hetero):
+    surf, _, hetero = surf_medmask_hetero
+    hetero[:] = 2.0
+    with pytest.warns(RuntimeWarning, match="Precision loss occurred in moment calculation.*"):
+        with pytest.raises(ValueError, match="z-scored `hetero` must not contain NaNs.*"):
+            EigenSolver(surf, hetero=hetero)
 
 def test_nan_inf_hetero_medmask(surf_medmask_hetero):
     # Inject NaN/Inf at a cortical vertex (should raise error)
@@ -79,11 +109,6 @@ def test_nan_inf_hetero_medmask_ignored(surf_medmask_hetero):
     hetero[medial_vertex] = np.inf  
     EigenSolver(surf, mask=medmask, hetero=hetero)
 
-def test_init_invalid_wave_speed(surf_medmask_hetero):
-    surf, medmask, hetero = surf_medmask_hetero
-    with pytest.raises(ValueError, match='.*non-physiological wave speeds.*'):
-        solver = EigenSolver(surf, mask=medmask, hetero=hetero, r=1000)
-
 def test_init_invalid_scaling(surf_medmask_hetero):
     surf, medmask, hetero = surf_medmask_hetero
     with pytest.raises(ValueError, match="Invalid scaling 'plantasia'.*"):
@@ -106,24 +131,6 @@ def test_symmetric_stiffness(presolver):
 
 def test_stiffness_rowsums(presolver):
     assert abs(presolver.stiffness.sum(axis=1)).max() < 2e-6
-
-def test_no_hetero(presolver):
-
-    with pytest.warns(UserWarning, match="Setting `alpha` to 0.*"):
-        presolver.hetero = None
-    presolver.solve(10) # hardcoded to 10 to match the saved prior_modes
-
-    test_data = Path(__file__).parent / 'test_data'
-
-    # Load homogeneous eigenmodes/eigenvalues for comparison
-    prior_modes = np.load(test_data / 'sp-human_tpl-fsLR_den-4k_hemi-L_midthickness-emodes.npy')
-    prior_evals = np.load(test_data / 'sp-human_tpl-fsLR_den-4k_hemi-L_midthickness-evals.npy')
-
-    for i in range(1, presolver.n_modes):
-        assert np.abs(np.corrcoef(presolver.emodes[:, i], prior_modes[:, i])[0, 1]) > 0.99, \
-            f'Eigenmode {i} does not match the previously computed homogeneous result.'
-        assert np.allclose(presolver.evals[i], prior_evals[i], rtol=0.1), \
-            f'Eigenvalue {i} does not match the previously computed homogeneous result.'
         
 def test_seeded_modes(presolver):
     presolver.solve(16, standardize=False, fix_mode1=False, seed=36)
