@@ -21,8 +21,8 @@ def read_surf(
     mesh : str, Path, trimesh.Trimesh, lapy.TriaMesh, or dict
         Surface mesh specified as a file path (string or Path) to a VTK (.vtk), GIFTI (.gii), or
         FreeSurfer file (.white, .pial, .inflated, .orig, .sphere, .smoothwm, .qsphere, .fsaverage),
-        an instance of trimesh.Trimesh or lapy.TriaMesh, or a dictionary with "vertices" and
-        "faces" keys.
+        an instance of trimesh.Trimesh or lapy.TriaMesh, or a dictionary with "vertices" and "faces"
+        keys.
 
     Returns
     -------

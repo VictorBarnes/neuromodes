@@ -44,26 +44,30 @@ class EigenSolver(Solver):
         Parameters
         ----------
         surf : str, pathlib.Path, trimesh.Trimesh, lapy.TriaMesh, or dict
-            The surface mesh to be used. Can be a file path to a supported format 
-            (see io.read_surf), a supported mesh object, or a dictionary with 'vertices' and 'faces'
+            The surface mesh to be used. Can be a file path to a supported format (see
+            io.read_surf), a supported mesh object, or a dictionary with 'vertices' and 'faces'
             keys.
         mask : array-like, optional
             A boolean mask to exclude certain points (e.g., medial wall) from the surface mesh.
             Default is None.
         normalize : bool, optional
-            Whether to normalize the surface mesh to have unit surface area and centroid at the origin (modifies the vertices). Default is False.
+            Whether to normalize the surface mesh to have unit surface area and centroid at the
+            origin (modifies the vertices). Default is False.
         hetero : array-like, optional
             A heterogeneity map to scale the Laplace-Beltrami operator. Default is None.
         scaling : str, optional
-            Scaling function to apply to the heterogeneity map. Must be "sigmoid" or "exponential". If a heterogenity map is specified, the default is "sigmoid". Otherwise, this value is ignored (and is set to None).
+            Scaling function to apply to the heterogeneity map. Must be "sigmoid" or "exponential".
+            If a heterogenity map is specified, the default is "sigmoid". Otherwise, this value is
+            ignored (and is set to None).
         alpha : float, optional
-            Scaling parameter for the heterogeneity map. If a heterogenity map is specified, the default is 1.0. Otherwise, this value is ignored (and is set to None). 
+            Scaling parameter for the heterogeneity map. If a heterogenity map is specified, the
+            default is 1.0. Otherwise, this value is ignored (and is set to None). 
 
         Raises
         -------
         ValueError
-            Raised if any input parameter is invalid, such as negative or non-numeric values for  
-            `r` or `gamma`.
+            Raised if any input parameter is invalid, such as negative or non-numeric values for `r`
+            or `gamma`.
         """
         # Surface inputs and checks (check_surf called in read_surf and mask_surf)
         surf = read_surf(surf)
@@ -282,28 +286,37 @@ class EigenSolver(Solver):
         metric: Optional[Union['_MetricCallback', '_MetricKind']] = 'correlation'
     ) -> Any:
         """
-        Calculate and score the reconstruction of the given data using the provided orthogonal vectors.
+        Calculate and score the reconstruction of the given data using the provided orthogonal
+        vectors.
 
         Parameters
         ----------
         data : array-like
-            The input data array of shape (n_verts, n_maps), where n_verts is the number of vertices and n_maps is the number of maps.
+            The input data array of shape (n_verts, n_maps), where n_verts is the number of vertices
+            and n_maps is the number of maps.
         method : str, optional
-            The method used for the decomposition, either 'project' to project data into a 
+            The method used for the decomposition, either 'project' to project data into a
             mass-orthonormal space or 'regress' for least-squares fitting. Note that the beta values
-            from 'regress' tend towards those from 'project' when more basis vectors are provided. For a non-orthonormal basis set, 'regress' must be used. Default is 'project'.
+            from 'regress' tend towards those from 'project' when more basis vectors are provided.
+            For a non-orthonormal basis set, 'regress' must be used. Default is 'project'.
         mode_counts : array-like, optional
-            The sequence of vectors to be used for reconstruction. For example, `mode_counts=np.asarray([10,20,30])` will run three analyses: with the first 10 modes, with the first 20 modes, and with the first 30 modes. Default is None, which uses all vectors provided.
+            The sequence of vectors to be used for reconstruction. For example,
+            `mode_counts=np.asarray([10,20,30])` will run three analyses: with the first 10 modes,
+            with the first 20 modes, and with the first 30 modes. Default is None, which uses all
+            vectors provided.
         metric : str, optional
-            The metric used for calculating reconstruction error. Should be one of the options from 
+            The metric used for calculating reconstruction error. Should be one of the options from
             scipy cdist, or None if no scoring is required. Default is 'correlation'.
 
         Returns
         -------
         recon : numpy.ndarray
-            The reconstructed data array of shape (n_verts, nq, n_maps), where nq is the number of different reconstructions ordered in `mode_counts`. Each slice is the independent reconstruction of each map.
+            The reconstructed data array of shape (n_verts, nq, n_maps), where nq is the number of
+            different reconstructions ordered in `mode_counts`. Each slice is the independent
+            reconstruction of each map.
         recon_error : numpy.ndarray
-            The reconstruction error array of shape (nq, n_maps). Each value represents the reconstruction error of one map. If `metric` is None, this will be empty. 
+            The reconstruction error array of shape (nq, n_maps). Each value represents the
+            reconstruction error of one map. If `metric` is None, this will be empty. 
         beta : list of numpy.ndarray
             A list of beta coefficients calculated for each mode.
         
@@ -335,32 +348,44 @@ class EigenSolver(Solver):
         metric: Optional[Union['_MetricCallback', '_MetricKind']] = 'correlation'
     ) -> Any:
         """
-        Calculate and score the reconstruction of the given data using the provided orthogonal vectors.
+        Calculate and score the reconstruction of the given data using the provided orthogonal
+        vectors.
 
         Parameters
         ----------
         data : array-like
-            The input data array of shape (n_verts, n_timepoints), where n_verts is the number of vertices and n_timepoints is the number of timepoints.
+            The input data array of shape (n_verts, n_timepoints), where n_verts is the number of
+            vertices and n_timepoints is the number of timepoints.
         method : str, optional
-            The method used for the decomposition, either 'project' to project data into a 
+            The method used for the decomposition, either 'project' to project data into a
             mass-orthonormal space or 'regress' for least-squares fitting. Note that the beta values
-            from 'regress' tend towards those from 'project' when more basis vectors are provided. For a non-orthonormal basis set, 'regress' must be used. Default is 'project'.
+            from 'regress' tend towards those from 'project' when more basis vectors are provided.
+            For a non-orthonormal basis set, 'regress' must be used. Default is 'project'.
         mode_counts : array-like, optional
-            The sequence of vectors to be used for reconstruction. For example, `mode_counts=np.asarray([10,20,30])` will run three analyses: with the first 10 modes, with the first 20 modes, and with the first 30 modes. Default is None, which uses all vectors provided.
+            The sequence of vectors to be used for reconstruction. For example, `mode_counts =
+            np.asarray([10,20,30])` will run three analyses: with the first 10 modes, with the first
+            20 modes, and with the first 30 modes. Default is None, which uses all vectors provided.
         metric : str, optional
-            The metric used for calculating reconstruction error. Should be one of the options from 
+            The metric used for calculating reconstruction error. Should be one of the options from
             scipy cdist, or None if no scoring is required. Default is 'correlation'.
 
         Returns
         -------
         fc_recon : numpy.ndarray
-            The functional connectivity reconstructed data array of shape (ne, nq). The FC matrix is r-to-z (arctanh) transformed and vectorized; ne is the number of edges (n_verts*(n_verts-1)/2) and nq is the number of different reconstructions ordered in `mode_counts`.
+            The functional connectivity reconstructed data array of shape (ne, nq). The FC matrix is
+            r-to-z (arctanh) transformed and vectorized; ne is the number of edges
+            (n_verts*(n_verts-1)/2) and nq is the number of different reconstructions ordered in
+            `mode_counts`.
         fc_recon_error : numpy.ndarray
-            The functional reconstruction accuracy of shape (nq,). If `metric` is None, this will be empty.
+            The functional reconstruction accuracy of shape (nq,). If `metric` is None, this will be
+            empty.
         recon : numpy.ndarray
-            The reconstructed data array of shape (n_verts, nq, n_timepoints), where nq is the number of different reconstructions ordered in `mode_counts`. Each slice is the independent reconstruction of each timepoint.
+            The reconstructed data array of shape (n_verts, nq, n_timepoints), where nq is the
+            number of different reconstructions ordered in `mode_counts`. Each slice is the
+            independent reconstruction of each timepoint.
         recon_error : numpy.ndarray
-            The reconstruction error array of shape (nq, n_timepoints). Each value represents the reconstruction error at one timepoint. If `metric` is None, this will be empty. 
+            The reconstruction error array of shape (nq, n_timepoints). Each value represents the
+            reconstruction error at one timepoint. If `metric` is None, this will be empty. 
         beta : list of numpy.ndarray
             A list of beta coefficients calculated for each mode.
         
@@ -439,25 +464,28 @@ class EigenSolver(Solver):
         seed: Optional[int] = None
     ) -> NDArray:
         """
-        Simulate neural activity or BOLD signals on the surface mesh using the eigenmode 
+        Simulate neural activity or BOLD signals on the surface mesh using the eigenmode
         decomposition. The simulation uses a Neural Field Theory wave model and optionally the
         Balloon-Windkessel model for BOLD signal generation. 
 
         Parameters
         ----------
         ext_input : array-like, optional
-            External input array of shape (n_verts, n_timepoints). If None, random input is 
+            External input array of shape (n_verts, n_timepoints). If None, random input is
             generated.
         dt : float, optional
             Time step for simulation in milliseconds. Default is 0.1.
         nt : int, optional
             Number of time points to simulate Default is 1000.
         bold_out : bool, optional
-            If True, simulate BOLD signal using the balloon model. If False, simulate neural 
+            If True, simulate BOLD signal using the balloon model. If False, simulate neural
             activity. Default is False.
         decomp_method : str, optional
-            The method used for the decomposition, either 'project' to project data into a 
-            mass-orthonormal space or 'regress' for least-squares fitting. Note that the beta coefficients from 'regress' tend towards those from 'project' when more basis vectors are provided. For a non-orthonormal basis set, 'regress' must be used. Default is 'project'.
+            The method used for the decomposition, either 'project' to project data into a
+            mass-orthonormal space or 'regress' for least-squares fitting. Note that the beta
+            coefficients from 'regress' tend towards those from 'project' when more basis vectors
+            are provided. For a non-orthonormal basis set, 'regress' must be used. Default is
+            'project'.
         pde_method : str, optional
             Method for solving the wave PDE. Either "fourier" or "ode". Default is "fourier".
         seed : int, optional
@@ -476,7 +504,7 @@ class EigenSolver(Solver):
 
         Notes
         -----
-        Since the simulation begins at rest, consider discarding the first 50 timepoints to allow 
+        Since the simulation begins at rest, consider discarding the first 50 timepoints to allow
         the system to reach a steady state.
         """
         from nsbtools.waves import simulate_waves

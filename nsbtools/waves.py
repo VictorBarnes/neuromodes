@@ -33,9 +33,9 @@ def simulate_waves(
     seed: Optional[int] = None
 ) -> NDArray:
     """
-    Simulate neural activity or BOLD signals on the surface mesh using the eigenmode 
-    decomposition. The simulation uses a Neural Field Theory wave model and optionally the
-    Balloon-Windkessel model for BOLD signal generation. 
+    Simulate neural activity or BOLD signals on the surface mesh using the eigenmode decomposition.
+    The simulation uses a Neural Field Theory wave model and optionally the Balloon-Windkessel model
+    for BOLD signal generation. 
 
     Parameters
     ----------
@@ -55,18 +55,18 @@ def simulate_waves(
     gamma : float, optional
         Damping rate of wave propagation. Default is 0.116.
     mass : array-like, optional
-        The mass matrix of shape (n_verts, n_verts) used for the decomposition when method is 
+        The mass matrix of shape (n_verts, n_verts) used for the decomposition when method is
         'project'. If using EigenSolver, provide its self.mass. Default is None.
     bold_out : bool, optional
         If True, simulate BOLD signal using the balloon model. If False, simulate neural activity.
         Default is False.
     decomp_method : str, optional
-        The method used for the eigendecomposition, either 'project' to project data into a 
+        The method used for the eigendecomposition, either 'project' to project data into a
         mass-orthonormal space or 'regress' for least-squares fitting. Note that the beta values
-        from 'regress' tend towards those from 'project' when more modes are provided. Default is 
+        from 'regress' tend towards those from 'project' when more modes are provided. Default is
         'project'.
     mass : array-like, optional
-        The mass matrix of shape (n_verts, n_verts) used for the decomposition when method is 
+        The mass matrix of shape (n_verts, n_verts) used for the decomposition when method is
         'project'. If using EigenSolver, provide its self.mass. Default is None.
     pde_method : str, optional
         Method for solving the wave PDE. Either "fourier" or "ode". Default is "fourier".
@@ -181,7 +181,7 @@ def _model_wave_fourier(
     eval: float
 ) -> NDArray:
     """
-    Simulates the time evolution of a wave model based on one mode using a frequency-domain 
+    Simulates the time evolution of a wave model based on one mode using a frequency-domain
     approach. This method applies a Fourier transform to the input mode coefficients, computes the
     system's frequency response, and then applies an inverse Fourier transform to obtain the
     time-domain response of the mode.
@@ -206,11 +206,11 @@ def _model_wave_fourier(
     
     Notes
     -----
-    This function uses a frequency-domain method to simulate the damped wave response of a causal 
-    input. To ensure causality (i.e., the input is zero for t < 0), the input is zero-padded on the 
-    negative time axis and transformed using `ifft`, which mimics the forward Fourier transform of a 
-    causal signal. The system's frequency response (transfer function) is then applied, and `fft` is 
-    used to return to the time domain. This approach is standard for simulating linear 
+    This function uses a frequency-domain method to simulate the damped wave response of a causal
+    input. To ensure causality (i.e., the input is zero for t < 0), the input is zero-padded on the
+    negative time axis and transformed using `ifft`, which mimics the forward Fourier transform of a
+    causal signal. The system's frequency response (transfer function) is then applied, and `fft` is
+    used to return to the time domain. This approach is standard for simulating linear
     time-invariant causal systems and is equivalent to convolution with a Green's function.
 
     The sequence is:
