@@ -5,11 +5,10 @@ cortical maps.
 
 from pathlib import Path
 from warnings import warn
-from typing import Optional, Union, Any, Tuple, TYPE_CHECKING
+from typing import Optional, Union, Any, TYPE_CHECKING
 import numpy as np
 from numpy.typing import NDArray, ArrayLike
 from scipy.stats import zscore
-from scipy.sparse import csc_matrix
 from scipy.sparse.linalg import LinearOperator, eigsh, splu
 from trimesh import Trimesh
 from lapy import Solver, TriaMesh
@@ -154,22 +153,26 @@ class EigenSolver(Solver):
         **kwargs
     ) -> "EigenSolver":
         """
-        Solve the generalized eigenvalue problem for the Laplace-Beltrami operator and compute 
+        Solve the generalized eigenvalue problem for the Laplace-Beltrami operator and compute
         eigenvalues and eigenmodes.
 
         Parameters
         ----------
         standardize : bool, optional
-            If True, standardizes the sign of the eigenmodes so the first element is positive. 
+            If True, standardizes the sign of the eigenmodes so the first element is positive.
             Default is False.
         fix_mode1 : bool, optional
-            If True, sets the first eigenmode to a constant value and the first eigenvalue to zero, 
+            If True, sets the first eigenmode to a constant value and the first eigenvalue to zero,
             as is expected analytically. Default is True. See the is_mass_orthonormal_modes function
             for details.
         atol : float, optional
             Absolute tolerance for mass-orthonormality validation. Default is 1e-3.
         seed : int or array-like, optional
-            Random seed for reproducibile generation of eigenvectors (which otherwise use an iterative algorithm that starts with a random vector, meaning that repeated generation of eigenmodes on the same surface can have different orientations). Specify as in int (to set the seed) or a vector with n_verts elements (to directly set the initialisation vector). Default is None (not reproducible).
+            Random seed for reproducibile generation of eigenvectors (which otherwise use an
+            iterative algorithm that starts with a random vector, meaning that repeated generation
+            of eigenmodes on the same surface can have different orientations). Specify as in int
+            (to set the seed) or a vector with n_verts elements (to directly set the initialisation
+            vector). Default is None (not reproducible).
 
         Returns
         -------
@@ -250,15 +253,16 @@ class EigenSolver(Solver):
             The input data array of shape (n_verts, n_maps), where n_verts is the number of vertices
             and n_maps is the number of brain maps.
         method : str, optional
-            The method used for the decomposition, either 'project' to project data into a 
+            The method used for the decomposition, either 'project' to project data into a
             mass-orthonormal space or 'regress' for least-squares fitting. Note that the beta values
-            from 'regress' tend towards those from 'project' when more basis vectors are provided. For a non-orthonormal basis set, 'regress' must be used. Default is 'project'.
+            from 'regress' tend towards those from 'project' when more basis vectors are provided.
+            For a non-orthonormal basis set, 'regress' must be used. Default is 'project'.
         mass : array-like, optional
 
         Returns
         -------
         numpy.ndarray
-            The beta coefficients array of shape (n_vecs, n_maps), obtained from the decomposition.
+            The beta coefficients array of shape (n_modes, n_maps), obtained from the decomposition.
         
         Raises
         ------
@@ -611,7 +615,7 @@ def standardize_modes(
     emodes: ArrayLike
 ) -> NDArray:
     """
-    Perform standardisation by flipping the modes such that the first element of each eigenmode is 
+    Perform standardisation by flipping the modes such that the first element of each eigenmode is
     positive. This is helpful when visualising eigenmodes.
 
     Parameters

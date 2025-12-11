@@ -113,6 +113,15 @@ def test_reconstruct_regress_method(solver, gen_eigenmap):
     assert np.all(np.diff(euclidean_error, axis=0) < 0), \
         'Euclidean error does not strictly decrease when adding modes.'
 
+# When mode_counts contains 1 (e.g. when mode_counts is None, the default), the timeseries is
+# reconstructed using only the first (constant) mode. This leads to a simulated timeseries which is
+# the same at each vertex (at any timepoint), creating an FC matrix which is 1 everywhere. When
+# z-transforming the matrix, this results in a RuntimeWarning (due to division by 0) and an output
+# which has inf values. This also creates another warning when using the 'correlation' metric due to
+# the prescence of inf values. These behaviours are reasonable, and we therefore filter these
+# warnings for this test.
+@pytest.mark.filterwarnings("ignore:divide by zero encountered in arctanh:RuntimeWarning")
+@pytest.mark.filterwarnings("ignore:invalid value encountered in subtract:RuntimeWarning")
 def test_reconstruct_mode_superposition_timeseries(solver, gen_eigenmap):
     eigenmaps, _ = gen_eigenmap
 

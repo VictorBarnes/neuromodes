@@ -1,5 +1,5 @@
 from warnings import warn
-from typing import Optional, Union, Any, Tuple, TYPE_CHECKING
+from typing import Optional, Union, Tuple, TYPE_CHECKING
 import numpy as np
 from numpy.typing import NDArray, ArrayLike
 from scipy import sparse
@@ -24,7 +24,7 @@ def decompose(
         The input data array of shape (n_verts, n_maps), where n_verts is the number of vertices and
         n_maps is the number of brain maps.
     emodes : array-like
-        The vectors array of shape (n_verts, n_vecs), where n_vecs is the number of basis vectors.
+        The vectors array of shape (n_verts, n_modes), where n_modes is the number of basis vectors.
     method : str, optional
         The method used for the decomposition, either 'project' to project data into a
         mass-orthonormal space or 'regress' for least-squares fitting. Note that the beta values
@@ -37,7 +37,7 @@ def decompose(
     Returns
     -------
     numpy.ndarray
-        The beta coefficients array of shape (n_vecs, n_maps), obtained from the decomposition.
+        The beta coefficients array of shape (n_modes, n_maps), obtained from the decomposition.
     
     Raises
     ------
@@ -87,10 +87,11 @@ def reconstruct(
     method: str = 'project',
     mass: Optional[Union[ArrayLike,sparse.spmatrix]] = None,
     mode_counts: Optional[ArrayLike] = None,
-    metric: Optional[Union['_MetricCallback', '_MetricKind']] = 'euclidean'
+    metric: Optional[Union['_MetricCallback', '_MetricKind']] = 'correlation'
 ) -> Tuple[NDArray, NDArray, list[NDArray]]:
     """
-    Calculate and score the reconstruction of the given data using the provided orthogonal vectors.
+    Calculate and score the reconstruction of the given independent data using the provided
+    orthogonal vectors.
 
     Parameters
     ----------
@@ -98,7 +99,7 @@ def reconstruct(
         The input data array of shape (n_verts, n_maps), where n_verts is the number of vertices and
         n_maps is the number of maps.
     emodes : array-like
-        The vectors array of shape (n_verts, n_vects), where n_vects is the number of orthogonal
+        The vectors array of shape (n_verts, n_modes), where n_modes is the number of orthogonal
         vectors.
     method : str, optional
         The method used for the decomposition, either 'project' to project data into a
@@ -110,19 +111,21 @@ def reconstruct(
         'project'. If using EigenSolver, provide its self.mass. Default is None.
     mode_counts : array-like, optional
         The sequence of vectors to be used for reconstruction. For example,
-        `mode_counts=np.asarray([10,20,30])` will run three analyses: with the first 10 modes, with
+        `mode_counts=np.array([10,20,30])` will run three analyses: with the first 10 modes, with
         the first 20 modes, and with the first 30 modes. Default is None, which uses all vectors
         provided.
     metric : str, optional
         The metric used for calculating reconstruction error. Should be one of the options from
-        scipy cdist, or None if no scoring is required. Default is 'euclidean'.
+        scipy cdist, or None if no scoring is required. Default is 'correlation'.
 
     Returns
     -------
     recon : numpy.ndarray
         The reconstructed data array of shape (n_verts, nq, n_maps), where nq is the number of
         different reconstructions ordered in `mode_counts`. Each slice is the independent
-        reconstruction of each map.
+        reconstruction of each map. Note that if `mode_counts` contains 1 (i.e. a reconstruction
+        using only the first mode), the reconstructions will be constant for that value of
+        `mode_counts` (this may also result in warnings/errors for `recon_error`). 
     recon_error : numpy.ndarray
         The reconstruction error array of shape (nq, n_maps). Each value represents the
         reconstruction error of one map. If `metric` is None, this will be empty. 
@@ -170,10 +173,11 @@ def reconstruct_timeseries(
     method: str = 'project',
     mass: Optional[Union[ArrayLike,sparse.spmatrix]] = None,
     mode_counts: Optional[ArrayLike] = None,
-    metric: Optional[Union['_MetricCallback', '_MetricKind']] = 'euclidean'
+    metric: Optional[Union['_MetricCallback', '_MetricKind']] = 'correlation'
 ) -> Tuple[NDArray, NDArray, NDArray, NDArray, list[NDArray]]:
     """
-    Calculate and score the reconstruction of the given data using the provided orthogonal vectors.
+    Calculate and score the reconstruction of the given time-series data using the provided
+    orthogonal vectors.
 
     Parameters
     ----------
@@ -181,7 +185,7 @@ def reconstruct_timeseries(
         The input data array of shape (n_verts, n_timepoints), where n_verts is the number of
         vertices and n_timepoints is the number of timepoints.
     emodes : array-like
-        The vectors array of shape (n_verts, n_vects), where n_vects is the number of orthogonal
+        The vectors array of shape (n_verts, n_modes), where n_modes is the number of orthogonal
         vectors.
     method : str, optional
         The method used for the decomposition, either 'project' to project data into a
@@ -193,11 +197,11 @@ def reconstruct_timeseries(
         'project'. If using EigenSolver, provide its self.mass. Default is None.
     mode_counts : array-like, optional
         The sequence of vectors to be used for reconstruction. For example, `mode_counts =
-        np.asarray([10,20,30])` will run three analyses: with the first 10 modes, with the first 20
+        np.array([10,20,30])` will run three analyses: with the first 10 modes, with the first 20
         modes, and with the first 30 modes. Default is None, which uses all vectors provided.
     metric : str, optional
         The metric used for calculating reconstruction error. Should be one of the options from
-        scipy cdist, or None if no scoring is required. Default is 'euclidean'.
+        scipy cdist, or None if no scoring is required. Default is 'correlation'.
 
     Returns
     -------
@@ -205,14 +209,18 @@ def reconstruct_timeseries(
         The functional connectivity reconstructed data array of shape (ne, nq). The FC matrix is
         r-to-z (arctanh) transformed and vectorized; ne is the number of edges
         (n_verts*(n_verts-1)/2) and nq is the number of different reconstructions ordered in
-        `mode_counts`.
+        `mode_counts`. Note that if `mode_counts` contains 1 (i.e. a reconstruction using only the
+        first mode), the reconstructions will be constant for that value of `mode_counts` (this may
+        also result in warnings/errors for `recon_error`). 
     fc_recon_error : numpy.ndarray
         The functional reconstruction accuracy of shape (nq,). If `metric` is None, this will be
         empty.
     recon : numpy.ndarray
         The reconstructed data array of shape (n_verts, nq, n_timepoints), where nq is the number of
         different reconstructions ordered in `mode_counts`. Each slice is the independent
-        reconstruction of each timepoint.
+        reconstruction of each timepoint. Note that if `mode_counts` contains 1 (i.e. a
+        reconstruction using only the first mode), the reconstructions will be constant for that
+        value of `mode_counts` (this may also result in warnings/errors for `recon_error`). 
     recon_error : numpy.ndarray
         The reconstruction error array of shape (nq, n_timepoints). Each value represents the
         reconstruction error at one timepoint. If `metric` is None, this will be empty. 
@@ -259,13 +267,13 @@ def calc_norm_power(
     Parameters
     ----------
     beta : array-like
-        The beta coefficients array of shape (n_vects, n_maps), where n_vects is the number of 
+        The beta coefficients array of shape (n_modes, n_maps), where n_modes is the number of 
         orthogonal vectors and n_maps is the number of brain maps.
 
     Returns
     -------
     numpy.ndarray
-        The normalized power array of shape (n_vects, n_maps), where each element represents the 
+        The normalized power array of shape (n_modes, n_maps), where each element represents the 
         proportion of power contributed by the corresponding orthogonal vector to each brain map.
     """
     beta_sq = np.asarray(beta)**2
