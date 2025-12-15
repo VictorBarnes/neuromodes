@@ -1,4 +1,3 @@
-from pathlib import Path
 import pytest
 import numpy as np
 from scipy.spatial.distance import squareform
@@ -118,8 +117,8 @@ def test_reconstruct_regress_method(solver, gen_eigenmap):
 # the same at each vertex (at any timepoint), creating an FC matrix which is 1 everywhere. When
 # z-transforming the matrix, this results in a RuntimeWarning (due to division by 0) and an output
 # which has inf values. This also creates another warning when using the 'correlation' metric due to
-# the prescence of inf values. These behaviours are reasonable, and we therefore filter these
-# warnings for this test.
+# the prescence of inf values. These behaviours are reasonable, and should be flagged for the user,
+# but we can filter these warnings for this test.
 @pytest.mark.filterwarnings("ignore:divide by zero encountered in arctanh:RuntimeWarning")
 @pytest.mark.filterwarnings("ignore:invalid value encountered in subtract:RuntimeWarning")
 def test_reconstruct_mode_superposition_timeseries(solver, gen_eigenmap):
