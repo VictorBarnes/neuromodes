@@ -5,11 +5,22 @@ from nsbtools.eigen import EigenSolver
 from nsbtools.waves import simulate_waves
 
 @pytest.fixture
+def surf_medmask_hetero():
+    mesh, medmask = fetch_surf(density='4k')
+    rng = np.random.default_rng(0)
+    hetero = rng.standard_normal(size=len(medmask))
+    return mesh, medmask, hetero
+
+def test_unusual_wave_speed(surf_medmask_hetero):
+    surf, medmask, hetero = surf_medmask_hetero
+    solver = EigenSolver(surf, mask=medmask, hetero=hetero).solve(n_modes=100)
+    with pytest.warns(UserWarning, match='.*non-physiological wave speeds.*'):
+        solver.simulate_waves(r=1000)
+
+@pytest.fixture
 def solver():
     mesh, medmask = fetch_surf(density='4k')
-    solver = EigenSolver(mesh, mask=medmask, n_modes=100)
-    _ = solver.solve()
-    return solver
+    return EigenSolver(mesh, mask=medmask).solve(n_modes=100)
 
 def test_simulate_waves_impulse(solver):
 

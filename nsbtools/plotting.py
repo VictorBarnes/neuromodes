@@ -3,6 +3,8 @@ from pathlib import Path
 import numpy as np
 from matplotlib import colors
 import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
+from matplotlib.axes import Axes
 from scipy.ndimage import zoom
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from surfplot import Plot
@@ -25,8 +27,8 @@ def plot_surf(
     label_kws: Optional[Dict[str, Any]] = None,
     outline: bool = False,
     zoom: float = 1.25,
-    ax: Optional[Union[plt.Axes, List[plt.Axes]]] = None
-) -> Optional[plt.Figure]:
+    ax: Optional[Union[Axes, List[Axes]]] = None
+) -> Optional[Figure]:
     """
     Plot brain surface data on a given surface mesh.
 
@@ -92,6 +94,8 @@ def plot_surf(
             fig, axs = plt.subplots(1, n_data, figsize=(len(views) * n_data * 1.5, 2))
         elif layout == "col":
             fig, axs = plt.subplots(n_data, 1, figsize=(3, n_data * 1.25))
+        else: 
+            raise ValueError("`layout` must be either 'row' or 'col'.")
         fig.subplots_adjust(wspace=0.01, hspace=0.01)
         axs = [axs] if n_data == 1 else axs.flatten()
     else:
@@ -133,7 +137,7 @@ def plot_surf(
                     
             # Use surfplot to plot the data
             p = Plot(surf_lh=mesh, views=views, size=(500, 250), zoom=zoom)
-            p.add_layer(data=data[:, i], cmap=cmap, cbar=cbar, color_range=crange,
+            p.add_layer(data=data[:, i], cmap=cmap, cbar=cbar, color_range=crange, # type: ignore # add_layer accepts strings and Colormaps
                         cbar_label=cbar_label, zero_transparent=False)
             if outline:
                 p.add_layer(data[:, i], as_outline=True, cmap="gray", cbar=False,
@@ -158,11 +162,11 @@ def plot_surf(
                     ax.set_ylabel(labels[i], labelpad=0, rotation=0, ha="right",
                                   fontsize=label_kws_["fontsize"])
     
-    return fig if ax is None else None
+    return fig if ax is None else None # type: ignore # this is set in the "create the figure" block above
 
 def plot_heatmap(
     data: Union[NDArray, List[List[float]]],
-    ax: Optional[plt.Axes] = None,
+    ax: Optional[Axes] = None,
     center: Optional[float] = None,
     cmap: Union[str, colors.Colormap] = "turbo",
     cbar: bool = False,
@@ -170,7 +174,7 @@ def plot_heatmap(
     downsample: float = 1,
     annot: bool = False,
     fmt: str = ".1f"
-) -> plt.Axes:
+) -> Axes:
     """
     Plot a heatmap of the data with optional colorbar and annotations.
 

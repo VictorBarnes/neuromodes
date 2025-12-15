@@ -3,7 +3,7 @@
 import numpy as np
 from numpy.typing import NDArray, ArrayLike
 
-def generate_connectome(
+def model_connectome(
     emodes: ArrayLike,
     evals: ArrayLike,
     r: float = 9.53,
@@ -59,9 +59,7 @@ def generate_connectome(
     k_emodes = emodes[:, :k]
 
     # Compute structural connectivity
-    denom = np.array([
-        1/(1 + eval * r**2)
-        for eval in k_evals])
+    denom = 1/(1 + k_evals * r**2)
 
     connectome = k_emodes @ np.diag(denom) @ np.linalg.pinv(k_emodes)
 
