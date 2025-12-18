@@ -1,18 +1,14 @@
 [project]
-name = "nsbtools"
+name = "neuromodes"
 version = "0.1.0"
-description = "Neuroimaging tools developed by the Neural Systems and Behaviour lab"
-readme = "README.md"
-requires-python = ">=3.9, <3.13"
+description = "Mode-based brain mapping and modelling tools developed by the Neural Systems and Behaviour lab"
+readme = "README.rst"
+requires-python = ">=3.9"
 dependencies = [
-    "brainspace>=0.1.20",
-    "joblib>=1.4.2",
     "lapy>=1.1.0",
-    "matplotlib>=3.7.5",
     "nibabel>=5.2.1",
     "numpy>=1.24.4",
     "scipy>=1.10.1",
-    "surfplot>=0.2.0",
     "trimesh>=4.8.1",
 ]
 
@@ -22,6 +18,7 @@ testing = [
 ]
 tutorials = [
     "ipykernel>=6.31.0",
+    "nsbutils @ git+https://github.com/NSBLab/nsbutils.git@main",
 ]
 
 [build-system]
@@ -29,10 +26,10 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["nsbtools"]
+packages = ["neuromodes", "neuromodes.data"]
 
 [tool.setuptools.package-data]
-"nsbtools.data" = ["*"]
+"neuromodes.data" = ["*"]
 
 [tool.pytest.ini_options]
 python_functions = ["test_"]

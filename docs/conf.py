@@ -4,7 +4,7 @@ import sys
 sys.path.insert(0, os.path.abspath(".."))
 
 # -- Project information -----------------------------------------------------
-project = "nsbtools"
+project = "neuromodes"
 copyright = "2025, Monash University"
 author = "Neural Systems and Behaviour Lab"
 

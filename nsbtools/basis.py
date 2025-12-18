@@ -4,7 +4,7 @@ import numpy as np
 from numpy.typing import NDArray, ArrayLike
 from scipy import sparse
 from scipy.spatial.distance import cdist, squareform
-from nsbtools.validation import is_mass_orthonormal_modes
+from neuromodes.eigen import is_mass_orthonormal_modes
 
 if TYPE_CHECKING:
     from scipy.spatial.distance import _MetricCallback, _MetricKind 

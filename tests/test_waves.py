@@ -1,8 +1,8 @@
 import pytest
 import numpy as np
-from nsbtools.io import fetch_surf
-from nsbtools.eigen import EigenSolver
-from nsbtools.waves import simulate_waves
+from neuromodes.io import fetch_surf
+from neuromodes.eigen import EigenSolver
+from neuromodes.waves import simulate_waves
 
 @pytest.fixture
 def surf_medmask_hetero():

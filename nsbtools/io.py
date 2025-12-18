@@ -1,5 +1,7 @@
 """Module for reading, validating, and manipulating surface meshes."""
 
+import os
+from joblib import Memory
 from trimesh import Trimesh
 import numpy as np
 from nibabel.gifti.gifti import GiftiImage
@@ -112,8 +114,8 @@ def fetch_surf(
     density: str = '32k',
     hemi: str = 'L'
 ) -> Tuple[Trimesh, NDArray]:
-    """Load cortical surface mesh and medial wall mask from nsbtools data directory."""
-    data_dir = files('nsbtools.data')
+    """Load cortical surface mesh and medial wall mask from neuromodes data directory."""
+    data_dir = files('neuromodes.data')
     meshname = f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_{surf}.surf.gii'
     maskname = f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_medmask.label.gii'
 
@@ -127,7 +129,7 @@ def fetch_surf(
     except Exception as e:
         raise ValueError(
             f"Surface data not found. Please see {data_dir}/included_data.csv or "
-            "https://github.com/NSBLab/nsbtools/tree/main/nsbtools/data/included_data.csv for a "
+            "https://github.com/NSBLab/neuromodes/tree/main/neuromodes/data/included_data.csv for a "
             "list of available surfaces."
             ) from e
 
@@ -138,8 +140,8 @@ def fetch_map(
     density: str = '32k',
     hemi: str = 'L'
 ) -> NDArray:
-    """Load data from nsbtools data directory."""
-    data_dir = files('nsbtools.data')
+    """Load data from neuromodes data directory."""
+    data_dir = files('neuromodes.data')
     filename = f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_{data}.func.gii'
 
     try:
@@ -149,7 +151,18 @@ def fetch_map(
     except Exception as e:
         raise ValueError(
             f"Map '{filename}' not found. Please see {data_dir}/included_data.csv or "
-            "https://github.com/NSBLab/nsbtools/tree/main/nsbtools/data/included_data.csv for a "
+            "https://github.com/NSBLab/neuromodes/tree/main/neuromodes/data/included_data.csv for a "
             "list of available data files."
         ) from e
-        
+
+def _set_cache():
+    """Set up joblib memory caching."""
+
+    CACHE_DIR = os.getenv("CACHE_DIR")
+    if CACHE_DIR is None or not os.path.exists(CACHE_DIR):
+        CACHE_DIR = Path.home() / ".neuromodes_cache"
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        print(f"Using default cache directory at {CACHE_DIR}. To cache elsewhere, set the CACHE_DIR"
+              " environment variable.")
+
+    return Memory(CACHE_DIR, verbose=0)

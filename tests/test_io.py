@@ -2,7 +2,7 @@ from pathlib import Path
 from pytest import raises
 import numpy as np
 from trimesh import Trimesh
-from nsbtools.io import check_surf, fetch_surf, fetch_map, read_surf
+from neuromodes.io import check_surf, fetch_surf, fetch_map, read_surf
 
 
 def test_mesh_unreferenced_verts():

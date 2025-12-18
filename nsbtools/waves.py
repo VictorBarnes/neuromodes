@@ -4,19 +4,10 @@ import os
 import numpy as np
 from scipy import sparse
 from pathlib import Path
-from joblib import Memory
 from numpy.typing import NDArray, ArrayLike
 from scipy.integrate import solve_ivp
 from typing import Optional, Union
-from nsbtools.basis import decompose
-
-# Set up joblib memory caching
-CACHE_DIR = os.getenv("CACHE_DIR")
-if CACHE_DIR is None or not os.path.exists(CACHE_DIR):
-    CACHE_DIR = Path.home() / ".nsbtools_cache"
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"Using default cache directory at {CACHE_DIR}")
-memory = Memory(CACHE_DIR, verbose=0)
+from neuromodes.basis import decompose
 
 def simulate_waves(
     emodes: ArrayLike,
@@ -30,7 +21,8 @@ def simulate_waves(
     bold_out: bool = False,
     decomp_method: str = "project",
     pde_method: str = "fourier",
-    seed: Optional[int] = None
+    seed: Optional[int] = None,
+    cache_input: bool = False
 ) -> NDArray:
     """
     Simulate neural activity or BOLD signals on the surface mesh using the eigenmode decomposition.
@@ -72,6 +64,8 @@ def simulate_waves(
         Method for solving the wave PDE. Either "fourier" or "ode". Default is "fourier".
     seed : int, optional
         Random seed for generating external input. Default is None.
+    cache_input : bool, optional
+        If True, cache the generated random input to avoid recomputation. Default is False.
 
     Returns
     -------
@@ -109,13 +103,21 @@ def simulate_waves(
     if nt <= 0 or not isinstance(nt, int):
         raise ValueError("`nt` must be a positive integer.")
 
-    if ext_input is None:
-        ext_input = _gen_random_input(n_verts, nt, seed=seed)
-    else:
+    if ext_input is not None:
         ext_input = np.asarray(ext_input)
         if ext_input.shape != (n_verts, nt):
             raise ValueError(f"External input shape is {ext_input.shape}, should be ({n_verts}, "
                              f"{nt}).")
+    else:
+        gen_input = lambda n, nt, s: np.random.default_rng(s).standard_normal(size=(n, nt))
+        
+        if cache_input:
+            from neuromodes.io import _set_cache
+
+            memory = _set_cache()
+            ext_input = memory.cache(gen_input)(n_verts, nt, seed)
+        else:
+            ext_input = gen_input(n_verts, nt, seed)
 
     # Mode decomposition of external input
     input_coeffs = decompose(ext_input, emodes, method=decomp_method, mass=mass)
@@ -162,16 +164,6 @@ def simulate_waves(
     sim_activity = emodes @ mode_coeffs
 
     return sim_activity
-
-@memory.cache
-def _gen_random_input(
-    n_verts: int,
-    n_timepoints: int,
-    seed: Optional[int] = None
-) -> NDArray:
-    """Generates external input with caching to avoid redundant recomputation."""
-    rng = np.random.default_rng(seed)
-    return rng.standard_normal(size=(n_verts, n_timepoints))
 
 def _model_wave_fourier(
     mode_coeff: NDArray,

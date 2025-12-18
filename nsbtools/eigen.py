@@ -8,13 +8,12 @@ from warnings import warn
 from typing import Optional, Union, Any, TYPE_CHECKING
 import numpy as np
 from numpy.typing import NDArray, ArrayLike
+from scipy import sparse
 from scipy.stats import zscore
 from scipy.sparse.linalg import LinearOperator, eigsh, splu
 from trimesh import Trimesh
 from lapy import Solver, TriaMesh
-
-from nsbtools.io import read_surf, mask_surf
-from nsbtools.validation import is_mass_orthonormal_modes
+from neuromodes.io import read_surf, mask_surf
 
 if TYPE_CHECKING:
     from scipy.spatial.distance import _MetricCallback, _MetricKind 
@@ -270,7 +269,7 @@ class EigenSolver(Solver):
             If the number of vertices in `data` and `emodes` do not match, if `emodes` contain NaNs,
             or if an invalid method is specified.
         """
-        from nsbtools.basis import decompose
+        from neuromodes.basis import decompose
 
         if not hasattr(self, 'emodes'):
             raise ValueError("Eigenmodes not found. Please run the solve() method first.")
@@ -330,7 +329,7 @@ class EigenSolver(Solver):
             If the number of vertices in `data` and `emodes` do not match, if `emodes` contain NaNs,
             or if an invalid method/mass matrix is specified.
         """
-        from nsbtools.basis import reconstruct
+        from neuromodes.basis import reconstruct
         
         if not hasattr(self, 'emodes'):
             raise ValueError("Eigenmodes not found. Please run the solve() method first.")
@@ -399,7 +398,7 @@ class EigenSolver(Solver):
             If the number of vertices in `data` and `emodes` do not match, if `emodes` contain NaNs,
             or if an invalid method is specified.
         """
-        from nsbtools.basis import reconstruct_timeseries
+        from neuromodes.basis import reconstruct_timeseries
 
         if not hasattr(self, 'emodes'):
             raise ValueError("Eigenmodes not found. Please run the solve() method first.")
@@ -443,7 +442,7 @@ class EigenSolver(Solver):
         If comparing this model to empirical connectomes, consider thresholding the generated 
         connectome to match the density of the empirical data.
         """
-        from nsbtools.connectome import model_connectome
+        from neuromodes.connectome import model_connectome
 
         if not hasattr(self, 'emodes'):
             raise ValueError("Eigenmodes not found. Please run the solve() method first.")
@@ -511,7 +510,7 @@ class EigenSolver(Solver):
         Since the simulation begins at rest, consider discarding the first 50 timepoints to allow
         the system to reach a steady state.
         """
-        from nsbtools.waves import simulate_waves
+        from neuromodes.waves import simulate_waves
 
         if np.max(estimate_wave_speed(self.hetero, r, gamma)) > 150.0:
             warn("The combination of heterogeneity, r, and gamma may lead to "
@@ -638,3 +637,47 @@ def standardize_modes(
     standardized_modes = emodes * signs
     
     return standardized_modes
+
+def is_mass_orthonormal_modes(
+    emodes: ArrayLike,
+    mass: Optional[Union[ArrayLike,sparse.spmatrix]] = None,
+    rtol: float = 1e-05, atol: float = 1e-03
+) -> bool:
+    """
+    Check if a set of eigenmodes is approximately mass-orthonormal (i.e., `emodes.T @ mass @ emodes
+    == I`).
+
+    Parameters
+    ----------
+    emodes : array-like
+        The eigenmodes array of shape (n_verts, n_modes), where n_modes is the number of modes.
+    mass : array-like, optional
+        The mass matrix of shape (n_verts, n_verts). If using EigenSolver, provide its self.mass. If
+        None, an identity matrix will be used, corresponding to Euclidean orthonormality. Default is
+        None.
+    atol : float, optional
+        Absolute tolerance for the orthonormality check. Default is 1e-3.
+
+    Notes
+    -----
+    Under discretization, the set of solutions for the generalized eigenvalue problem is expected to
+    be mass-orthogonal (mode_i^T * mass matrix * mode_j = 0 for i ≠ j), rather than orthogonal with
+    respect to the standard Euclidean inner (dot) product (mode_i^T * mode_j = 0 for i ≠ j).
+    Eigenmodes are also expected to be mass-normal (mode_i^T * mass matrix * mode_i = 1). It follows
+    that the first mode is expected to be a specific constant, but precision error during
+    computation can introduce spurious spatial heterogeneity. Since many eigenmode analyses rely on
+    mass-orthonormality (e.g., decomposition, wave simulation), this function serves to ensure the
+    validity of any calculated or provided eigenmodes.
+    """
+    # Format inputs
+    emodes = np.asarray(emodes)
+    if mass is not None and not isinstance(mass,sparse.spmatrix):
+        mass = np.asarray(mass)
+
+    # Check inputs (ie mass matrix shape)
+    n_verts = emodes.shape[0]
+    if mass is not None and (mass.shape != (n_verts, n_verts)):
+        raise ValueError(f"The mass matrix must have shape ({n_verts}, {n_verts}).")
+
+    prod = emodes.T @ emodes if mass is None else emodes.T @ mass @ emodes
+    return np.allclose(prod, np.eye(emodes.shape[1]), rtol=rtol, atol=atol, equal_nan=False)

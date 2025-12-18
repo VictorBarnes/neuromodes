@@ -2,10 +2,8 @@ from pathlib import Path
 import pytest
 import numpy as np
 from lapy import TriaMesh
-
-from nsbtools.io import fetch_surf, mask_surf
-from nsbtools.eigen import EigenSolver
-from nsbtools.validation import is_mass_orthonormal_modes
+from neuromodes.io import fetch_surf, mask_surf
+from neuromodes.eigen import EigenSolver, is_mass_orthonormal_modes
 
 @pytest.fixture
 def surf_medmask_hetero():

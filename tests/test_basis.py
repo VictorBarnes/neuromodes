@@ -1,10 +1,9 @@
 import pytest
 import numpy as np
 from scipy.spatial.distance import squareform
-
-from nsbtools.io import fetch_surf, fetch_map
-from nsbtools.eigen import EigenSolver
-from nsbtools.basis import decompose, reconstruct, reconstruct_timeseries, calc_norm_power
+from neuromodes.io import fetch_surf, fetch_map
+from neuromodes.eigen import EigenSolver
+from neuromodes.basis import decompose, reconstruct, reconstruct_timeseries, calc_norm_power
 
 @pytest.fixture
 def surf_medmask_hetero():
