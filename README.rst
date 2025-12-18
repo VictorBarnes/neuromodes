@@ -1,7 +1,7 @@
 .. image:: https://github.com/NSBLab/neuromodes/raw/main/docs/_static/logo.png
   :alt: Design by Gabriella Chan
 
-**NOTE: `neuromodes` is currently under active development. Breaking changes to function naming and behaviour may occur prior to a stable release.**
+**NOTE: neuromodes is currently under active development. Breaking changes to function naming and behaviour may occur prior to a stable release.**
 
 Eigenmode-based neuroimaging tools developed by the `Neural Systems and Behaviour Lab <https://www.monash.edu/medicine/psych/alex-fornito-lab>`_. Documentation can be found `here <https://neuromodes.readthedocs.io/en/latest/>`_.
 
@@ -9,11 +9,13 @@ Features
 --------
 .. image:: https://github.com/NSBLab/neuromodes/raw/main/docs/_static/overview.png
 
-- eigen.py: Compute geometric eigenmodes from cortical surface meshes, optionally incorporating spatial heterogeneity
-- basis.py: Decompose and reconstruct cortical maps using the modes, or another basis set
-- waves.py: Simulate neural activity and BOLD signals using the wave propagation model from `Pang et al. (2023) <https://doi.org/10.1038/s41586-023-06098-1>`_
-- connectome.py: Simulate structural connectomes using the generative model from `Normand et al. (2025) <https://doi.org/10.1101/2025.09.17.676944>`_
-- io.py: Access triangular surface meshes for human, macaque, and marmoset cortices
+- ``eigen``: Compute geometric eigenmodes from cortical surface meshes, optionally incorporating spatial heterogeneity
+- ``basis``: Decompose and reconstruct cortical maps using the modes, or another basis set
+- ``waves``: Simulate neural activity and BOLD signals using the wave propagation model from `Pang et al. (2023) <https://doi.org/10.1038/s41586-023-06098-1>`_
+- ``connectome``: Simulate structural connectomes using the generative model from `Normand et al. (2025) <https://doi.org/10.1101/2025.09.17.676944>`_
+- ``io``: Access triangular surface meshes for human, macaque, and marmoset cortices
+- ``morphometry`` *(under development)*: Quantify multiscale anatomical differences using the method from `Cao et al. (2024) <https://doi.org/10.1002/hbm.26640>`_
+- ``parcellation`` *(under development)*: Create parcellations with any number of regions using the method from `Pang et al. (2025) <https://doi.org/10.1101/2025.01.30.635820>`_
 
 To compare cortical maps while accounting for spatial autocorrelation, we recommend using the `eigenstrapping <https://eigenstrapping.readthedocs.io/en/stable/index.html>`_ package, which uses the geometric eigenmodes for rigorous null modelling.
 
@@ -36,27 +38,42 @@ Alternatively, ``neuromodes`` can be added as a dependency to your ``pyproject.t
 ::
 
   uv add git+https://github.com/NSBLab/neuromodes.git.
-
-If you wish to run the tutorials, please also install our extra ``tutorials`` dependencies via:
+|
+If you wish to run the tutorials, please instead install our extra ``tutorials`` dependencies via:
 
 ::
+
   pip install "neuromodes[tutorials] @ git+https://github.com/NSBLab/neuromodes.git"
+
 or
+
+::
+
+  uv add "neuromodes[tutorials] @ git+https://github.com/NSBLab/neuromodes.git"
+|
+If you encounter any problems, please consider `opening an issue <https://github.com/NSBLab/neuromodes/issues>`_. Meanwhile, try switching to the exact environment used for development via UV:
+
 ::
 
   git clone https://github.com/NSBLab/neuromodes
   cd neuromodes
   uv venv --python 3.12.10
   uv sync --frozen
-
-If issues persist, please consider opening an issue on the `GitHub repository <https://github.com/NSBLab/neuromodes/issues>`_.
-
-Tests can be run with ``pytest``:
+|
+Tests can be run with ``pytest`` via:
 
 ::
 
   cd neuromodes
   pip install pytest
+  pytest tests
+
+or
+
+::
+
+  cd neuromodes
+  uv sync --extra testing
   pytest tests
 
 Citing
