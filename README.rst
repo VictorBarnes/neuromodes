@@ -19,19 +19,13 @@ To compare cortical maps while accounting for spatial autocorrelation, we recomm
 
 Installation
 ------------
-``neuromodes`` works with Python 3.9+. It can be installed by cloning the repository and installing from the local directory:
+``neuromodes`` works with Python 3.9+, and can be pip-installed into your environment via ``pip install git+https://github.com/NSBLab/neuromodes.git``
 
-::
+This will clone ``main``, our most stable branch. To try out any newer features under development, clone from our ``dev`` branch instead via ``pip install git+https://github.com/NSBLab/neuromodes.git@dev``.
 
-  git clone https://github.com/NSBLab/neuromodes
-  cd neuromodes
-  pip install .
+Alternatively, ``neuromodes`` can be added as a dependency to your ``pyproject.toml`` via `UV <https://docs.astral.sh/uv/>`_ by running ``uv add git+https://github.com/NSBLab/neuromodes.git``.
 
-This will clone ``main``, our most stable branch. To try out any newer features under development, clone from our ``dev`` branch instead via ``git clone --branch dev https://github.com/NSBLab/neuromodes``
-
-Alternatively, ``neuromodes`` can be installed via `UV <https://docs.astral.sh/uv/>`_ by running ``uv sync`` from the repository's root or ``uv add <path/to/neuromodes>`` from another project's directory.
-
-If you wish to run the tutorials, please also install our extra ``tutorials`` dependencies via ``pip install .[tutorials]`` or ``uv add <path/to/neuromodes>[tutorials]``.
+If you wish to run the tutorials, please also install our extra ``tutorials`` dependencies via ``pip install "neuromodes[tutorials] @ git+https://github.com/NSBLab/neuromodes.git"`` or ``uv add "neuromodes[tutorials] @ git+https://github.com/NSBLab/neuromodes.git"``.
 
 If you encounter any issues, try reproducing the exact environment used for development via UV:
 ::

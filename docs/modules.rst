@@ -54,9 +54,21 @@ API Reference
 .. _ref_basis:
 
 :mod:`neuromodes.basis` - Decompose and reconstruct cortical maps
-   decompose
-   reconstruct
-   calc_norm_power
+---------------------------------------------------------------
+
+.. automodule:: neuromodes.basis
+   :no-members:
+   :no-inherited-members:
+
+.. currentmodule:: neuromodes.basis
+
+.. autosummary::
+   :template: function.rst
+   :toctree: generated/
+
+   neuromodes.basis.decompose
+   neuromodes.basis.reconstruct
+   neuromodes.basis.calc_norm_power
 
 .. _ref_waves:
 
