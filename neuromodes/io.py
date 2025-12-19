@@ -10,10 +10,12 @@ from nibabel.gifti.gifti import GiftiImage
 from nibabel.loadsave import load
 from nibabel.freesurfer.io import read_geometry
 from pathlib import Path
-from typing import Union, Tuple, cast
+from typing import Union, Tuple, cast, TYPE_CHECKING
 from lapy import TriaMesh
-from numpy.typing import NDArray, ArrayLike
 from importlib.resources import files, as_file
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray, ArrayLike
 
 def read_surf(
     mesh: Union[str, Path, Trimesh, TriaMesh, dict]

@@ -3,14 +3,15 @@ Module for using neural field theory to simulate neural activity and BOLD signal
 surfaces.
 """
 
-import os
+from warnings import warn
 import numpy as np
-from scipy import sparse
-from pathlib import Path
-from numpy.typing import NDArray, ArrayLike
+from scipy.sparse import spmatrix
 from scipy.integrate import solve_ivp
-from typing import Optional, Union
+from typing import Optional, Union, TYPE_CHECKING
 from neuromodes.basis import decompose
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray, ArrayLike
 
 def simulate_waves(
     emodes: ArrayLike,
@@ -18,9 +19,9 @@ def simulate_waves(
     ext_input: Optional[ArrayLike] = None,
     dt: float = 0.1,
     nt: int = 1000,
-    r: float = 28.9,
+    r: float = 18.0,
     gamma: float = 0.116,
-    mass: Optional[Union[ArrayLike,sparse.spmatrix]] = None,
+    mass: Optional[Union[ArrayLike, spmatrix]] = None,
     bold_out: bool = False,
     decomp_method: str = "project",
     pde_method: str = "fourier",
@@ -86,11 +87,12 @@ def simulate_waves(
     Since the simulation begins at rest, consider discarding the first 50 timepoints to allow the
     system to reach a steady state.
     """
+    # Format / validate inputs
     emodes = np.asarray(emodes)
     evals = np.asarray(evals)
     r = float(r)
     gamma = float(gamma)
-    if mass is not None and not isinstance(mass,sparse.spmatrix):
+    if mass is not None and not isinstance(mass, spmatrix):
         mass = np.asarray(mass)
     
     n_verts, n_modes = emodes.shape
@@ -111,6 +113,10 @@ def simulate_waves(
         if ext_input.shape != (n_verts, nt):
             raise ValueError(f"External input shape is {ext_input.shape}, should be ({n_verts}, "
                              f"{nt}).")
+        if seed is not None:
+            warn("`seed` is ignored when `ext_input` is provided.")
+        if cache_input:
+            warn("`cache_input` is ignored when `ext_input` is provided.")
     else:
         gen_input = lambda n, nt, s: np.random.default_rng(s).standard_normal(size=(n, nt))
         

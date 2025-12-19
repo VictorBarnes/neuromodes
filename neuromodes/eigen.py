@@ -3,12 +3,12 @@ Module for computing geometric eigenmodes on cortical surface meshes and decompo
 cortical maps.
 """
 
+import sys
 from pathlib import Path
 from warnings import warn
 from typing import Optional, Union, Any, TYPE_CHECKING
 import numpy as np
-from numpy.typing import NDArray, ArrayLike
-from scipy import sparse
+from scipy.sparse import spmatrix
 from scipy.stats import zscore
 from scipy.sparse.linalg import LinearOperator, eigsh, splu
 from trimesh import Trimesh
@@ -16,6 +16,7 @@ from lapy import Solver, TriaMesh
 from neuromodes.io import read_surf, mask_surf
 
 if TYPE_CHECKING:
+    from numpy.typing import NDArray, ArrayLike
     from scipy.spatial.distance import _MetricCallback, _MetricKind 
 
 class EigenSolver(Solver):
@@ -266,30 +267,7 @@ class EigenSolver(Solver):
         method: str = 'project'
     ) -> NDArray:
         """
-        Calculate the decomposition of the given data onto a basis set.
-
-        Parameters
-        ----------
-        data : array-like
-            The input data array of shape (n_verts, n_maps), where n_verts is the number of vertices
-            and n_maps is the number of brain maps.
-        method : str, optional
-            The method used for the decomposition, either 'project' to project data into a
-            mass-orthonormal space or 'regress' for least-squares fitting. Note that the beta values
-            from 'regress' tend towards those from 'project' when more basis vectors are provided.
-            For a non-orthonormal basis set, 'regress' must be used. Default is 'project'.
-        mass : array-like, optional
-
-        Returns
-        -------
-        numpy.ndarray
-            The beta coefficients array of shape (n_modes, n_maps), obtained from the decomposition.
-        
-        Raises
-        ------
-        ValueError
-            If the number of vertices in `data` and `emodes` do not match, if `emodes` contain NaNs,
-            or if an invalid method is specified.
+        This is a wrapper for `neuromodes.basis.decompose`, see its documentation for details
         """
         from neuromodes.basis import decompose
 
@@ -311,45 +289,7 @@ class EigenSolver(Solver):
         metric: Optional[Union['_MetricCallback', '_MetricKind']] = 'correlation'
     ) -> Any:
         """
-        Calculate and score the reconstruction of the given data using the provided orthogonal
-        vectors.
-
-        Parameters
-        ----------
-        data : array-like
-            The input data array of shape (n_verts, n_maps), where n_verts is the number of vertices
-            and n_maps is the number of maps.
-        method : str, optional
-            The method used for the decomposition, either 'project' to project data into a
-            mass-orthonormal space or 'regress' for least-squares fitting. Note that the beta values
-            from 'regress' tend towards those from 'project' when more basis vectors are provided.
-            For a non-orthonormal basis set, 'regress' must be used. Default is 'project'.
-        mode_counts : array-like, optional
-            The sequence of vectors to be used for reconstruction. For example,
-            `mode_counts=np.asarray([10,20,30])` will run three analyses: with the first 10 modes,
-            with the first 20 modes, and with the first 30 modes. Default is None, which uses all
-            vectors provided.
-        metric : str, optional
-            The metric used for calculating reconstruction error. Should be one of the options from
-            scipy cdist, or None if no scoring is required. Default is 'correlation'.
-
-        Returns
-        -------
-        recon : numpy.ndarray
-            The reconstructed data array of shape (n_verts, nq, n_maps), where nq is the number of
-            different reconstructions ordered in `mode_counts`. Each slice is the independent
-            reconstruction of each map.
-        recon_error : numpy.ndarray
-            The reconstruction error array of shape (nq, n_maps). Each value represents the
-            reconstruction error of one map. If `metric` is None, this will be empty. 
-        beta : list of numpy.ndarray
-            A list of beta coefficients calculated for each mode.
-        
-        Raises
-        ------
-        ValueError
-            If the number of vertices in `data` and `emodes` do not match, if `emodes` contain NaNs,
-            or if an invalid method/mass matrix is specified.
+        This is a wrapper for `neuromodes.basis.reconstruct`, see its documentation for details
         """
         from neuromodes.basis import reconstruct
         
@@ -373,52 +313,8 @@ class EigenSolver(Solver):
         metric: Optional[Union['_MetricCallback', '_MetricKind']] = 'correlation'
     ) -> Any:
         """
-        Calculate and score the reconstruction of the given data using the provided orthogonal
-        vectors.
-
-        Parameters
-        ----------
-        data : array-like
-            The input data array of shape (n_verts, n_timepoints), where n_verts is the number of
-            vertices and n_timepoints is the number of timepoints.
-        method : str, optional
-            The method used for the decomposition, either 'project' to project data into a
-            mass-orthonormal space or 'regress' for least-squares fitting. Note that the beta values
-            from 'regress' tend towards those from 'project' when more basis vectors are provided.
-            For a non-orthonormal basis set, 'regress' must be used. Default is 'project'.
-        mode_counts : array-like, optional
-            The sequence of vectors to be used for reconstruction. For example, `mode_counts =
-            np.asarray([10,20,30])` will run three analyses: with the first 10 modes, with the first
-            20 modes, and with the first 30 modes. Default is None, which uses all vectors provided.
-        metric : str, optional
-            The metric used for calculating reconstruction error. Should be one of the options from
-            scipy cdist, or None if no scoring is required. Default is 'correlation'.
-
-        Returns
-        -------
-        fc_recon : numpy.ndarray
-            The functional connectivity reconstructed data array of shape (ne, nq). The FC matrix is
-            r-to-z (arctanh) transformed and vectorized; ne is the number of edges
-            (n_verts*(n_verts-1)/2) and nq is the number of different reconstructions ordered in
-            `mode_counts`.
-        fc_recon_error : numpy.ndarray
-            The functional reconstruction accuracy of shape (nq,). If `metric` is None, this will be
-            empty.
-        recon : numpy.ndarray
-            The reconstructed data array of shape (n_verts, nq, n_timepoints), where nq is the
-            number of different reconstructions ordered in `mode_counts`. Each slice is the
-            independent reconstruction of each timepoint.
-        recon_error : numpy.ndarray
-            The reconstruction error array of shape (nq, n_timepoints). Each value represents the
-            reconstruction error at one timepoint. If `metric` is None, this will be empty. 
-        beta : list of numpy.ndarray
-            A list of beta coefficients calculated for each mode.
-        
-        Raises
-        ------
-        ValueError
-            If the number of vertices in `data` and `emodes` do not match, if `emodes` contain NaNs,
-            or if an invalid method is specified.
+        This is a wrapper for `neuromodes.basis.reconstruct_timeseries`, see its documentation for
+        details
         """
         from neuromodes.basis import reconstruct_timeseries
 
@@ -440,29 +336,8 @@ class EigenSolver(Solver):
         k: int = 108
     ) -> NDArray:
         """
-        Generate a vertex-wise structural connectivity matrix using the Green's function approach
-        described in Normand et al., 2025.
-
-        Parameters
-        ----------
-        k : int, optional
-            Number of eigenmodes to use. Default is 108.
-
-        Returns
-        -------
-        numpy.ndarray
-            The generated vertex-wise structural connectivity matrix.
-
-        Raises
-        ------
-        ValueError
-            If any input parameter is invalid, such as negative or non-numeric values for  
-            `r`, or if `k` is not a positive integer within the valid range.
-
-        Notes
-        -----
-        If comparing this model to empirical connectomes, consider thresholding the generated 
-        connectome to match the density of the empirical data.
+        This is a wrapper for `neuromodes.connectome.model_connectome`, see its documentation for
+        details
         """
         from neuromodes.connectome import model_connectome
 
@@ -481,7 +356,7 @@ class EigenSolver(Solver):
         ext_input: Optional[ArrayLike] = None,
         dt: float = 0.1,
         nt: int = 1000,
-        r: float = 28.9,
+        r: float = 18.0,
         gamma: float = 0.116,
         bold_out: bool = False,
         decomp_method: str = "project",
@@ -489,48 +364,7 @@ class EigenSolver(Solver):
         seed: Optional[int] = None
     ) -> NDArray:
         """
-        Simulate neural activity or BOLD signals on the surface mesh using the eigenmode
-        decomposition. The simulation uses a Neural Field Theory wave model and optionally the
-        Balloon-Windkessel model for BOLD signal generation. 
-
-        Parameters
-        ----------
-        ext_input : array-like, optional
-            External input array of shape (n_verts, n_timepoints). If None, random input is
-            generated.
-        dt : float, optional
-            Time step for simulation in milliseconds. Default is 0.1.
-        nt : int, optional
-            Number of time points to simulate Default is 1000.
-        bold_out : bool, optional
-            If True, simulate BOLD signal using the balloon model. If False, simulate neural
-            activity. Default is False.
-        decomp_method : str, optional
-            The method used for the decomposition, either 'project' to project data into a
-            mass-orthonormal space or 'regress' for least-squares fitting. Note that the beta
-            coefficients from 'regress' tend towards those from 'project' when more basis vectors
-            are provided. For a non-orthonormal basis set, 'regress' must be used. Default is
-            'project'.
-        pde_method : str, optional
-            Method for solving the wave PDE. Either "fourier" or "ode". Default is "fourier".
-        seed : int, optional
-            Random seed for generating external input. Default is None.
-
-        Returns
-        -------
-        numpy.ndarray
-            Simulated neural or BOLD activity of shape (n_verts, n_timepoints).
-
-        Raises
-        ------
-        ValueError
-            If the shape of ext_input does not match (n_verts, n_timepoints), or if either the
-            eigen-decomposition or PDE method is invalid.
-
-        Notes
-        -----
-        Since the simulation begins at rest, consider discarding the first 50 timepoints to allow
-        the system to reach a steady state.
+        This is a wrapper for `neuromodes.waves.simulate_waves`, see its documentation for details
         """
         from neuromodes.waves import simulate_waves
 
@@ -662,7 +496,7 @@ def standardize_modes(
 
 def is_mass_orthonormal_modes(
     emodes: ArrayLike,
-    mass: Optional[Union[ArrayLike,sparse.spmatrix]] = None,
+    mass: Optional[Union[ArrayLike, spmatrix]] = None,
     rtol: float = 1e-05, atol: float = 1e-03
 ) -> bool:
     """
@@ -693,7 +527,7 @@ def is_mass_orthonormal_modes(
     """
     # Format inputs
     emodes = np.asarray(emodes)
-    if mass is not None and not isinstance(mass,sparse.spmatrix):
+    if mass is not None and not isinstance(mass, spmatrix):
         mass = np.asarray(mass)
 
     # Check inputs (ie mass matrix shape)
@@ -703,3 +537,14 @@ def is_mass_orthonormal_modes(
 
     prod = emodes.T @ emodes if mass is None else emodes.T @ mass @ emodes
     return np.allclose(prod, np.eye(emodes.shape[1]), rtol=rtol, atol=atol, equal_nan=False)
+
+if 'sphinx' in sys.modules:
+    from neuromodes.basis import decompose, reconstruct, reconstruct_timeseries
+    from neuromodes.waves import simulate_waves
+    from neuromodes.connectome import model_connectome
+
+    EigenSolver.decompose.__doc__ += ":\n\n" + decompose.__doc__
+    EigenSolver.reconstruct.__doc__ += ":\n\n" + reconstruct.__doc__
+    EigenSolver.reconstruct_timeseries.__doc__ += ":\n\n" + reconstruct_timeseries.__doc__
+    EigenSolver.simulate_waves.__doc__ += ":\n\n" + simulate_waves.__doc__
+    EigenSolver.model_connectome.__doc__ += ":\n\n" + model_connectome.__doc__

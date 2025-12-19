@@ -5,19 +5,19 @@ Module for expressing brain maps as linear combinations of orthogonal basis vect
 from warnings import warn
 from typing import Optional, Union, Tuple, TYPE_CHECKING
 import numpy as np
-from numpy.typing import NDArray, ArrayLike
-from scipy import sparse
+from scipy.sparse import spmatrix
 from scipy.spatial.distance import cdist, squareform
 from neuromodes.eigen import is_mass_orthonormal_modes
 
 if TYPE_CHECKING:
+    from numpy.typing import NDArray, ArrayLike
     from scipy.spatial.distance import _MetricCallback, _MetricKind 
 
 def decompose(
     data: ArrayLike,
     emodes: ArrayLike,
     method: str = 'project',
-    mass: Optional[Union[ArrayLike,sparse.spmatrix]] = None
+    mass: Optional[Union[ArrayLike, spmatrix]] = None
 ) -> NDArray:
     """
     Calculate the decomposition of the given data onto a basis set.
@@ -53,7 +53,7 @@ def decompose(
     data = np.asarray(data)
     data = np.expand_dims(data, axis=1) if data.ndim == 1 else data
     emodes = np.asarray(emodes)        
-    if mass is not None and not isinstance(mass,sparse.spmatrix):
+    if mass is not None and not isinstance(mass, spmatrix):
         mass = np.asarray(mass)
 
     # Check inputs (mass matrix shape checked in is_mass_orthonormal_modes later if needed)
@@ -89,7 +89,7 @@ def reconstruct(
     data: ArrayLike,
     emodes: ArrayLike,
     method: str = 'project',
-    mass: Optional[Union[ArrayLike,sparse.spmatrix]] = None,
+    mass: Optional[Union[ArrayLike, spmatrix]] = None,
     mode_counts: Optional[ArrayLike] = None,
     metric: Optional[Union['_MetricCallback', '_MetricKind']] = 'correlation'
 ) -> Tuple[NDArray, NDArray, list[NDArray]]:
@@ -175,7 +175,7 @@ def reconstruct_timeseries(
     data: ArrayLike,
     emodes: ArrayLike,
     method: str = 'project',
-    mass: Optional[Union[ArrayLike,sparse.spmatrix]] = None,
+    mass: Optional[Union[ArrayLike, spmatrix]] = None,
     mode_counts: Optional[ArrayLike] = None,
     metric: Optional[Union['_MetricCallback', '_MetricKind']] = 'correlation'
 ) -> Tuple[NDArray, NDArray, NDArray, NDArray, list[NDArray]]:

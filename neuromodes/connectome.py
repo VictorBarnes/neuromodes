@@ -3,7 +3,10 @@ Module for generating models of cortical structural connectomes.
 """
 
 import numpy as np
-from numpy.typing import NDArray, ArrayLike
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray, ArrayLike
 
 def model_connectome(
     emodes: ArrayLike,
