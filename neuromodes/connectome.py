@@ -1,4 +1,6 @@
-"""Module for generating structural connectomes using geometric eigenmodes of the cortex."""
+"""
+Module for generating models of cortical structural connectomes.
+"""
 
 import numpy as np
 from numpy.typing import NDArray, ArrayLike

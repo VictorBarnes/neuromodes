@@ -1,4 +1,6 @@
-"""Module for reading, validating, and manipulating surface meshes."""
+"""
+Module for reading, validating, and manipulating surface meshes.
+"""
 
 import os
 from joblib import Memory

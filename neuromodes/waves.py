@@ -1,4 +1,7 @@
-"""Module for simulating neural activity and BOLD signals on cortical surfaces using geometric eigenmodes."""
+"""
+Module for using neural field theory to simulate neural activity and BOLD signals on cortical 
+surfaces.
+"""
 
 import os
 import numpy as np

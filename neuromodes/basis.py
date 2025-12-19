@@ -1,3 +1,7 @@
+"""
+Module for expressing brain maps as linear combinations of orthogonal basis vectors.
+"""
+
 from warnings import warn
 from typing import Optional, Union, Tuple, TYPE_CHECKING
 import numpy as np
@@ -111,8 +115,8 @@ def reconstruct(
         'project'. If using EigenSolver, provide its self.mass. Default is None.
     mode_counts : array-like, optional
         The sequence of vectors to be used for reconstruction. For example,
-        `mode_counts=np.array([10,20,30])` will run three analyses: with the first 10 modes, with
-        the first 20 modes, and with the first 30 modes. Default is None, which uses all vectors
+        `mode_counts=np.array([10,20,30])` will run three analyses: with the first 10 vectors, with
+        the first 20 vectors, and with the first 30 vectors. Default is None, which uses all vectors
         provided.
     metric : str, optional
         The metric used for calculating reconstruction error. Should be one of the options from
@@ -123,14 +127,14 @@ def reconstruct(
     recon : numpy.ndarray
         The reconstructed data array of shape (n_verts, nq, n_maps), where nq is the number of
         different reconstructions ordered in `mode_counts`. Each slice is the independent
-        reconstruction of each map. Note that if `mode_counts` contains 1 (i.e. a reconstruction
-        using only the first mode), the reconstructions will be constant for that value of
-        `mode_counts` (this may also result in warnings/errors for `recon_error`). 
+        reconstruction of each map. Note that if `mode_counts` includes any constant vector (e.g.,
+        the first geometric eigenmode), the reconstructions will be constant for that value of
+        `mode_counts` (this may also result in warnings/nans for `recon_error`). 
     recon_error : numpy.ndarray
         The reconstruction error array of shape (nq, n_maps). Each value represents the
         reconstruction error of one map. If `metric` is None, this will be empty. 
     beta : list of numpy.ndarray
-        A list of beta coefficients calculated for each mode.
+        A list of beta coefficients calculated for each vector.
     
     Raises
     ------
@@ -197,8 +201,8 @@ def reconstruct_timeseries(
         'project'. If using EigenSolver, provide its self.mass. Default is None.
     mode_counts : array-like, optional
         The sequence of vectors to be used for reconstruction. For example, `mode_counts =
-        np.array([10,20,30])` will run three analyses: with the first 10 modes, with the first 20
-        modes, and with the first 30 modes. Default is None, which uses all vectors provided.
+        np.array([10,20,30])` will run three analyses: with the first 10 vectors, with the first 20
+        vectors, and with the first 30 vectors. Default is None, which uses all vectors provided.
     metric : str, optional
         The metric used for calculating reconstruction error. Should be one of the options from
         scipy cdist, or None if no scoring is required. Default is 'correlation'.
@@ -209,23 +213,23 @@ def reconstruct_timeseries(
         The functional connectivity reconstructed data array of shape (ne, nq). The FC matrix is
         r-to-z (arctanh) transformed and vectorized; ne is the number of edges
         (n_verts*(n_verts-1)/2) and nq is the number of different reconstructions ordered in
-        `mode_counts`. Note that if `mode_counts` contains 1 (i.e. a reconstruction using only the
-        first mode), the reconstructions will be constant for that value of `mode_counts` (this may
-        also result in warnings/errors for `recon_error`). 
+        `mode_counts`. Note that if `mode_counts` includes any constant vector (e.g., the first
+        geometric eigenmode), the reconstructions will be constant for that value of `mode_counts`
+        (this may also result in warnings/nans for `recon_error`). 
     fc_recon_error : numpy.ndarray
         The functional reconstruction accuracy of shape (nq,). If `metric` is None, this will be
         empty.
     recon : numpy.ndarray
         The reconstructed data array of shape (n_verts, nq, n_timepoints), where nq is the number of
         different reconstructions ordered in `mode_counts`. Each slice is the independent
-        reconstruction of each timepoint. Note that if `mode_counts` contains 1 (i.e. a
-        reconstruction using only the first mode), the reconstructions will be constant for that
-        value of `mode_counts` (this may also result in warnings/errors for `recon_error`). 
+        reconstruction of each timepoint. Note that if `mode_counts` includes any constant vector
+        (e.g., the first geometric eigenmode), the reconstructions will be constant for that value
+        of `mode_counts` (this may also result in warnings/nans for `recon_error`).
     recon_error : numpy.ndarray
         The reconstruction error array of shape (nq, n_timepoints). Each value represents the
         reconstruction error at one timepoint. If `metric` is None, this will be empty. 
     beta : list of numpy.ndarray
-        A list of beta coefficients calculated for each mode.
+        A list of beta coefficients calculated for each vector.
     
     Raises
     ------

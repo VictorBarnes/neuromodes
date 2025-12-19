@@ -132,7 +132,15 @@ class EigenSolver(Solver):
             Whether to use lumped mass matrix for the Laplace-Beltrami operator. Default is False.
         smoothit : int, optional
             Number of smoothing iterations for curvature calculation. Default is 10.
+
+        Raises
+        ------
+        ValueError
+            If `smoothit` is negative or not an integer.
         """
+        if smoothit < 0 or not isinstance(smoothit, int):
+            raise ValueError("`smoothit` must be a non-negative integer.")
+
         u1, u2, _, _ = self.geometry.curvature_tria(smoothit)
 
         hetero_tri = self.geometry.map_vfunc_to_tfunc(self.hetero)
@@ -148,6 +156,7 @@ class EigenSolver(Solver):
         standardize: bool = True,
         fix_mode1: bool = True,
         atol: float = 1e-3,
+        sigma: float = -0.01,
         seed: Optional[Union[int, ArrayLike]] = None, 
         **kwargs
     ) -> "EigenSolver":
@@ -166,12 +175,17 @@ class EigenSolver(Solver):
             for details.
         atol : float, optional
             Absolute tolerance for mass-orthonormality validation. Default is 1e-3.
+        sigma : float, optional
+            Shift-invert parameter to speed up the computation of eigenvalues close to this value.
+            Default is -0.01.
         seed : int or array-like, optional
             Random seed for reproducibile generation of eigenvectors (which otherwise use an
             iterative algorithm that starts with a random vector, meaning that repeated generation
             of eigenmodes on the same surface can have different orientations). Specify as in int
             (to set the seed) or a vector with n_verts elements (to directly set the initialisation
             vector). Default is None (not reproducible).
+        **kwargs
+            Additional keyword arguments passed to compute_lbo (lump, smoothit).
 
         Returns
         -------
@@ -187,11 +201,16 @@ class EigenSolver(Solver):
         AssertionError
             If any computed eigenvalues are NaN.
         """
-
-        self.compute_lbo(**kwargs) # always compute LBO in case hetero or other params changed
-
+        # Validate inputs
         if n_modes <= 0 or not isinstance(n_modes, int):
             raise ValueError("`n_modes` must be a positive integer.")
+        
+        for key in kwargs:
+            if key not in {"lump", "smoothit"}:
+                raise ValueError(f"Invalid keyword argument: {key}")
+
+        # Compute the Laplace-Beltrami operator / set stiffness and mass matrices
+        self.compute_lbo(**kwargs)
         
         # Set intitialization vector (if desired) for reproducibile eigenvectors 
         if seed is None or isinstance(seed, int):
@@ -204,7 +223,6 @@ class EigenSolver(Solver):
                                 f"({self.n_verts},).")
 
         # Solve the eigenvalue problem
-        sigma = -0.01
         lu = splu(self.stiffness - sigma * self.mass)
         op_inv = LinearOperator( 
             matvec=lu.solve, # type: ignore
@@ -222,6 +240,7 @@ class EigenSolver(Solver):
             v0=v0
         )
 
+        # Validate results
         assert not np.isnan(self.evals).any(), "Eigenvalues contain NaNs."
         if self.evals[0] / self.evals[1] >= 0.01:
             warn("Unfixed first eigenvalue (analytically expected to be 0) is not at least"
@@ -230,9 +249,12 @@ class EigenSolver(Solver):
         if not is_mass_orthonormal_modes(self.emodes, self.mass, atol=atol):
             warn(f"Computed eigenmodes are not mass-orthonormal (atol={atol}).")
 
+        # Post-process
         if fix_mode1:
+            # Value given by mass-orthonormality condition
             self.emodes[:, 0] = np.full(self.n_verts, 1 / np.sqrt(self.mass.sum()))
             self.evals[0] = 0.0
+
         if standardize:
             self.emodes = standardize_modes(self.emodes)
 

@@ -68,6 +68,7 @@ API Reference
 
    neuromodes.basis.decompose
    neuromodes.basis.reconstruct
+   neuromodes.basis.reconstruct_timeseries
    neuromodes.basis.calc_norm_power
 
 .. _ref_waves:
