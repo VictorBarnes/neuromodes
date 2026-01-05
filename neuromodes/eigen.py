@@ -3,10 +3,11 @@ Module for computing geometric eigenmodes on cortical surface meshes and decompo
 cortical maps.
 """
 
+from __future__ import annotations
 import sys
 from pathlib import Path
 from warnings import warn
-from typing import Optional, Union, Any, TYPE_CHECKING
+from typing import Union, Tuple, TYPE_CHECKING
 import numpy as np
 from scipy.sparse import spmatrix
 from scipy.stats import zscore
@@ -17,7 +18,6 @@ from neuromodes.io import read_surf, mask_surf
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray, ArrayLike
-    from scipy.spatial.distance import _MetricCallback, _MetricKind 
 
 class EigenSolver(Solver):
     """
@@ -31,11 +31,11 @@ class EigenSolver(Solver):
     def __init__(
         self,
         surf: Union[str, Path, Trimesh, TriaMesh, dict],
-        mask: Optional[ArrayLike] = None,
+        mask: Union[ArrayLike, None] = None,
         normalize: bool = False,
-        hetero: Optional[ArrayLike] = None,
-        scaling: Optional[str] = None, # default to "sigmoid" if hetero given (and remains None)
-        alpha: Optional[float] = None  # default to 1.0 if hetero given (and remains None)
+        hetero: Union[ArrayLike, None] = None,
+        scaling: Union[str, None] = None, # default to "sigmoid" if hetero given (and remains None)
+        alpha: Union[float, None] = None  # default to 1.0 if hetero given (and remains None)
     ):
         """
         Initialize the EigenSolver class with surface, and optionally with a heterogeneity map.
@@ -117,11 +117,24 @@ class EigenSolver(Solver):
                 scaling=self._scaling
             )
 
+    def __str__(self) -> str:
+        """String representation of the EigenSolver object."""
+        modes_solved = len(self.emodes) if hasattr(self, 'emodes') else 0
+        mask_str = f"({np.sum(self.mask)} other vertices masked)" if self.mask is not None else ""
+        hetero_bool = not (self.hetero == np.ones(self.n_verts)).all()
+        hetero_params = f"(alpha={self._alpha}, scaling='{self._scaling}')" if hetero_bool else ""
+
+        return ("EigenSolver:\n"
+                "------------\n"
+                f"Modes solved: {modes_solved}\n"
+                f"Surface mesh vertices: {self.n_verts} {mask_str}\n"
+                f"Heterogeneity map: {hetero_bool} {hetero_params}\n")
+
     def compute_lbo(
         self, 
         lump: bool = False,
         smoothit: int = 10
-    ) -> "EigenSolver":
+    ) -> EigenSolver:
         """
         This method computes the Laplace-Beltrami operator using finite element methods on a
         triangular mesh, optionally incorporating spatial heterogeneity and smoothing of the
@@ -158,9 +171,9 @@ class EigenSolver(Solver):
         fix_mode1: bool = True,
         atol: float = 1e-3,
         sigma: float = -0.01,
-        seed: Optional[Union[int, ArrayLike]] = None, 
+        seed: Union[int, ArrayLike, None] = None, 
         **kwargs
-    ) -> "EigenSolver":
+    ) -> EigenSolver:
         """
         Solve the generalized eigenvalue problem for the Laplace-Beltrami operator and compute
         eigenvalues and eigenmodes.
@@ -261,79 +274,71 @@ class EigenSolver(Solver):
 
         return self
     
+    def _check_for_emodes(self) -> None:
+        if not hasattr(self, 'emodes'):
+            raise ValueError("Eigenmodes not found. Please run the solve() method first.")
+    
     def decompose(
         self,
         data: ArrayLike,
-        method: str = 'project'
+        **kwargs
     ) -> NDArray:
         """
         This is a wrapper for `neuromodes.basis.decompose`, see its documentation for details
         """
         from neuromodes.basis import decompose
 
-        if not hasattr(self, 'emodes'):
-            raise ValueError("Eigenmodes not found. Please run the solve() method first.")
+        self._check_for_emodes()
     
         return decompose(
             data,
             self.emodes,
-            method=method,
-            mass=self.mass
+            mass=self.mass,
+            **kwargs
         )
     
     def reconstruct(
         self,
         data: ArrayLike,
-        method: str = 'project',
-        mode_counts: Optional[ArrayLike] = None,
-        metric: Optional[Union['_MetricCallback', '_MetricKind']] = 'correlation'
-    ) -> Any:
+        **kwargs
+    ) -> Tuple[NDArray, NDArray, list[NDArray]]:
         """
         This is a wrapper for `neuromodes.basis.reconstruct`, see its documentation for details
         """
         from neuromodes.basis import reconstruct
         
-        if not hasattr(self, 'emodes'):
-            raise ValueError("Eigenmodes not found. Please run the solve() method first.")
+        self._check_for_emodes()
             
         return reconstruct(
             data,
             self.emodes,
-            method=method,
             mass=self.mass,
-            mode_counts=mode_counts,
-            metric=metric
+            **kwargs
         )
     
     def reconstruct_timeseries(
         self,
         data: ArrayLike,
-        method: str = 'project',
-        mode_counts: Optional[ArrayLike] = None,
-        metric: Optional[Union['_MetricCallback', '_MetricKind']] = 'correlation'
-    ) -> Any:
+        **kwargs
+    ) -> Tuple[NDArray, NDArray, NDArray, NDArray, list[NDArray]]:
         """
         This is a wrapper for `neuromodes.basis.reconstruct_timeseries`, see its documentation for
         details
         """
         from neuromodes.basis import reconstruct_timeseries
 
-        if not hasattr(self, 'emodes'):
-            raise ValueError("Eigenmodes not found. Please run the solve() method first.")
+        self._check_for_emodes()
             
         return reconstruct_timeseries(
             data,
             self.emodes,
-            method=method,
             mass=self.mass,
-            mode_counts=mode_counts,
-            metric=metric
+            **kwargs
         )
     
     def model_connectome(
         self,
-        r: float = 9.53,
-        k: int = 108
+        **kwargs
     ) -> NDArray:
         """
         This is a wrapper for `neuromodes.connectome.model_connectome`, see its documentation for
@@ -341,80 +346,32 @@ class EigenSolver(Solver):
         """
         from neuromodes.connectome import model_connectome
 
-        if not hasattr(self, 'emodes'):
-            raise ValueError("Eigenmodes not found. Please run the solve() method first.")
+        self._check_for_emodes()
 
         return model_connectome(
             emodes=self.emodes,
             evals=self.evals,
-            r=r,
-            k=k
+            **kwargs
         )
     
     def simulate_waves(
         self,
-        ext_input: Optional[ArrayLike] = None,
-        dt: float = 0.1,
-        nt: int = 1000,
-        r: float = 18.0,
-        gamma: float = 0.116,
-        bold_out: bool = False,
-        decomp_method: str = "project",
-        pde_method: str = "fourier",
-        seed: Optional[int] = None
+        **kwargs
     ) -> NDArray:
         """
         This is a wrapper for `neuromodes.waves.simulate_waves`, see its documentation for details
         """
         from neuromodes.waves import simulate_waves
 
-        if np.max(estimate_wave_speed(self.hetero, r, gamma)) > 150.0:
-            warn("The combination of heterogeneity, r, and gamma may lead to "
-                 "non-physiological wave speeds (>150 m/s). Consider adjusting "
-                 "these parameters.")
-
-        if not hasattr(self, 'emodes'):
-            raise ValueError("Eigenmodes not found. Please run the solve() method first.")
+        self._check_for_emodes()
 
         return simulate_waves(
             emodes=self.emodes,
             evals=self.evals,
-            r=r,
-            gamma=gamma,
-            ext_input=ext_input,
-            dt=dt,
-            nt=nt,
             mass=self.mass,
-            bold_out=bold_out,
-            decomp_method=decomp_method,
-            pde_method=pde_method,
-            seed=seed
+            hetero=self.hetero,
+            **kwargs
         )
-
-def estimate_wave_speed(
-    hetero: ArrayLike,
-    r: float,
-    gamma: float
-) -> NDArray:
-    """
-    Check if the heterogeneity map values result in physiologically plausible wave speeds.
-    
-    Parameters
-    ----------
-    hetero : array_like
-        Heterogeneity map values.
-    r : float
-        Axonal length scale for wave propagation.
-    gamma : float
-        Damping parameter for wave propagation.
-    
-    Returns
-    -------
-    float
-        Estimation of the speed at each vertex.
-    """
-    hetero = np.asarray(hetero)
-    return r * gamma * np.sqrt(hetero)
 
 def scale_hetero(
     hetero: ArrayLike,
@@ -460,7 +417,7 @@ def scale_hetero(
     if scaling == "exponential":
         hetero_scaled = np.exp(alpha * hetero_z)
     elif scaling == "sigmoid":
-        hetero_scaled = (2 / (1 + np.exp(-alpha * hetero_z)))
+        hetero_scaled = 2 / (1 + np.exp(-alpha * hetero_z))
     else:
         raise ValueError(f"Invalid scaling '{scaling}'. Must be 'exponential' or 'sigmoid'.")
 
@@ -496,8 +453,9 @@ def standardize_modes(
 
 def is_mass_orthonormal_modes(
     emodes: ArrayLike,
-    mass: Optional[Union[ArrayLike, spmatrix]] = None,
-    rtol: float = 1e-05, atol: float = 1e-03
+    mass: Union[ArrayLike, spmatrix, None] = None,
+    rtol: float = 1e-05,
+    atol: float = 1e-03
 ) -> bool:
     """
     Check if a set of eigenmodes is approximately mass-orthonormal (i.e., `emodes.T @ mass @ emodes
@@ -543,8 +501,8 @@ if 'sphinx' in sys.modules:
     from neuromodes.waves import simulate_waves
     from neuromodes.connectome import model_connectome
 
-    EigenSolver.decompose.__doc__ += ":\n\n" + decompose.__doc__
-    EigenSolver.reconstruct.__doc__ += ":\n\n" + reconstruct.__doc__
-    EigenSolver.reconstruct_timeseries.__doc__ += ":\n\n" + reconstruct_timeseries.__doc__
-    EigenSolver.simulate_waves.__doc__ += ":\n\n" + simulate_waves.__doc__
-    EigenSolver.model_connectome.__doc__ += ":\n\n" + model_connectome.__doc__
+    EigenSolver.decompose.__doc__ += f':\n\n{decompose.__doc__}'
+    EigenSolver.reconstruct.__doc__ += f':\n\n{reconstruct.__doc__}'
+    EigenSolver.reconstruct_timeseries.__doc__ += f':\n\n{reconstruct_timeseries.__doc__}'
+    EigenSolver.simulate_waves.__doc__ += f':\n\n{simulate_waves.__doc__}'
+    EigenSolver.model_connectome.__doc__ += f':\n\n{model_connectome.__doc__}'

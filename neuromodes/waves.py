@@ -3,11 +3,12 @@ Module for using neural field theory to simulate neural activity and BOLD signal
 surfaces.
 """
 
+from __future__ import annotations
 from warnings import warn
 import numpy as np
 from scipy.sparse import spmatrix
 from scipy.integrate import solve_ivp
-from typing import Optional, Union, TYPE_CHECKING
+from typing import Union, TYPE_CHECKING
 from neuromodes.basis import decompose
 
 if TYPE_CHECKING:
@@ -16,16 +17,17 @@ if TYPE_CHECKING:
 def simulate_waves(
     emodes: ArrayLike,
     evals: ArrayLike,
-    ext_input: Optional[ArrayLike] = None,
+    ext_input: Union[ArrayLike, None] = None,
     dt: float = 0.1,
     nt: int = 1000,
     r: float = 18.0,
     gamma: float = 0.116,
-    mass: Optional[Union[ArrayLike, spmatrix]] = None,
+    mass: Union[ArrayLike, spmatrix, None] = None,
     bold_out: bool = False,
     decomp_method: str = "project",
     pde_method: str = "fourier",
-    seed: Optional[int] = None,
+    hetero: Union[ArrayLike, None] = None,
+    seed: Union[int, None] = None,
     cache_input: bool = False
 ) -> NDArray:
     """
@@ -47,7 +49,7 @@ def simulate_waves(
     nt : int, optional
         Number of time points to simulate Default is 1000.
     r : float, optional
-        Spatial length scale of wave propagation. Default is 28.9.
+        Spatial length scale of wave propagation. Default is 18.0.
     gamma : float, optional
         Damping rate of wave propagation. Default is 0.116.
     mass : array-like, optional
@@ -66,10 +68,17 @@ def simulate_waves(
         'project'. If using EigenSolver, provide its self.mass. Default is None.
     pde_method : str, optional
         Method for solving the wave PDE. Either "fourier" or "ode". Default is "fourier".
+    hetero : array-like, optional
+        Heterogeneity map of shape (n_verts,), used only to check whether wave speeds are
+        physiologically plausible at each vertex. If not provided, a homogeneous medium and 
+        eigenmodes are assumed. Default is None.
     seed : int, optional
         Random seed for generating external input. Default is None.
     cache_input : bool, optional
-        If True, cache the generated random input to avoid recomputation. Default is False.
+        If True and ext_input is None, cache the generated random input to avoid recomputation for 
+        the same values of `nt`, `seed`, and number of rows (vertices) in `emodes`. 
+        Inputs are cached in the directory specified by the CACHE_DIR environment variable. If not 
+        set, the home directory is used. Default is False.
 
     Returns
     -------
@@ -107,30 +116,37 @@ def simulate_waves(
         raise ValueError("`dt` must be positive.")
     if nt <= 0 or not isinstance(nt, int):
         raise ValueError("`nt` must be a positive integer.")
+    if np.any(estimate_wave_speed(r, gamma, hetero=hetero) > 150):
+        warn("The combination of heterogeneity, r, and gamma may lead to non-physiological " \
+                "wave speeds (>150 m/s). Consider adjusting these parameters.")
 
     if ext_input is not None:
         ext_input = np.asarray(ext_input)
         if ext_input.shape != (n_verts, nt):
             raise ValueError(f"External input shape is {ext_input.shape}, should be ({n_verts}, "
                              f"{nt}).")
+        if np.isnan(ext_input).any() or np.isinf(ext_input).any():
+            raise ValueError("External input contains NaNs and/or Infs.")
+
         if seed is not None:
             warn("`seed` is ignored when `ext_input` is provided.")
         if cache_input:
             warn("`cache_input` is ignored when `ext_input` is provided.")
     else:
-        gen_input = lambda n, nt, s: np.random.default_rng(s).standard_normal(size=(n, nt))
-        
+        # Use Gaussian white noise input if none provided
         if cache_input:
             from neuromodes.io import _set_cache
 
             memory = _set_cache()
-            ext_input = memory.cache(gen_input)(n_verts, nt, seed)
+            gen_input = memory.cache(_gen_noise)
         else:
-            ext_input = gen_input(n_verts, nt, seed)
+            gen_input = _gen_noise
+        
+        ext_input = gen_input((n_verts, nt), seed)
 
     # Mode decomposition of external input
     input_coeffs = decompose(ext_input, emodes, method=decomp_method, mass=mass)
-    
+
     t = np.linspace(0, dt * (nt - 1), nt)
 
     # Initialize simulated activity vector
@@ -173,6 +189,37 @@ def simulate_waves(
     sim_activity = emodes @ mode_coeffs
 
     return sim_activity
+
+def estimate_wave_speed(
+    r: float,
+    gamma: float,
+    hetero: Union[ArrayLike, None] = None
+) -> NDArray:
+    """
+    Check if the heterogeneity map values result in physiologically plausible wave speeds.
+    
+    Parameters
+    ----------
+    r : float
+        Axonal length scale for wave propagation.
+    gamma : float
+        Damping parameter for wave propagation.
+    hetero : array-like, optional
+        Heterogeneity map of shape (n_verts,). If None, `hetero` is set to 1 to reflect a
+        homogeneous medium. Default is None.
+    
+    Returns
+    -------
+    np.ndarray
+        Estimation of the speed at each vertex.
+    """
+    if hetero is None:
+        hetero = 1.0
+    hetero = np.asarray(hetero)
+    return r * gamma * np.sqrt(hetero)
+
+def _gen_noise(size, seed):
+    return np.random.default_rng(seed).standard_normal(size=size)
 
 def _model_wave_fourier(
     mode_coeff: NDArray,
@@ -299,7 +346,7 @@ def _solve_wave_ode(
 
         return [dx1dt, dx2dt]
 
-    y0 = [0.0, 0.0]
+    y0 = [0.0, 0.0] # Initial conditions: phi_j(0) = 0, dphi_j/dt(0) = 0
 
     sol = solve_ivp(
         wave_rhs,
@@ -351,18 +398,12 @@ def _model_balloon_fourier(
     """
     # Default independent model parameters
     kappa = 0.65   # signal decay rate [s^-1]
-    gamma = 0.41   # rate of elimination [s^-1]
     tau = 0.98     # hemodynamic transit time [s]
     alpha = 0.32   # Grubb's exponent [unitless]
     rho = 0.34     # resting oxygen extraction fraction [unitless]
-    V0 = 0.02      # resting blood volume fraction [unitless]
 
     # Other parameters
     w_f = 0.56
-    Q0 = 1
-    rho_f = 1000
-    eta = 0.3
-    Xi_0 = 1
     beta = 3
     V_0 = 0.02
     k1 = 3.72
@@ -372,17 +413,15 @@ def _model_balloon_fourier(
 
     # --- Use the same causal Fourier procedure as model_wave_fourier ---
     # Zero-pad input for t < 0 (causality)
-    nt = len(mode_coeff) - 1
-    t_full = np.arange(-nt * dt, nt * dt + dt, dt)  # Symmetric time vector
-    nt_full = len(t_full)
+    nt = len(mode_coeff)
 
-    mode_coeff_padded = np.concatenate([np.zeros(nt), mode_coeff])
-
-    # Frequencies for full signal
-    omega = 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(nt_full, d=dt))
+    mode_coeff_padded = np.concatenate([np.zeros(nt-1), mode_coeff])
 
     # Apply inverse Fourier transform to get frequency-domain representation of the causal signal.
     mode_coeff_f = np.fft.fftshift(np.fft.ifft(mode_coeff_padded))
+
+    # Frequencies for full signal
+    omega = 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(2*nt-1, d=dt))
 
     # Calculate the frequency response of the system
     phi_hat_Fz = 1 / (-(omega + 1j * 0.5 * kappa) ** 2 + w_f ** 2)
@@ -399,7 +438,7 @@ def _model_balloon_fourier(
     out_full = np.real(np.fft.fft(np.fft.ifftshift(out_fft)))
 
     # Return only the non-negative time part (t >= 0)
-    return out_full[nt:]
+    return out_full[nt-1:]
 
 def _model_balloon_ode(
     mode_coeff: NDArray,
@@ -431,7 +470,6 @@ def _model_balloon_ode(
     rho = 0.34     # resting oxygen extraction fraction [unitless]
     V0 = 0.02      # resting blood volume fraction [unitless]
     E0 = rho       # resting oxygen extraction fraction
-    TE = 0.04      # echo time [s]
     k1 = 7 * E0
     k2 = 2
     k3 = 2 * E0 - 0.2
@@ -448,7 +486,7 @@ def _model_balloon_ode(
         dqdt = (f * (1 - (1 - E0) ** (1 / f)) / E0 - q * v ** (1 / alpha - 1) / v) / tau
         return [dsdt, dfdt, dvdt, dqdt]
 
-    # Initial conditions: resting state
+    # Initial conditions for [s, f, v, q]
     y0 = [0.0, 1.0, 1.0, 1.0]
 
     sol = solve_ivp(

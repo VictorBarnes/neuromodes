@@ -2,8 +2,9 @@
 Module for expressing brain maps as linear combinations of orthogonal basis vectors.
 """
 
+from __future__ import annotations
 from warnings import warn
-from typing import Optional, Union, Tuple, TYPE_CHECKING
+from typing import Union, Tuple, TYPE_CHECKING
 import numpy as np
 from scipy.sparse import spmatrix
 from scipy.spatial.distance import cdist, squareform
@@ -17,7 +18,7 @@ def decompose(
     data: ArrayLike,
     emodes: ArrayLike,
     method: str = 'project',
-    mass: Optional[Union[ArrayLike, spmatrix]] = None
+    mass: Union[ArrayLike, spmatrix, None] = None
 ) -> NDArray:
     """
     Calculate the decomposition of the given data onto a basis set.
@@ -70,10 +71,10 @@ def decompose(
                 warn("Provided `emodes` are orthonormal in Euclidean space; ignoring mass matrix.")
             beta = emodes.T @ data
         elif mass is None:
-            raise ValueError(f"Mass matrix must be provided when method is 'project' and "
+            raise ValueError("Mass matrix must be provided when method is 'project' and "
                              "`emodes` is not an orthonormal basis set in Euclidean space.")
         elif not is_mass_orthonormal_modes(emodes, mass):
-            raise ValueError(f"`emodes` are not mass-orthonormal (with or without provided mass " 
+            raise ValueError("`emodes` are not mass-orthonormal (with or without provided mass " 
                                 "matrix); cannot use 'project' method.")
         else:
             beta = emodes.T @ mass @ data
@@ -89,9 +90,9 @@ def reconstruct(
     data: ArrayLike,
     emodes: ArrayLike,
     method: str = 'project',
-    mass: Optional[Union[ArrayLike, spmatrix]] = None,
-    mode_counts: Optional[ArrayLike] = None,
-    metric: Optional[Union['_MetricCallback', '_MetricKind']] = 'correlation'
+    mass: Union[ArrayLike, spmatrix, None] = None,
+    mode_counts: Union[ArrayLike, None] = None,
+    metric: Union[_MetricCallback, _MetricKind, None] = 'correlation'
 ) -> Tuple[NDArray, NDArray, list[NDArray]]:
     """
     Calculate and score the reconstruction of the given independent data using the provided
@@ -175,9 +176,9 @@ def reconstruct_timeseries(
     data: ArrayLike,
     emodes: ArrayLike,
     method: str = 'project',
-    mass: Optional[Union[ArrayLike, spmatrix]] = None,
-    mode_counts: Optional[ArrayLike] = None,
-    metric: Optional[Union['_MetricCallback', '_MetricKind']] = 'correlation'
+    mass: Union[ArrayLike, spmatrix, None] = None,
+    mode_counts: Union[ArrayLike, None] = None,
+    metric: Union[_MetricCallback, _MetricKind, None] = 'correlation'
 ) -> Tuple[NDArray, NDArray, NDArray, NDArray, list[NDArray]]:
     """
     Calculate and score the reconstruction of the given time-series data using the provided
@@ -253,9 +254,7 @@ def reconstruct_timeseries(
         metric=metric
     )
 
-    # Concatenate/get FC, reconstruct and calculate error
-    calc_vec_FC = lambda x: np.arctanh(squareform(np.corrcoef(x), checks=False)) # returns 1D
-    fc = calc_vec_FC(data)[np.newaxis,:] # original FC
+    fc = calc_vec_FC(data)[np.newaxis, :]
     fc_recon = np.stack([calc_vec_FC(recon[:, i, :]) for i in range(recon.shape[1])], axis=1)
     fc_recon_error = cdist(fc_recon.T, fc, metric=metric).ravel() if metric is not None else np.empty(0)
 
@@ -285,3 +284,21 @@ def calc_norm_power(
 
     return beta_sq / total_power
 
+def calc_vec_FC(
+    timeseries: ArrayLike
+) -> NDArray:
+    """
+    Compute Fisher-z-transformed vectorized functional connectivity.
+    
+    Parameters
+    ----------
+    timeseries : array-like
+        The input time-series data of shape (n_verts, n_timepoints).
+
+    Returns
+    -------
+    numpy.ndarray
+        The Fisher-z-transformed vectorized functional connectivity array of shape
+        (n_verts*(n_verts-1)/2,).
+    """
+    return np.arctanh(squareform(np.corrcoef(timeseries), checks=False))

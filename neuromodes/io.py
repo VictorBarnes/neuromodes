@@ -2,8 +2,8 @@
 Module for reading, validating, and manipulating surface meshes.
 """
 
+from __future__ import annotations
 import os
-from joblib import Memory
 from trimesh import Trimesh
 import numpy as np
 from nibabel.gifti.gifti import GiftiImage
@@ -161,12 +161,22 @@ def fetch_map(
 
 def _set_cache():
     """Set up joblib memory caching."""
+    try:
+        from joblib import Memory
+    except ImportError:
+        raise ImportError(
+            "joblib is required for caching. Please install it via 'pip install joblib' (or " \
+            "install neuromodes with UV via 'uv add \"neuromodes[cache] @ " \
+            "git+https://github.com/NSBLab/neuromodes.git\")."
+        )
 
     CACHE_DIR = os.getenv("CACHE_DIR")
-    if CACHE_DIR is None or not os.path.exists(CACHE_DIR):
+    if CACHE_DIR is None:
         CACHE_DIR = Path.home() / ".neuromodes_cache"
-        CACHE_DIR.mkdir(parents=True, exist_ok=True)
         print(f"Using default cache directory at {CACHE_DIR}. To cache elsewhere, set the CACHE_DIR"
               " environment variable.")
+    else:
+        CACHE_DIR = Path(CACHE_DIR)
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     return Memory(CACHE_DIR, verbose=0)

@@ -2,7 +2,8 @@ version = 1
 revision = 2
 requires-python = ">=3.9"
 resolution-markers = [
-    "python_full_version >= '3.11'",
+    "python_full_version >= '3.14'",
+    "python_full_version >= '3.11' and python_full_version < '3.14'",
     "python_full_version == '3.10.*'",
     "python_full_version < '3.10'",
 ]
@@ -290,7 +291,8 @@ name = "contourpy"
 version = "1.3.3"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version >= '3.11'",
+    "python_full_version >= '3.14'",
+    "python_full_version >= '3.11' and python_full_version < '3.14'",
 ]
 dependencies = [
     { name = "numpy", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -515,7 +517,8 @@ name = "fonttools"
 version = "4.61.1"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version >= '3.11'",
+    "python_full_version >= '3.14'",
+    "python_full_version >= '3.11' and python_full_version < '3.14'",
     "python_full_version == '3.10.*'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ec/ca/cf17b88a8df95691275a3d77dc0a5ad9907f328ae53acbe6795da1b2f5ed/fonttools-4.61.1.tar.gz", hash = "sha256:6675329885c44657f826ef01d9e4fb33b9158e9d93c537d84ad8399539bc6f69", size = 3565756, upload_time = "2025-12-12T17:31:24.246Z" }
@@ -636,7 +639,8 @@ name = "ipykernel"
 version = "7.0.1"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version >= '3.11'",
+    "python_full_version >= '3.14'",
+    "python_full_version >= '3.11' and python_full_version < '3.14'",
     "python_full_version == '3.10.*'",
 ]
 dependencies = [
@@ -715,7 +719,8 @@ name = "ipython"
 version = "9.6.0"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version >= '3.11'",
+    "python_full_version >= '3.14'",
+    "python_full_version >= '3.11' and python_full_version < '3.14'",
 ]
 dependencies = [
     { name = "colorama", marker = "python_full_version >= '3.11' and sys_platform == 'win32'" },
@@ -808,7 +813,8 @@ name = "jupyter-core"
 version = "5.9.1"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version >= '3.11'",
+    "python_full_version >= '3.14'",
+    "python_full_version >= '3.11' and python_full_version < '3.14'",
     "python_full_version == '3.10.*'",
 ]
 dependencies = [
@@ -928,7 +934,8 @@ name = "kiwisolver"
 version = "1.4.9"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version >= '3.11'",
+    "python_full_version >= '3.14'",
+    "python_full_version >= '3.11' and python_full_version < '3.14'",
     "python_full_version == '3.10.*'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/5c/3c/85844f1b0feb11ee581ac23fe5fce65cd049a200c1446708cc1b7f922875/kiwisolver-1.4.9.tar.gz", hash = "sha256:c3b22c26c6fd6811b0ae8363b95ca8ce4ea3c202d3d0975b2914310ceb1bcc4d", size = 97564, upload_time = "2025-08-10T21:27:49.279Z" }
@@ -1123,7 +1130,8 @@ name = "matplotlib"
 version = "3.10.8"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version >= '3.11'",
+    "python_full_version >= '3.14'",
+    "python_full_version >= '3.11' and python_full_version < '3.14'",
     "python_full_version == '3.10.*'",
 ]
 dependencies = [
@@ -1232,7 +1240,6 @@ name = "neuromodes"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "joblib" },
     { name = "lapy" },
     { name = "nibabel" },
     { name = "numpy", version = "2.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
@@ -1245,7 +1252,11 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+cache = [
+    { name = "joblib" },
+]
 testing = [
+    { name = "joblib" },
     { name = "pytest" },
 ]
 tutorials = [
@@ -1259,7 +1270,8 @@ tutorials = [
 [package.metadata]
 requires-dist = [
     { name = "ipykernel", marker = "extra == 'tutorials'", specifier = ">=6.31.0" },
-    { name = "joblib", specifier = ">=1.5.3" },
+    { name = "joblib", marker = "extra == 'cache'", specifier = ">=1.5.3" },
+    { name = "joblib", marker = "extra == 'testing'", specifier = ">=1.5.3" },
     { name = "lapy", specifier = ">=1.1.0" },
     { name = "matplotlib", marker = "extra == 'tutorials'", specifier = ">=3.9.4" },
     { name = "nibabel", specifier = ">=5.2.1" },
@@ -1269,7 +1281,7 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.10.1" },
     { name = "trimesh", specifier = ">=4.8.1" },
 ]
-provides-extras = ["testing", "tutorials"]
+provides-extras = ["testing", "tutorials", "cache"]
 
 [[package]]
 name = "nibabel"
@@ -1428,7 +1440,8 @@ name = "numpy"
 version = "2.3.3"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version >= '3.11'",
+    "python_full_version >= '3.14'",
+    "python_full_version >= '3.11' and python_full_version < '3.14'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d0/19/95b3d357407220ed24c139018d2518fab0a61a948e68286a25f1a4d049ff/numpy-2.3.3.tar.gz", hash = "sha256:ddc7c39727ba62b80dfdbedf400d1c10ddfa8eefbd7ec8dcb118be8b56d31029", size = 20576648, upload_time = "2025-09-09T16:54:12.543Z" }
 wheels = [
@@ -1658,7 +1671,8 @@ name = "pillow"
 version = "12.0.0"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version >= '3.11'",
+    "python_full_version >= '3.14'",
+    "python_full_version >= '3.11' and python_full_version < '3.14'",
     "python_full_version == '3.10.*'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/5a/b0/cace85a1b0c9775a9f8f5d5423c8261c858760e2466c79b2dd184638b056/pillow-12.0.0.tar.gz", hash = "sha256:87d4f8125c9988bfbed67af47dd7a953e2fc7b0cc1e7800ec6d2080d490bb353", size = 47008828, upload_time = "2025-10-15T18:24:14.008Z" }
@@ -1772,7 +1786,8 @@ name = "platformdirs"
 version = "4.5.0"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version >= '3.11'",
+    "python_full_version >= '3.14'",
+    "python_full_version >= '3.11' and python_full_version < '3.14'",
     "python_full_version == '3.10.*'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/61/33/9611380c2bdb1225fdef633e2a9610622310fed35ab11dac9620972ee088/platformdirs-4.5.0.tar.gz", hash = "sha256:70ddccdd7c99fc5942e9fc25636a8b34d04c24b335100223152c2803e4063312", size = 21632, upload_time = "2025-10-08T17:44:48.791Z" }
@@ -2120,7 +2135,8 @@ name = "scipy"
 version = "1.16.2"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version >= '3.11'",
+    "python_full_version >= '3.14'",
+    "python_full_version >= '3.11' and python_full_version < '3.14'",
 ]
 dependencies = [
     { name = "numpy", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },

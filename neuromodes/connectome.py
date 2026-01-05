@@ -2,6 +2,7 @@
 Module for generating models of cortical structural connectomes.
 """
 
+from __future__ import annotations
 import numpy as np
 from typing import TYPE_CHECKING
 
@@ -54,8 +55,9 @@ def model_connectome(
         raise ValueError("Parameter `r` must be positive.")
     if emodes.ndim != 2:
         raise ValueError("`emodes` must be a 2D array (vertices x modes).")
-    if len(evals) != emodes.shape[1]:
-        raise ValueError("Length of `evals` must match the number of modes (columns) in `emodes`.")
+    if evals.shape != (emodes.shape[1],):
+        raise ValueError("`evals` must be a 1-dimensional array with length matching the number of "
+                         "modes (columns) in `emodes`.")
     if k <= 0 or k > len(evals) or not isinstance(k, int):
         raise ValueError(f"Parameter `k` must be an integer in the range [1, {len(evals)}].")
 

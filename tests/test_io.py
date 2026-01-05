@@ -1,9 +1,12 @@
+import os
+from tempfile import TemporaryDirectory
 from pathlib import Path
 from pytest import raises
 import numpy as np
 from trimesh import Trimesh
-from neuromodes.io import check_surf, fetch_surf, fetch_map, read_surf
-
+from joblib import Memory
+from unittest.mock import patch
+from neuromodes.io import check_surf, fetch_surf, fetch_map, read_surf, _set_cache
 
 def test_mesh_unreferenced_verts():
     # Create an invalid mesh with unreferenced vertices
@@ -108,3 +111,48 @@ def test_read_surf_freesurfer():
         assert fs_mesh.faces.shape[0] > 100
         assert fs_mesh.vertices.shape[1] == 3
         assert fs_mesh.faces.shape[1] == 3
+
+def test_caching():
+    # Get CACHE_DIR
+    cache_dir = os.getenv("CACHE_DIR")
+
+    # Test with temporary directory
+    with TemporaryDirectory() as temp_cache_dir:
+        os.environ["CACHE_DIR"] = temp_cache_dir
+        
+        memory = _set_cache()
+        assert isinstance(memory, Memory)
+        assert str(memory.location) == temp_cache_dir
+    
+    # Restore original CACHE_DIR
+    if cache_dir is not None:
+        os.environ["CACHE_DIR"] = cache_dir
+    elif "CACHE_DIR" in os.environ:
+        del os.environ["CACHE_DIR"]
+
+def test_caching_default_dir(capsys):
+    # Temporarily unset CACHE_DIR
+    cache_dir = os.getenv("CACHE_DIR")
+    if "CACHE_DIR" in os.environ:
+        del os.environ["CACHE_DIR"]
+
+    try:
+        # Invoke _set_cache and check default directory
+        memory = _set_cache()
+        expected_dir = Path.home() / ".neuromodes_cache"
+
+        assert isinstance(memory, Memory)
+        assert memory.location == expected_dir
+
+        print_log = capsys.readouterr().out
+        assert f"Using default cache directory at {expected_dir}" in print_log
+    finally:
+        # Restore original CACHE_DIR
+        if cache_dir is not None:
+            os.environ["CACHE_DIR"] = cache_dir
+
+def test_caching_no_joblib():
+    # Mock the import of joblib to raise ImportError
+    with patch.dict('sys.modules', {'joblib': None}):
+        with raises(ImportError, match="joblib is required for caching.*"):
+            _set_cache()
