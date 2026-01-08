@@ -1,9 +1,9 @@
 from pathlib import Path
-import pytest
-import numpy as np
 from lapy import TriaMesh
+import numpy as np
+import pytest
+from neuromodes.eigen import EigenSolver, is_mass_orthonormal_modes, scale_hetero
 from neuromodes.io import fetch_surf, mask_surf
-from neuromodes.eigen import EigenSolver, is_mass_orthonormal_modes
 
 @pytest.fixture
 def surf_medmask_hetero():
@@ -55,9 +55,9 @@ def test_no_hetero(surf_medmask_hetero):
         
 def test_no_hetero_alpha_scaling(surf_medmask_hetero):
     surf, medmask, _ = surf_medmask_hetero
-    with pytest.warns(UserWarning, match="`alpha` is ignored.*"):
+    with pytest.warns(UserWarning, match="`alpha` is ignored"):
         EigenSolver(surf, mask=medmask, hetero=None, alpha=0.5)
-    with pytest.warns(UserWarning, match="`scaling` is ignored.*"):
+    with pytest.warns(UserWarning, match="`scaling` is ignored"):
         EigenSolver(surf, mask=medmask, hetero=None, scaling='exponential')
 
 def test_invalid_hetero_shape(surf_medmask_hetero):
@@ -79,9 +79,8 @@ def test_nan_inf_hetero(surf_medmask_hetero):
 def test_constant_hetero(surf_medmask_hetero):
     surf, _, hetero = surf_medmask_hetero
     hetero[:] = 2.0
-    with pytest.warns(RuntimeWarning, match="Precision loss occurred in moment calculation.*"):
-        with pytest.raises(ValueError, match="z-scored `hetero` must not contain NaNs.*"):
-            EigenSolver(surf, hetero=hetero)
+    with pytest.raises(ValueError, match="`hetero` is constant"):
+        EigenSolver(surf, hetero=hetero)
 
 def test_nan_inf_hetero_medmask(surf_medmask_hetero):
     # Inject NaN/Inf at a cortical vertex (should raise error)
@@ -104,11 +103,6 @@ def test_nan_inf_hetero_medmask_ignored(surf_medmask_hetero):
     EigenSolver(surf, mask=medmask, hetero=hetero)
     hetero[medial_vertex] = np.inf  
     EigenSolver(surf, mask=medmask, hetero=hetero)
-
-def test_init_invalid_scaling(surf_medmask_hetero):
-    surf, medmask, hetero = surf_medmask_hetero
-    with pytest.raises(ValueError, match="Invalid scaling 'plantasia'.*"):
-        EigenSolver(surf, mask=medmask, hetero=hetero, scaling='plantasia')
 
 @pytest.fixture
 def presolver(surf_medmask_hetero):
@@ -249,3 +243,23 @@ def test_check_euclidean_orthonorm():
     assert is_mass_orthonormal_modes(vecs)
     assert is_mass_orthonormal_modes(vecs, mass=np.eye(5))
     assert not is_mass_orthonormal_modes(vecs, mass=np.zeros((5, 5)))
+
+def test_scale_hetero(surf_medmask_hetero):
+    _, _, hetero = surf_medmask_hetero
+
+    # Check that sigmoid-scaled hetero has mean ~1 and be within (0, 2)
+    hetero_sig = scale_hetero(hetero)
+    assert np.isclose(np.mean(hetero_sig), 1.0, atol=1e-3)
+    assert np.all((hetero_sig > 0) & (hetero_sig < 2))
+
+    # Check that exponential-scaled hetero is all positive
+    hetero_exp = scale_hetero(hetero, scaling='exponential')
+    assert np.all(hetero_exp > 0)
+
+def test_invalid_scale_hetero(surf_medmask_hetero):
+    _, _, hetero = surf_medmask_hetero
+
+    with pytest.raises(ValueError, match="Invalid scaling 'plantasia'"):
+        scale_hetero(hetero, scaling='plantasia')
+
+    

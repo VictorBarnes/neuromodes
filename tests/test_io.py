@@ -1,11 +1,11 @@
-import os
 from tempfile import TemporaryDirectory
+import os
 from pathlib import Path
-from pytest import raises
-import numpy as np
-from trimesh import Trimesh
-from joblib import Memory
 from unittest.mock import patch
+from joblib import Memory
+import numpy as np
+from pytest import raises
+from trimesh import Trimesh
 from neuromodes.io import check_surf, fetch_surf, fetch_map, read_surf, _set_cache
 
 def test_mesh_unreferenced_verts():
@@ -154,5 +154,5 @@ def test_caching_default_dir(capsys):
 def test_caching_no_joblib():
     # Mock the import of joblib to raise ImportError
     with patch.dict('sys.modules', {'joblib': None}):
-        with raises(ImportError, match="joblib is required for caching.*"):
+        with raises(ImportError, match="joblib is required for caching"):
             _set_cache()

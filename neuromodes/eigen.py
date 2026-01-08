@@ -4,16 +4,14 @@ cortical maps.
 """
 
 from __future__ import annotations
-import sys
 from pathlib import Path
-from warnings import warn
 from typing import Union, Tuple, TYPE_CHECKING
+from warnings import warn
+from lapy import Solver, TriaMesh
 import numpy as np
 from scipy.sparse import spmatrix
-from scipy.stats import zscore
 from scipy.sparse.linalg import LinearOperator, eigsh, splu
 from trimesh import Trimesh
-from lapy import Solver, TriaMesh
 from neuromodes.io import read_surf, mask_surf
 
 if TYPE_CHECKING:
@@ -83,7 +81,7 @@ class EigenSolver(Solver):
         # Hetero inputs
         self._raw_hetero = hetero
         if hetero is None: # Handle None case by setting to ones
-            if scaling is not None: 
+            if scaling is not None:
                 warn("`scaling` is ignored (and set to None) as `hetero` is None.")
             if alpha is not None:
                 warn("`alpha` is ignored (and set to None) as `hetero` is None.")
@@ -98,7 +96,7 @@ class EigenSolver(Solver):
             # Ensure hetero has correct length (masked or unmasked)
             if len(hetero) == self.n_verts:
                 pass
-            elif self.mask is None: 
+            elif self.mask is None:
                 raise ValueError(f"The number of elements in `hetero` ({len(hetero)}) must match "
                                 f"the number of vertices in the surface mesh ({self.n_verts}).")
             elif len(hetero) == len(self.mask):
@@ -180,6 +178,8 @@ class EigenSolver(Solver):
 
         Parameters
         ----------
+        n_modes : int
+            Number of eigenmodes to compute.
         standardize : bool, optional
             If True, standardizes the sign of the eigenmodes so the first element is positive.
             Default is False.
@@ -195,7 +195,7 @@ class EigenSolver(Solver):
         seed : int or array-like, optional
             Random seed for reproducibile generation of eigenvectors (which otherwise use an
             iterative algorithm that starts with a random vector, meaning that repeated generation
-            of eigenmodes on the same surface can have different orientations). Specify as in int
+            of eigenmodes on the same surface can have different orientations). Specify as an int
             (to set the seed) or a vector with n_verts elements (to directly set the initialisation
             vector). Default is None (not reproducible).
         **kwargs
@@ -284,7 +284,10 @@ class EigenSolver(Solver):
         **kwargs
     ) -> NDArray:
         """
-        This is a wrapper for `neuromodes.basis.decompose`, see its documentation for details
+        This is a wrapper for `neuromodes.basis.decompose`, see its documentation for details: 
+        https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.basis.decompose.html
+
+        Note that `emodes` and `mass` are passed automatically by the EigenSolver instance.
         """
         from neuromodes.basis import decompose
 
@@ -303,7 +306,10 @@ class EigenSolver(Solver):
         **kwargs
     ) -> Tuple[NDArray, NDArray, list[NDArray]]:
         """
-        This is a wrapper for `neuromodes.basis.reconstruct`, see its documentation for details
+        This is a wrapper for `neuromodes.basis.reconstruct`, see its documentation for details:
+        https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.basis.reconstruct.html
+
+        Note that `emodes` and `mass` are passed automatically by the EigenSolver instance.
         """
         from neuromodes.basis import reconstruct
         
@@ -323,7 +329,10 @@ class EigenSolver(Solver):
     ) -> Tuple[NDArray, NDArray, NDArray, NDArray, list[NDArray]]:
         """
         This is a wrapper for `neuromodes.basis.reconstruct_timeseries`, see its documentation for
-        details
+        details:
+        https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.basis.reconstruct_timeseries.html
+
+        Note that `emodes` and `mass` are passed automatically by the EigenSolver instance.
         """
         from neuromodes.basis import reconstruct_timeseries
 
@@ -342,7 +351,10 @@ class EigenSolver(Solver):
     ) -> NDArray:
         """
         This is a wrapper for `neuromodes.connectome.model_connectome`, see its documentation for
-        details
+        details:
+        https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.connectome.model_connectome.html
+
+        Note that `emodes` and `evals` are passed automatically by the EigenSolver instance.
         """
         from neuromodes.connectome import model_connectome
 
@@ -359,7 +371,11 @@ class EigenSolver(Solver):
         **kwargs
     ) -> NDArray:
         """
-        This is a wrapper for `neuromodes.waves.simulate_waves`, see its documentation for details
+        This is a wrapper for `neuromodes.waves.simulate_waves`, see its documentation for details:
+        https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.waves.simulate_waves.html
+
+        Note that `emodes`, `evals`, `mass`, and `hetero` are passed automatically by the
+        EigenSolver instance.
         """
         from neuromodes.waves import simulate_waves
 
@@ -369,7 +385,7 @@ class EigenSolver(Solver):
             emodes=self.emodes,
             evals=self.evals,
             mass=self.mass,
-            hetero=self.hetero,
+            scaled_hetero=self.hetero,
             **kwargs
         )
 
@@ -399,19 +415,22 @@ def scale_hetero(
     Raises
     ------
     ValueError
-        If the scaling parameter is not a supported function.
+        If the scaling parameter is not a supported function, if `hetero` contains NaNs or Infs,
+        or if `hetero` is constant.
     """
-    # z-score the heterogeneity map
-    hetero = np.asarray(hetero)
+    # Validate inputs
+    if alpha == 0:
+        warn("`alpha` is set to 0, meaning heterogeneity map will have no effect.")    
     if np.any(np.isnan(hetero)) or np.any(np.isinf(hetero)):
         raise ValueError("`hetero` must not contain NaNs or Infs; check input values.")
 
-    hetero_z = zscore(hetero)
+    # Z-score the heterogeneity map
+    std = np.std(hetero)
+    if std == 0:
+        raise ValueError("`hetero` is constant; please provide a non-constant heterogeneity map.")
+    hetero_z = (hetero - np.mean(hetero)) / std
     if np.any(np.isnan(hetero_z)):
         raise ValueError("z-scored `hetero` must not contain NaNs; check input values.")
-
-    if alpha == 0:
-        warn("`alpha` is set to 0, meaning heterogeneity map will have no effect.")
 
     # Scale the heterogeneity map
     if scaling == "exponential":
@@ -495,14 +514,3 @@ def is_mass_orthonormal_modes(
 
     prod = emodes.T @ emodes if mass is None else emodes.T @ mass @ emodes
     return np.allclose(prod, np.eye(emodes.shape[1]), rtol=rtol, atol=atol, equal_nan=False)
-
-if 'sphinx' in sys.modules:
-    from neuromodes.basis import decompose, reconstruct, reconstruct_timeseries
-    from neuromodes.waves import simulate_waves
-    from neuromodes.connectome import model_connectome
-
-    EigenSolver.decompose.__doc__ += f':\n\n{decompose.__doc__}'
-    EigenSolver.reconstruct.__doc__ += f':\n\n{reconstruct.__doc__}'
-    EigenSolver.reconstruct_timeseries.__doc__ += f':\n\n{reconstruct_timeseries.__doc__}'
-    EigenSolver.simulate_waves.__doc__ += f':\n\n{simulate_waves.__doc__}'
-    EigenSolver.model_connectome.__doc__ += f':\n\n{model_connectome.__doc__}'

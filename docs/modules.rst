@@ -69,7 +69,7 @@ API Reference
    neuromodes.basis.reconstruct
    neuromodes.basis.reconstruct_timeseries
    neuromodes.basis.calc_norm_power
-   neuromodes.basis.calc_vec_FC
+   neuromodes.basis.calc_vec_fc
 
 .. _ref_waves:
 
@@ -88,6 +88,7 @@ API Reference
 
    neuromodes.waves.simulate_waves
    neuromodes.waves.estimate_wave_speed
+   neuromodes.waves.get_balloon_params
 
 .. _ref_connectome:
 

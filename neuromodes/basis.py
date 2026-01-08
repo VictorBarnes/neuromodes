@@ -3,11 +3,11 @@ Module for expressing brain maps as linear combinations of orthogonal basis vect
 """
 
 from __future__ import annotations
-from warnings import warn
 from typing import Union, Tuple, TYPE_CHECKING
+from warnings import warn
 import numpy as np
 from scipy.sparse import spmatrix
-from scipy.spatial.distance import cdist, squareform
+from scipy.spatial.distance import cdist
 from neuromodes.eigen import is_mass_orthonormal_modes
 
 if TYPE_CHECKING:
@@ -254,8 +254,8 @@ def reconstruct_timeseries(
         metric=metric
     )
 
-    fc = calc_vec_FC(data)[np.newaxis, :]
-    fc_recon = np.stack([calc_vec_FC(recon[:, i, :]) for i in range(recon.shape[1])], axis=1)
+    fc = calc_vec_fc(data)[np.newaxis, :]
+    fc_recon = np.stack([calc_vec_fc(recon[:, i, :]) for i in range(recon.shape[1])], axis=1)
     fc_recon_error = cdist(fc_recon.T, fc, metric=metric).ravel() if metric is not None else np.empty(0)
 
     return fc_recon, fc_recon_error, recon, recon_error, beta
@@ -284,7 +284,7 @@ def calc_norm_power(
 
     return beta_sq / total_power
 
-def calc_vec_FC(
+def calc_vec_fc(
     timeseries: ArrayLike
 ) -> NDArray:
     """
@@ -298,7 +298,9 @@ def calc_vec_FC(
     Returns
     -------
     numpy.ndarray
-        The Fisher-z-transformed vectorized functional connectivity array of shape
-        (n_verts*(n_verts-1)/2,).
+        The Fisher-z-transformed vectorized functional connectivity array of shape (n_edges,), where
+        n_edges = n_verts*(n_verts-1)/2.
     """
-    return np.arctanh(squareform(np.corrcoef(timeseries), checks=False))
+    fc = np.corrcoef(timeseries)
+    vec_fc = fc[np.triu_indices_from(fc, k=1)]
+    return np.arctanh(vec_fc)

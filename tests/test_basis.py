@@ -1,9 +1,9 @@
-import pytest
 import numpy as np
-from scipy.spatial.distance import squareform
-from neuromodes.io import fetch_surf, fetch_map
+import pytest
+from neuromodes.basis import (
+    decompose, reconstruct, reconstruct_timeseries, calc_norm_power, calc_vec_fc)
 from neuromodes.eigen import EigenSolver
-from neuromodes.basis import decompose, reconstruct, reconstruct_timeseries, calc_norm_power
+from neuromodes.io import fetch_surf, fetch_map
 
 @pytest.fixture
 def surf_medmask_hetero():
@@ -37,7 +37,7 @@ def test_decompose_eigenmodes(solver):
 
 def test_decompose_invalid_data_shape(solver):
 
-    with pytest.raises(ValueError, match=r".*`data` \(4002\) must match .* `emodes` \(3636\)."):
+    with pytest.raises(ValueError, match=r"`data` \(4002\) must match .* `emodes` \(3636\)."):
         decompose(np.ones(4002), solver.emodes, mass=solver.mass)
 
 def test_decompose_nan_inf_mode(solver):
@@ -54,12 +54,12 @@ def test_decompose_nan_inf_mode(solver):
 
 def test_decompose_massless(solver):
 
-    with pytest.raises(ValueError, match=r"Mass matrix must be provided when method is 'project' .*"):
+    with pytest.raises(ValueError, match=r"Mass matrix must be provided when method is 'project'"):
         decompose(np.ones(solver.n_verts), solver.emodes)
 
 def test_decompose_invalid_method(solver):
 
-    with pytest.raises(ValueError, match="Invalid decomposition method 'fornitonian'.*"):
+    with pytest.raises(ValueError, match="Invalid decomposition method 'fornitonian'"):
         decompose(np.ones(solver.n_verts), solver.emodes, method='fornitonian')
 
 @pytest.fixture
@@ -124,18 +124,20 @@ def test_reconstruct_mode_superposition_timeseries(solver, gen_eigenmap):
     eigenmaps, _ = gen_eigenmap
 
     eigen_ts = eigenmaps.astype(np.float32) # Prevent memory allocation error
-    fc = np.arctanh(squareform(np.corrcoef(eigen_ts),checks=False))
+    fc = calc_vec_fc(eigen_ts)
 
     # Treat eigenmaps as timepoints of activity
-    fc_recon, correlation_error, _, _, _ = reconstruct_timeseries(eigen_ts, solver.emodes, mass=solver.mass, 
-                                                 method='regress', metric='correlation')
+    fc_recon, correlation_error, _, _, _ = reconstruct_timeseries(
+        eigen_ts, solver.emodes, mass=solver.mass, method='regress', metric='correlation')
 
     _, euclidean_error, _, _, _ = reconstruct_timeseries(eigen_ts, solver.emodes, mass=solver.mass, 
                             method='regress', metric='euclidean')
     mse = euclidean_error / fc.size  # Convert to MSE
     
-    assert np.allclose(np.tanh(fc_recon[:,-1]), np.tanh(fc), atol=1e-5), 'Reconstructed FC does not match original.'
-    assert correlation_error[-1] < 1e-6, 'FC reconstruction error is not close to 0 when using all modes.'
+    assert np.allclose(np.tanh(fc_recon[:,-1]), np.tanh(fc), atol=1e-5), \
+        'Reconstructed FC does not match original.'
+    assert correlation_error[-1] < 1e-6, \
+        'FC reconstruction error is not close to 0 when using all modes.'
     assert mse[-1] < 1e-6, 'MSE is not close to 0 when using all modes.'
 
 def test_reconstruct_real_map_32k():
@@ -152,19 +154,18 @@ def test_reconstruct_real_map_32k():
     _, recon_score, _ = reconstruct(map, emodes, mass=solver.mass)
 
     # Correlation error should strictly decrease from 1, but not reach 0
-    assert np.all(np.diff(recon_score) < 0), \
-        r'Reconstruction error does not strictly decrease.'
+    assert np.all(np.diff(recon_score) < 0), 'Reconstruction error does not strictly decrease.'
     assert not np.isclose(recon_score[-1], 0, atol=1e-6), \
-        r'Reconstruction error is unexpectedly close to 0 for only 10 modes.'
+        'Reconstruction error is unexpectedly close to 0 for only 10 modes.'
 
 def test_reconstruct_invalid_map_shape(solver):
 
-    with pytest.raises(ValueError, match=r".*`data` \(4002\) must match .* `emodes` \(3636\)."):
+    with pytest.raises(ValueError, match=r"`data` \(4002\) must match .* `emodes` \(3636\)."):
         reconstruct(np.ones(4002), solver.emodes, mass=solver.mass)
 
 def test_reconstruct_massless(solver):
 
-    with pytest.raises(ValueError, match=r"Mass matrix must be provided when method is 'project' .*"):
+    with pytest.raises(ValueError, match="Mass matrix must be provided when method is 'project'"):
         reconstruct(np.ones(solver.n_verts), solver.emodes)
 
 def test_calc_norm_power():
@@ -177,4 +178,5 @@ def test_calc_norm_power():
     assert np.all(norm_power >= 0), 'Normalized powers contain negative values.'
 
     # Check that columns sum to 1
-    assert np.allclose(np.sum(norm_power, axis=0), 1, atol=1e-8), 'Normalized powers do not sum to 1.'
+    assert np.allclose(np.sum(norm_power, axis=0), 1, atol=1e-8), \
+        'Normalized powers do not sum to 1.'

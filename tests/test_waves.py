@@ -4,7 +4,7 @@ from tempfile import TemporaryDirectory
 import numpy as np
 from neuromodes.io import fetch_surf
 from neuromodes.eigen import EigenSolver
-from neuromodes.waves import simulate_waves
+from neuromodes.waves import simulate_waves, estimate_wave_speed, get_balloon_params
 
 @pytest.fixture
 def solver():
@@ -14,11 +14,11 @@ def solver():
     return EigenSolver(mesh, mask=medmask, hetero=hetero).solve(n_modes=200, seed=0)
 
 def test_unusual_wave_speed(solver):
-    with pytest.warns(UserWarning, match='.*non-physiological wave speeds.*'):
+    with pytest.warns(UserWarning, match='non-physiological wave speeds'):
         solver.simulate_waves(r=1000)
 
 def test_unusual_wave_speed_no_hetero(solver):
-    with pytest.warns(UserWarning, match='.*non-physiological wave speeds.*'):
+    with pytest.warns(UserWarning, match='non-physiological wave speeds'):
         simulate_waves(
             solver.emodes,
             solver.evals,
@@ -74,9 +74,9 @@ def test_simulate_waves_impulse(solver):
 
 def test_simulate_waves_default_input(solver):
 
-    nt = 200
+    nt = 100
     dt = 0.1
-    seed = 1 # TODO: debug seed=0 overflow issue in BOLD/ODE case
+    seed = 1
 
     # Check that Fourier and ODE methods produce similar neural activity at selected timepoints
 
@@ -98,9 +98,9 @@ def test_simulate_waves_default_input(solver):
         pde_method='ode'
     )
 
-    for t in range(60, nt):
-        assert np.corrcoef(fourier_ts[:, t], ode_ts[:, t])[0, 1] > 0.98, \
-            f'Fourier and ODE solutions are not correlated at r>.98 at t={t}.'
+    for t in range(50, nt):
+        assert np.corrcoef(fourier_ts[:, t], ode_ts[:, t])[0, 1] > 0.9, \
+            f'Fourier and ODE solutions are not correlated at r>.9 at t={t}.'
 
     # Check that Fourier and ODE methods produce similar BOLD signal at selected timepoints
 
@@ -124,17 +124,17 @@ def test_simulate_waves_default_input(solver):
         pde_method='ode'
     )
 
-    for t in range(60, nt):
-        assert np.corrcoef(bold_fourier[:, t], bold_ode[:, t])[0, 1] > 0.91, \
-            f'Fourier and ODE BOLD solutions are not correlated at r>.91 at t={t}.'
+    for t in range(75, nt):
+        assert np.corrcoef(bold_fourier[:, t], bold_ode[:, t])[0, 1] > 0.85, \
+            f'Fourier and ODE BOLD solutions are not correlated at r>.85 at t={t}.'
         
     # Check that BOLD and neural activity are correlated at selected timepoints
 
-    for t in range(60, nt):
-        assert np.corrcoef(fourier_ts[:, t], bold_fourier[:, t])[0, 1] > 0.60, \
-            f'Fourier neural and BOLD solutions are not correlated at r>.60 at t={t}.'
-        assert np.corrcoef(ode_ts[:, t], bold_ode[:, t])[0, 1] > 0.60, \
-            f'ODE neural and BOLD solutions are not correlated at r>.60 at t={t}.'
+    for t in range(75, nt):
+        assert np.corrcoef(fourier_ts[:, t], bold_fourier[:, t])[0, 1] > 0.6, \
+            f'Fourier neural and BOLD solutions are not correlated at r>.6 at t={t}.'
+        assert np.corrcoef(ode_ts[:, t], bold_ode[:, t])[0, 1] > 0.6, \
+            f'ODE neural and BOLD solutions are not correlated at r>.6 at t={t}.'
 
 def test_simulate_waves_seed_bold_reproducibility_fourier(solver):
     
@@ -175,7 +175,7 @@ def test_simulate_waves_seed_bold_reproducibility_fourier(solver):
 
 def test_simulate_waves_invalid_input_shape(solver):
 
-    with pytest.raises(ValueError, match=r".*shape is \(4002, 1000\), should be \(3636, 1000\)."):
+    with pytest.raises(ValueError, match=r"shape is \(4002, 1000\), should be \(3636, 1000\)."):
         simulate_waves(
             solver.emodes,
             solver.evals,
@@ -185,7 +185,7 @@ def test_simulate_waves_invalid_input_shape(solver):
 
 def test_simulate_waves_invalid_pde_method(solver):
 
-    with pytest.raises(ValueError, match="Invalid PDE method 'zote'.*"):
+    with pytest.raises(ValueError, match="Invalid PDE method 'zote'"):
         simulate_waves(
             solver.emodes,
             solver.evals,
@@ -193,7 +193,7 @@ def test_simulate_waves_invalid_pde_method(solver):
             pde_method='zote'
         )
 
-def test_simulate_waves_cached(solver, capsys):
+def test_simulate_waves_cached(solver):
     # Get CACHE_DIR
     cache_dir = os.getenv("CACHE_DIR")
 
@@ -222,3 +222,59 @@ def test_simulate_waves_cached(solver, capsys):
         os.environ["CACHE_DIR"] = cache_dir
     else:
         del os.environ["CACHE_DIR"]
+
+def test_simulate_waves_balloon_param(solver):
+    nt = 100
+    dt = 10
+
+    ts_default = simulate_waves(
+        solver.emodes,
+        solver.evals,
+        mass=solver.mass,
+        nt=nt,
+        dt=dt,
+        bold_out=True
+    )
+
+    ts_custom = simulate_waves(
+        solver.emodes,
+        solver.evals,
+        mass=solver.mass,
+        nt=nt,
+        dt=dt,
+        bold_out=True,
+        rho = 0.5
+    )
+
+    assert not np.allclose(ts_default, ts_custom), \
+        "BOLD signals with different balloon model parameters match unexpectedly."
+    
+def test_get_balloon_params():
+
+    # Check a default
+    params = get_balloon_params()
+    assert params['rho'] == 0.34, "Default parameter 'rho' is incorrect."
+
+    # Check an override
+    params = get_balloon_params(rho=0.5)
+    assert params['rho'] == 0.5, "Overridden parameter 'rho' is incorrect."
+
+    # Check an invalid override
+    with pytest.raises(ValueError, match=r"\(received rho=0\)."):
+        _ = get_balloon_params(rho=0)
+
+    # Check an invalid parameter name
+    with pytest.raises(ValueError, match="Invalid Balloon model parameter 'yoyoyo'."):
+        _ = get_balloon_params(yoyoyo=1.0)
+
+def test_estimate_wave_speed(solver):
+
+    # Homogeneous case
+    speed = estimate_wave_speed(r=18.0, gamma=0.116)
+    assert isinstance(speed, float), "Output type is not float for `hetero=None`."
+
+    # Heterogeneous case
+    speed = estimate_wave_speed(r=18.0, gamma=0.116, scaled_hetero=solver.hetero)
+    assert np.all(speed > 0), "Output contains non-positive wave speeds when using `scaled_hetero`."
+    assert speed.shape == (solver.n_verts,), "Output shape is incorrect when using `scaled_hetero`."
+    

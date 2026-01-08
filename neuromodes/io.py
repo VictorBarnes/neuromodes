@@ -3,16 +3,16 @@ Module for reading, validating, and manipulating surface meshes.
 """
 
 from __future__ import annotations
+from importlib.resources import files, as_file
 import os
-from trimesh import Trimesh
-import numpy as np
-from nibabel.gifti.gifti import GiftiImage
-from nibabel.loadsave import load
-from nibabel.freesurfer.io import read_geometry
 from pathlib import Path
 from typing import Union, Tuple, cast, TYPE_CHECKING
 from lapy import TriaMesh
-from importlib.resources import files, as_file
+from nibabel.freesurfer.io import read_geometry
+from nibabel.gifti.gifti import GiftiImage
+from nibabel.loadsave import load
+import numpy as np
+from trimesh import Trimesh
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray, ArrayLike
