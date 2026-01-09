@@ -45,11 +45,11 @@ def test_decompose_nan_inf_mode(solver):
     data = np.ones(solver.n_verts)
 
     emodes[0,0] = np.nan
-    with pytest.raises(ValueError, match="`emodes` contains NaNs or Infs."):
+    with pytest.raises(ValueError, match="array must not contain infs or NaNs"):
         decompose(data, emodes, mass=solver.mass)
 
     emodes[0,0] = np.inf
-    with pytest.raises(ValueError, match="`emodes` contains NaNs or Infs."):
+    with pytest.raises(ValueError, match="array must not contain infs or NaNs"):
         decompose(data, emodes, mass=solver.mass)
 
 def test_decompose_massless(solver):
@@ -59,7 +59,8 @@ def test_decompose_massless(solver):
 
 def test_decompose_invalid_method(solver):
 
-    with pytest.raises(ValueError, match="Invalid decomposition method 'fornitonian'"):
+    with pytest.raises(ValueError,
+                       match="Invalid `method` 'fornitonian'; must be 'project' or 'regress'."):
         decompose(np.ones(solver.n_verts), solver.emodes, method='fornitonian')
 
 @pytest.fixture
@@ -128,10 +129,10 @@ def test_reconstruct_mode_superposition_timeseries(solver, gen_eigenmap):
 
     # Treat eigenmaps as timepoints of activity
     fc_recon, correlation_error, _, _, _ = reconstruct_timeseries(
-        eigen_ts, solver.emodes, mass=solver.mass, method='regress', metric='correlation')
+        eigen_ts, solver.emodes, method='regress', metric='correlation')
 
-    _, euclidean_error, _, _, _ = reconstruct_timeseries(eigen_ts, solver.emodes, mass=solver.mass, 
-                            method='regress', metric='euclidean')
+    _, euclidean_error, _, _, _ = reconstruct_timeseries(
+        eigen_ts, solver.emodes, method='regress', metric='euclidean')
     mse = euclidean_error / fc.size  # Convert to MSE
     
     assert np.allclose(np.tanh(fc_recon[:,-1]), np.tanh(fc), atol=1e-5), \

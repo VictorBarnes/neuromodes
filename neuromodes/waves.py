@@ -29,7 +29,7 @@ def simulate_waves(
     scaled_hetero: Union[ArrayLike, None] = None,
     seed: Union[int, None] = None,
     cache_input: bool = False,
-    **kwargs
+    **balloon_params
 ) -> NDArray:
     """
     Simulate neural activity or BOLD signals on the surface mesh using the eigenmode decomposition.
@@ -44,43 +44,44 @@ def simulate_waves(
     evals : array-like
         The eigenvalues array of shape (n_modes,).
     nt : int, optional
-        Number of time points to simulate Default is 1000.
+        Number of time points to simulate Default is `1000`.
     bold_out : bool, optional
-        If True, simulate BOLD signal using the balloon model. If False, simulate neural activity.
-        Default is False.
+        If `True`, simulate BOLD signal using the balloon model. If `False`, simulate neural
+        activity. Default is `False`.
     ext_input : array-like, optional
-        External input array of shape (n_verts, n_timepoints). If None, random input is generated.
+        External input array of shape (n_verts, n_timepoints). If `None`, random input is generated.
+        Default is `None`.
     dt : float, optional
-        Time step for simulation in milliseconds. Default is 0.1.
+        Time step for simulation in milliseconds. Default is `0.1`.
     r : float, optional
-        Spatial length scale of wave propagation in millimeters. Default is 18.0.
+        Spatial length scale of wave propagation in millimeters. Default is `18.0`.
     gamma : float, optional
-        Damping rate of wave propagation in milliseconds^-1. Default is 0.116.
+        Damping rate of wave propagation in milliseconds^-1. Default is `0.116`.
     pde_method : str, optional
-        Method for solving the wave PDE. Either "fourier" or "ode". Default is "fourier".
+        Method for solving the wave PDE. Either `'fourier'` or `'ode'`. Default is `'fourier'`.
     decomp_method : str, optional
-        The method used for the eigendecomposition, either 'project' to project data into a
-        mass-orthonormal space or 'regress' for least-squares fitting. Note that the beta values
-        from 'regress' tend towards those from 'project' when more modes are provided. Default is
-        'project'.
+        The method used for the eigendecomposition, either `'project'` to project data into a
+        mass-orthonormal space or `'regress'` for least-squares fitting. Note that the beta values
+        from `'regress'` tend towards those from `'project'` when more modes are provided. Default
+        is `'project'`.
     mass : array-like, optional
         The mass matrix of shape (n_verts, n_verts) used for the decomposition when method is
-        'project'. If using EigenSolver, provide its self.mass. Default is None.
+        `'project'`. If using `EigenSolver`, provide its `self.mass`. Default is `None`.
     scaled_hetero : array-like, optional
         Scaled heterogeneity map of shape (n_verts,), used only to check whether wave speeds are
         physiologically plausible at each vertex. If not provided, wave speed is assumed to be
-        spatially uniform. To scale a heterogeneity map, use `neuromodes.eigen.scale_hetero`.
-        Default is None.
+        spatially uniform. To scale a heterogeneity map, use the `eigen.scale_hetero` function.
+        Default is `None`.
     seed : int, optional
-        Random seed for generating external input. Default is None.
+        Random seed for generating external input. Default is `None`.
     cache_input : bool, optional
-        If True and ext_input is None, cache the generated random input to avoid recomputation for 
-        the same values of `nt`, `seed`, and number of rows (vertices) in `emodes`. 
-        Inputs are cached in the directory specified by the CACHE_DIR environment variable. If not 
-        set, the home directory is used. Default is False.
-    **kwargs
-        Optional balloon model parameters to override defaults (e.g., kappa, tau, rho). 
-        See `get_balloon_params()` for available parameters. Only used when `bold_out=True`.
+        If `True` and `ext_input` is `None`, cache the generated random input to avoid
+        recomputation for the same values of `nt`, `seed`, and number of rows (vertices) in
+        `emodes`. Inputs are cached in the directory specified by the `CACHE_DIR` environment
+        variable. If not set, the user's home directory is chosen. Default is `False`.
+    **balloon_params
+        Optional balloon model parameters to override defaults (e.g., `rho`, `k1`). See
+        `get_balloon_params()` for available parameters. Only used when `bold_out=True`.
 
     Returns
     -------
@@ -99,12 +100,12 @@ def simulate_waves(
     system to reach a steady state.
     """
     # Format / validate inputs
-    emodes = np.asarray(emodes)
-    evals = np.asarray(evals)
+    emodes = np.asarray_chkfinite(emodes)
+    evals = np.asarray_chkfinite(evals)
     r = float(r)
     gamma = float(gamma)
     if mass is not None and not isinstance(mass, spmatrix):
-        mass = np.asarray(mass)
+        mass = np.asarray_chkfinite(mass)
     
     n_verts, n_modes = emodes.shape
     if r <= 0:
@@ -121,18 +122,16 @@ def simulate_waves(
     if np.any(estimate_wave_speed(r, gamma, scaled_hetero=scaled_hetero) > 150):
         warn("The combination of heterogeneity, r, and gamma may lead to non-physiological " \
                 "wave speeds (>150 m/s). Consider adjusting these parameters.")
-    if len(kwargs) > 0 and not bold_out:
+    if len(balloon_params) > 0 and not bold_out:
         warn("Balloon model parameters will be ignored as `bold_out` is False.")
     if pde_method not in ['fourier', 'ode']:
         raise ValueError(f"Invalid PDE method '{pde_method}'; must be 'fourier' or 'ode'.")
 
     if ext_input is not None:
-        ext_input = np.asarray(ext_input)
+        ext_input = np.asarray_chkfinite(ext_input)
         if ext_input.shape != (n_verts, nt):
-            raise ValueError(f"External input shape is {ext_input.shape}, should be ({n_verts}, "
+            raise ValueError(f"`ext_input` has shape {ext_input.shape}, should be ({n_verts}, "
                              f"{nt}).")
-        if np.isnan(ext_input).any() or np.isinf(ext_input).any():
-            raise ValueError("External input contains NaNs and/or Infs.")
 
         if seed is not None:
             warn("`seed` is ignored when `ext_input` is provided.")
@@ -141,10 +140,13 @@ def simulate_waves(
     else:
         # Use Gaussian white noise input if none provided
         if cache_input:
-            from neuromodes.io import _set_cache
+            if seed is None:
+                warn("`cache_input` is ignored when `seed` is None.")
+            else:
+                from neuromodes.io import _set_cache
 
-            memory = _set_cache()
-            gen_input = memory.cache(_gen_noise)
+                memory = _set_cache()
+                gen_input = memory.cache(_gen_noise)
         else:
             gen_input = _gen_noise
         
@@ -153,9 +155,9 @@ def simulate_waves(
     # ==========================================================================
     # Load extra parameters and precompute arrays if needed
     if bold_out:
-        balloon_params = get_balloon_params(**kwargs)
+        all_balloon_params = get_balloon_params(**balloon_params)
         if pde_method == 'fourier':
-            balloon_freq_response = _calc_balloon_freq_response(nt, dt, balloon_params)
+            balloon_freq_response = _calc_balloon_freq_response(nt, dt, all_balloon_params)
     if pde_method == 'ode':
         t = np.linspace(0, dt * (nt - 1), nt)
 
@@ -173,7 +175,7 @@ def simulate_waves(
             # Apply Balloon-Windkessel model
             mode_coeff = _model_balloon_fourier(mode_coeff, balloon_freq_response) \
                 if pde_method == "fourier" else \
-                    _model_balloon_ode(mode_coeff, t, balloon_params)
+                    _model_balloon_ode(mode_coeff, t, all_balloon_params)
 
         mode_coeffs[mode_ind, :] = mode_coeff
 
@@ -192,12 +194,13 @@ def estimate_wave_speed(
     Parameters
     ----------
     r : float
-        Axonal length scale for wave propagation.
+        Axonal length scale for wave propagation in millimeters.
     gamma : float
-        Damping parameter for wave propagation.
+        Damping parameter for wave propagation in milliseconds^-1.
     scaled_hetero : array-like, optional
-        Scaled heterogeneity map of shape (n_verts,). If None, wave speed is assumed to be spatially
-        uniform. To scale a heterogeneity map, use `neuromodes.eigen.scale_hetero`. Default is None.
+        Scaled heterogeneity map of shape (n_verts,). If `None`, wave speed is assumed to be
+        spatially uniform. To scale a heterogeneity map, use the `eigen.scale_hetero` function.
+        Default is `None`.
     
     Returns
     -------
@@ -295,15 +298,15 @@ def _model_wave_ode(
     Parameters
     ----------
     input_coeff : np.ndarray
-        Input drive to the system with the same length as t (written as qj in equation below).
+        Input drive to the system with the same length as `t` (written as `qj` in equation below).
     t : np.ndarray
         Time points (must be increasing).
     gamma : float
-        Damping coefficient.
+        Damping coefficient in milliseconds^-1.
     r : float
-        Spatial length scale.
+        Spatial length scale in millimeters.
     eval : float
-        Eigenvalue for the j-th mode (written as lambdaj in equation below).
+        Eigenvalue for the j-th mode (written as `lambdaj` in equation below).
 
     Returns
     -------
@@ -350,7 +353,7 @@ def _model_wave_ode(
 
 def get_balloon_params(**overrides) -> dict:
     """
-    Return balloon model parameters with optional overrides; derived terms filled if absent.
+    Return balloon model parameters with optional overrides.
     
     Parameters
     ----------
@@ -361,15 +364,15 @@ def get_balloon_params(**overrides) -> dict:
     -------
     dict
         Balloon model parameters.
-        - `kappa`: Signal decay rate [s^-1]. Default is 0.65.
-        - `gamma_h`: Rate of elimination [s^-1]. Default is 0.41.
-        - `tau`: Hemodynamic transit time [s]. Default is 0.98.
-        - `alpha`: Grubb's exponent [unitless]. Default is 0.32.
-        - `rho`: Resting oxygen extraction fraction [unitless]. Default is 0.34.
-        - `V_0`: Resting blood volume fraction [unitless]. Default is 0.02.
-        - `w_f`: Frequency of blood flow response [Hz]. Default is 0.56.
-        - `k1`, `k2`, `k3`: Coefficients for BOLD signal equation [unitless]. Defaults are 3.72,
-        0.527, and 0.48, respectively.
+        - `kappa`: Signal decay rate [s^-1]. Default is `0.65`.
+        - `gamma_h`: Rate of elimination [s^-1]. Default is `0.41`.
+        - `tau`: Hemodynamic transit time [s]. Default is `0.98`.
+        - `alpha`: Grubb's exponent [unitless]. Default is `0.32`.
+        - `rho`: Resting oxygen extraction fraction [unitless]. Default is `0.34`.
+        - `V_0`: Resting blood volume fraction [unitless]. Default is `0.02`.
+        - `w_f`: Frequency of blood flow response [Hz]. Default is `0.56`.
+        - `k1`, `k2`, `k3`: Coefficients for BOLD signal equation [unitless]. Defaults are `3.72`,
+        `0.527`, and `0.48`, respectively.
     
     Raises
     ------
@@ -392,12 +395,12 @@ def get_balloon_params(**overrides) -> dict:
     }
 
     # Validate and apply overrides
-    for param in overrides:
+    for param, value in overrides.items():
         if param not in params:
             raise ValueError(f"Invalid Balloon model parameter '{param}'.")
-        if overrides[param] <= 0:
-            raise ValueError("All Balloon model parameters must be positive (received "
-                                f"{param}={overrides[param]}).")
+        if value <= 0 or np.isnan(value) or np.isinf(value):
+            raise ValueError("All Balloon model parameters must be positive and finite (received "
+                             f"{param}={value}).")
 
     params.update(overrides)
 
@@ -469,11 +472,11 @@ def _model_balloon_ode(
     ----------
     activity_coeff : np.ndarray
         Array of mode coefficients representing the input signal to the model (neural activity, same 
-        length as t).
+        length as `t`).
     t : np.ndarray
-        Array of time points (must be increasing, same length as activity_coeff).
+        Array of time points (must be increasing, same length as `activity_coeff`).
     params: dict
-        Balloon model parameters. See `get_balloon_params()` for default parameters.
+        Balloon model parameters. See the `get_balloon_params` function for default parameters.
 
     Returns
     -------
@@ -506,6 +509,7 @@ def _model_balloon_ode(
     # Initial conditions for [s, f, v, q]
     y0 = [0.0, 1.0, 1.0, 1.0]
 
+    # Solve ODEs
     sol = solve_ivp(
         balloon_rhs,
         t_span=(t[0], t[-1]),
@@ -515,12 +519,10 @@ def _model_balloon_ode(
         rtol=1e-6,
         atol=1e-9
     )
-
     _, _, v, q = sol.y
-    # BOLD signal (standard formula)
-    bold = V_0 * (k1 * (1 - q) + k2 * (1 - q / v) + k3 * (1 - v))
-    
-    return bold
+
+    # Apply standard BOLD signal equation
+    return V_0 * (k1 * (1 - q) + k2 * (1 - q / v) + k3 * (1 - v))
 
 def _calc_balloon_freq_response(
     nt: int,
@@ -537,7 +539,7 @@ def _calc_balloon_freq_response(
     dt : float
         Time step in milliseconds.
     params : dict
-        Balloon model parameters. See `get_balloon_params()` for default parameters.
+        Balloon model parameters. See the `get_balloon_params` function for default parameters.
     
     Returns
     -------

@@ -175,7 +175,7 @@ def test_simulate_waves_seed_bold_reproducibility_fourier(solver):
 
 def test_simulate_waves_invalid_input_shape(solver):
 
-    with pytest.raises(ValueError, match=r"shape is \(4002, 1000\), should be \(3636, 1000\)."):
+    with pytest.raises(ValueError, match=r"shape \(4002, 1000\), should be \(3636, 1000\)."):
         simulate_waves(
             solver.emodes,
             solver.evals,
@@ -198,30 +198,31 @@ def test_simulate_waves_cached(solver):
     cache_dir = os.getenv("CACHE_DIR")
 
     # Test with temporary directory
-    with TemporaryDirectory() as temp_cache_dir:
-        os.environ["CACHE_DIR"] = temp_cache_dir
-        _ = simulate_waves(
-            solver.emodes,
-            solver.evals,
-            mass=solver.mass,
-            nt=10,
-            cache_input=True
-        )
+    try:
+        with TemporaryDirectory() as temp_cache_dir:
+            os.environ["CACHE_DIR"] = temp_cache_dir
+            _ = simulate_waves(
+                solver.emodes,
+                solver.evals,
+                mass=solver.mass,
+                nt=10,
+                cache_input=True,
+                seed=0
+            )
 
-        # Check that the temp_cache_dir/neuromodes/waves subdirectory exists
-        cache_dir_waves = os.path.join(
-            temp_cache_dir,
-            "neuromodes",
-            "waves"
-        )
-        assert os.path.exists(cache_dir_waves), "Waves cache directory was not created."
-
-
-    # Restore original CACHE_DIR
-    if cache_dir is not None:
-        os.environ["CACHE_DIR"] = cache_dir
-    else:
-        del os.environ["CACHE_DIR"]
+            # Check that the temp_cache_dir/neuromodes/waves subdirectory exists
+            cache_dir_waves = os.path.join(
+                temp_cache_dir,
+                "neuromodes",
+                "waves"
+            )
+            assert os.path.exists(cache_dir_waves), "Waves cache directory was not created."
+    finally:
+        # Restore original CACHE_DIR
+        if cache_dir is not None:
+            os.environ["CACHE_DIR"] = cache_dir
+        else:
+            del os.environ["CACHE_DIR"]
 
 def test_simulate_waves_balloon_param(solver):
     nt = 100

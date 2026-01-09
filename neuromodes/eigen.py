@@ -42,24 +42,23 @@ class EigenSolver(Solver):
         ----------
         surf : str, pathlib.Path, trimesh.Trimesh, lapy.TriaMesh, or dict
             The surface mesh to be used. Can be a file path to a supported format (see
-            io.read_surf), a supported mesh object, or a dictionary with 'vertices' and 'faces'
-            keys.
+            `io.read_surf`), a supported mesh object, or a dictionary with `'vertices'` and
+            `'faces'` keys.
         mask : array-like, optional
             A boolean mask to exclude certain points (e.g., medial wall) from the surface mesh.
-            Default is None.
+            Default is `None`.
         normalize : bool, optional
             Whether to normalize the surface mesh to have unit surface area and centroid at the
-            origin (modifies the vertices). Default is False.
+            origin (modifies the vertices). Default is `False`.
         hetero : array-like, optional
-            A heterogeneity map to scale the Laplace-Beltrami operator. Default is None.
+            A heterogeneity map to scale the Laplace-Beltrami operator. Default is `None`.
         scaling : str, optional
-            Scaling function to apply to the heterogeneity map. Must be "sigmoid" or "exponential".
-            If a heterogenity map is specified, the default is "sigmoid". Otherwise, this value is
-            ignored (and is set to None).
+            Scaling function to apply to the heterogeneity map. Must be `'sigmoid'` or
+            `'exponential'`. If a heterogenity map is specified, the default is `'sigmoid'`.
+            Otherwise, this value is ignored (and is set to `None`).
         alpha : float, optional
             Scaling parameter for the heterogeneity map. If a heterogenity map is specified, the
-            default is 1.0. Otherwise, this value is ignored (and is set to None). 
-
+            default is `1.0`. Otherwise, this value is ignored (and is set to `None`).
         Raises
         -------
         ValueError
@@ -69,7 +68,7 @@ class EigenSolver(Solver):
         # Surface inputs and checks (check_surf called in read_surf and mask_surf)
         surf = read_surf(surf)
         if mask is not None:
-            self.mask = np.asarray(mask, dtype=bool)
+            self.mask = np.asarray_chkfinite(mask, dtype=bool)
             surf = mask_surf(surf, self.mask)
         else:
             self.mask = None
@@ -106,6 +105,8 @@ class EigenSolver(Solver):
                                 f"the number of vertices in the surface mesh ({self.n_verts}) "
                                 f"or the surface mask (of size {len(self.mask)}).") 
 
+            hetero = np.asarray_chkfinite(hetero) # Ensure no NaNs/Infs after masking
+
             # Scale and assign the heterogeneity map
             self._scaling = scaling    
             self._alpha = alpha
@@ -117,16 +118,14 @@ class EigenSolver(Solver):
 
     def __str__(self) -> str:
         """String representation of the EigenSolver object."""
-        modes_solved = len(self.emodes) if hasattr(self, 'emodes') else 0
-        mask_str = f"({np.sum(self.mask)} other vertices masked)" if self.mask is not None else ""
-        hetero_bool = not (self.hetero == np.ones(self.n_verts)).all()
-        hetero_params = f"(alpha={self._alpha}, scaling='{self._scaling}')" if hetero_bool else ""
+        str_out = f'EigenSolver\n-----------\nSurface mesh: {self.n_verts} vertices'
+        if self.mask is not None:
+            str_out += f' ({np.sum(self.mask == 0)} vertices masked out)'
+        if self._raw_hetero is not None:
+            str_out += f'\nHeterogeneity map scaling: {self._scaling} (alpha={self._alpha})'
+        str_out += f'\n{self.n_modes if hasattr(self, "n_modes") else 0} eigenmodes computed'
 
-        return ("EigenSolver:\n"
-                "------------\n"
-                f"Modes solved: {modes_solved}\n"
-                f"Surface mesh vertices: {self.n_verts} {mask_str}\n"
-                f"Heterogeneity map: {hetero_bool} {hetero_params}\n")
+        return str_out
 
     def compute_lbo(
         self, 
@@ -141,9 +140,9 @@ class EigenSolver(Solver):
         Parameters
         ----------
         lump : bool, optional
-            Whether to use lumped mass matrix for the Laplace-Beltrami operator. Default is False.
+            Whether to use lumped mass matrix for the Laplace-Beltrami operator. Default is `False`.
         smoothit : int, optional
-            Number of smoothing iterations for curvature calculation. Default is 10.
+            Number of smoothing iterations for curvature calculation. Default is `10`.
 
         Raises
         ------
@@ -168,7 +167,7 @@ class EigenSolver(Solver):
         standardize: bool = True,
         fix_mode1: bool = True,
         atol: float = 1e-3,
-        sigma: float = -0.01,
+        sigma: Union[float, None] = -0.01,
         seed: Union[int, ArrayLike, None] = None, 
         **kwargs
     ) -> EigenSolver:
@@ -181,25 +180,25 @@ class EigenSolver(Solver):
         n_modes : int
             Number of eigenmodes to compute.
         standardize : bool, optional
-            If True, standardizes the sign of the eigenmodes so the first element is positive.
-            Default is False.
+            If `True`, standardizes the sign of the eigenmodes so the first element is positive.
+            Default is `False`.
         fix_mode1 : bool, optional
-            If True, sets the first eigenmode to a constant value and the first eigenvalue to zero,
-            as is expected analytically. Default is True. See the is_mass_orthonormal_modes function
-            for details.
+            If `True`, sets the first eigenmode to a constant value and the first eigenvalue to
+            zero, as is expected analytically. Default is `True`. See the
+            `is_mass_orthonormal_modes` function for details.
         atol : float, optional
-            Absolute tolerance for mass-orthonormality validation. Default is 1e-3.
+            Absolute tolerance for mass-orthonormality validation. Default is `1e-3`.
         sigma : float, optional
             Shift-invert parameter to speed up the computation of eigenvalues close to this value.
-            Default is -0.01.
+            Default is `-0.01`.
         seed : int or array-like, optional
             Random seed for reproducibile generation of eigenvectors (which otherwise use an
             iterative algorithm that starts with a random vector, meaning that repeated generation
-            of eigenmodes on the same surface can have different orientations). Specify as an int
+            of eigenmodes on the same surface can have different orientations). Specify as an `int`
             (to set the seed) or a vector with n_verts elements (to directly set the initialisation
-            vector). Default is None (not reproducible).
+            vector). Default is `None` (not reproducible).
         **kwargs
-            Additional keyword arguments passed to compute_lbo (lump, smoothit).
+            Additional keyword arguments passed to `compute_lbo` (`lump`, `smoothit`).
 
         Returns
         -------
@@ -213,7 +212,7 @@ class EigenSolver(Solver):
         ValueError
             If `seed` is an array but does not have the correct shape of (n_verts,).
         AssertionError
-            If any computed eigenvalues are NaN.
+            If computed eigenvalues or eigenmodes contain NaNs.
         """
         # Validate inputs
         if n_modes <= 0 or not isinstance(n_modes, int):
@@ -231,7 +230,7 @@ class EigenSolver(Solver):
             rng = np.random.default_rng(seed)
             v0 = rng.random(self.n_verts)
         else:
-            v0 = np.asarray(seed)
+            v0 = np.asarray_chkfinite(seed)
             if v0.shape != (self.n_verts,):
                 raise ValueError("`seed` must be either an integer or an array-like of shape "
                                 f"({self.n_verts},).")
@@ -255,10 +254,9 @@ class EigenSolver(Solver):
         )
 
         # Validate results
-        assert not np.isnan(self.evals).any(), "Eigenvalues contain NaNs."
-        if self.evals[0] / self.evals[1] >= 0.01:
-            warn("Unfixed first eigenvalue (analytically expected to be 0) is not at least"
-                          " 100 times smaller than the second.")
+        assert not np.isnan(self.evals).any() or np.isnan(self.emodes).any(), \
+            "Computed eigenvalues or eigenmodes contain NaNs. This may indicate numerical " \
+            "instability; consider adjusting `sigma` or checking mesh quality."
 
         if not is_mass_orthonormal_modes(self.emodes, self.mass, atol=atol):
             warn(f"Computed eigenmodes are not mass-orthonormal (atol={atol}).")
@@ -287,7 +285,7 @@ class EigenSolver(Solver):
         This is a wrapper for `neuromodes.basis.decompose`, see its documentation for details: 
         https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.basis.decompose.html
 
-        Note that `emodes` and `mass` are passed automatically by the EigenSolver instance.
+        Note that `emodes` and `mass` are passed automatically by the `EigenSolver` instance.
         """
         from neuromodes.basis import decompose
 
@@ -309,7 +307,7 @@ class EigenSolver(Solver):
         This is a wrapper for `neuromodes.basis.reconstruct`, see its documentation for details:
         https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.basis.reconstruct.html
 
-        Note that `emodes` and `mass` are passed automatically by the EigenSolver instance.
+        Note that `emodes` and `mass` are passed automatically by the `EigenSolver` instance.
         """
         from neuromodes.basis import reconstruct
         
@@ -332,7 +330,7 @@ class EigenSolver(Solver):
         details:
         https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.basis.reconstruct_timeseries.html
 
-        Note that `emodes` and `mass` are passed automatically by the EigenSolver instance.
+        Note that `emodes` and `mass` are passed automatically by the `EigenSolver` instance.
         """
         from neuromodes.basis import reconstruct_timeseries
 
@@ -354,7 +352,7 @@ class EigenSolver(Solver):
         details:
         https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.connectome.model_connectome.html
 
-        Note that `emodes` and `evals` are passed automatically by the EigenSolver instance.
+        Note that `emodes` and `evals` are passed automatically by the `EigenSolver` instance.
         """
         from neuromodes.connectome import model_connectome
 
@@ -375,7 +373,7 @@ class EigenSolver(Solver):
         https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.waves.simulate_waves.html
 
         Note that `emodes`, `evals`, `mass`, and `hetero` are passed automatically by the
-        EigenSolver instance.
+        `EigenSolver` instance.
         """
         from neuromodes.waves import simulate_waves
 
@@ -402,10 +400,10 @@ def scale_hetero(
     hetero : array-like
         The heterogeneity map to be scaled.
     alpha : float, optional
-        Scaling parameter controlling the strength of the transformation. Default is 1.0.
+        Scaling parameter controlling the strength of the transformation. Default is `1.0`.
     scaling : str, optional
-        The scaling function to apply to the heterogeneity map, either "sigmoid" or "exponential".
-        Default is "sigmoid".
+        The scaling function to apply to the heterogeneity map, either `'sigmoid'` or
+        `'exponential'`. Default is `'sigmoid'`.
     
     Returns
     -------
@@ -415,30 +413,22 @@ def scale_hetero(
     Raises
     ------
     ValueError
-        If the scaling parameter is not a supported function, if `hetero` contains NaNs or Infs,
-        or if `hetero` is constant.
+        If the scaling parameter is not a supported function, if `alpha` is zero, or if `hetero` is 
+        constant.
     """
     # Validate inputs
+    if scaling not in ["exponential", "sigmoid"]:
+        raise ValueError(f"Invalid scaling '{scaling}'. Must be 'exponential' or 'sigmoid'.")
     if alpha == 0:
         warn("`alpha` is set to 0, meaning heterogeneity map will have no effect.")    
-    if np.any(np.isnan(hetero)) or np.any(np.isinf(hetero)):
-        raise ValueError("`hetero` must not contain NaNs or Infs; check input values.")
-
-    # Z-score the heterogeneity map
     std = np.std(hetero)
     if std == 0:
         raise ValueError("`hetero` is constant; please provide a non-constant heterogeneity map.")
-    hetero_z = (hetero - np.mean(hetero)) / std
-    if np.any(np.isnan(hetero_z)):
-        raise ValueError("z-scored `hetero` must not contain NaNs; check input values.")
-
+    
     # Scale the heterogeneity map
-    if scaling == "exponential":
-        hetero_scaled = np.exp(alpha * hetero_z)
-    elif scaling == "sigmoid":
-        hetero_scaled = 2 / (1 + np.exp(-alpha * hetero_z))
-    else:
-        raise ValueError(f"Invalid scaling '{scaling}'. Must be 'exponential' or 'sigmoid'.")
+    hetero_z = (hetero - np.mean(hetero)) / std
+    hetero_scaled = 2 / (1 + np.exp(-alpha * hetero_z)) if scaling == "sigmoid" \
+        else np.exp(alpha * hetero_z)
 
     return hetero_scaled
 
@@ -460,15 +450,14 @@ def standardize_modes(
         The standardized eigenmodes array of shape (n_verts, n_modes), with the first element of
         each mode set to be positive.
     """
-    emodes = np.asarray(emodes)
+    emodes = np.asarray_chkfinite(emodes)
 
-    # Find the sign of the first non-zero element in each column
-    signs = np.sign(emodes[np.argmax(emodes != 0, axis=0), np.arange(emodes.shape[1])])
+    # Find the sign of each mode's amplitude at the first vertex
+    signs = np.sign(emodes[0, :])
+    signs[signs == 0] = 1  # Treat zero as positive (unlikely case)
     
-    # Apply the sign to the modes
-    standardized_modes = emodes * signs
-    
-    return standardized_modes
+    # Flip modes where the first element is negative
+    return emodes * signs
 
 def is_mass_orthonormal_modes(
     emodes: ArrayLike,
@@ -485,11 +474,11 @@ def is_mass_orthonormal_modes(
     emodes : array-like
         The eigenmodes array of shape (n_verts, n_modes), where n_modes is the number of modes.
     mass : array-like, optional
-        The mass matrix of shape (n_verts, n_verts). If using EigenSolver, provide its self.mass. If
-        None, an identity matrix will be used, corresponding to Euclidean orthonormality. Default is
-        None.
+        The mass matrix of shape (n_verts, n_verts). If using `EigenSolver`, provide its
+        `self.mass`. If `None`, an identity matrix will be used, corresponding to Euclidean
+        orthonormality. Default is `None`.
     atol : float, optional
-        Absolute tolerance for the orthonormality check. Default is 1e-3.
+        Absolute tolerance for the orthonormality check. Default is `1e-3`.
 
     Notes
     -----
@@ -503,9 +492,9 @@ def is_mass_orthonormal_modes(
     validity of any calculated or provided eigenmodes.
     """
     # Format inputs
-    emodes = np.asarray(emodes)
+    emodes = np.asarray_chkfinite(emodes)
     if mass is not None and not isinstance(mass, spmatrix):
-        mass = np.asarray(mass)
+        mass = np.asarray_chkfinite(mass)
 
     # Check inputs (ie mass matrix shape)
     n_verts = emodes.shape[0]

@@ -3,7 +3,7 @@ from lapy import TriaMesh
 import numpy as np
 import pytest
 from neuromodes.eigen import EigenSolver, is_mass_orthonormal_modes, scale_hetero
-from neuromodes.io import fetch_surf, mask_surf
+from neuromodes.io import fetch_surf, fetch_map, mask_surf
 
 @pytest.fixture
 def surf_medmask_hetero():
@@ -69,11 +69,11 @@ def test_invalid_hetero_shape(surf_medmask_hetero):
 def test_nan_inf_hetero(surf_medmask_hetero):
     surf, _, hetero = surf_medmask_hetero
     hetero[0] = np.nan
-    with pytest.raises(ValueError, match="`hetero` must not contain NaNs or Infs."):
+    with pytest.raises(ValueError, match="array must not contain infs or NaNs"):
         EigenSolver(surf, hetero=hetero)
 
     hetero[0] = np.inf
-    with pytest.raises(ValueError, match="`hetero` must not contain NaNs or Infs."):
+    with pytest.raises(ValueError, match="array must not contain infs or NaNs"):
         EigenSolver(surf, hetero=hetero)
 
 def test_constant_hetero(surf_medmask_hetero):
@@ -88,10 +88,10 @@ def test_nan_inf_hetero_medmask(surf_medmask_hetero):
     cortical_vertex = np.where(medmask)[0][0]
     print(cortical_vertex)
     hetero[cortical_vertex] = np.nan
-    with pytest.raises(ValueError, match="`hetero` must not contain NaNs or Infs."):
+    with pytest.raises(ValueError, match="array must not contain infs or NaNs"):
         EigenSolver(surf, hetero=hetero)
     hetero[cortical_vertex] = np.inf
-    with pytest.raises(ValueError, match="`hetero` must not contain NaNs or Infs."):
+    with pytest.raises(ValueError, match="array must not contain infs or NaNs"):
         EigenSolver(surf, hetero=hetero)
 
 def test_nan_inf_hetero_medmask_ignored(surf_medmask_hetero):
@@ -103,6 +103,12 @@ def test_nan_inf_hetero_medmask_ignored(surf_medmask_hetero):
     EigenSolver(surf, mask=medmask, hetero=hetero)
     hetero[medial_vertex] = np.inf  
     EigenSolver(surf, mask=medmask, hetero=hetero)
+
+def test_real_heteromaps(surf_medmask_hetero):
+    mesh, medmask = fetch_surf() # 32k density to match real maps
+    for map in ['fcgradient1', 'myelinmap', 'ndi', 'odi', 'thickness']:
+        hetero = fetch_map(map)
+        EigenSolver(mesh, mask=medmask, hetero=hetero) # just test that it initializes without error
 
 @pytest.fixture
 def presolver(surf_medmask_hetero):
@@ -173,18 +179,18 @@ def test_invalid_vector_seed(presolver):
 
 @pytest.fixture
 def solver(presolver):
-    presolver.solve(n_modes=16)
+    presolver.solve(n_modes=16, seed=0)
     return presolver
 
 def test_nonstandard_modes(solver):
     emodes = solver.emodes
-    emodes_nonstd = solver.solve(solver.n_modes, standardize=False).emodes
+    emodes_nonstd = solver.solve(solver.n_modes, standardize=False, seed=0).emodes
     
     assert not np.all(emodes_nonstd[0, :] >= 0), \
         'Non-standardized first vertex should have both positive and negative values.'
     assert np.all(emodes[0, :] >= 0), 'Standardized first vertex has negative values.'
-    assert np.allclose(abs(emodes), abs(emodes_nonstd),
-                       atol=1e-6), 'Non-standardized modes do not match standardized modes.'
+    assert (abs(emodes) == abs(emodes_nonstd)).all(), \
+    'Non-standardized modes do not match standardized modes.'
 
 def test_solve_lumped_mass(solver, surf_medmask_hetero):
     emodes = solver.emodes

@@ -27,9 +27,9 @@ def model_connectome(
     evals : array-like
         The eigenvalues array of shape (n_modes,).
     r : float, optional
-        Spatial scale parameter for the Green's function. Default is 9.53.
+        Spatial scale parameter for the Green's function, in millimeters. Default is `9.53`.
     k : int, optional
-        Number of eigenmodes to use. Default is 108.
+        Number of eigenmodes to use. Default is `108`.
 
     Returns
     -------
@@ -47,14 +47,14 @@ def model_connectome(
     If comparing this model to empirical connectomes, consider thresholding the generated connectome
     to match the density of the empirical data.
     """
-    emodes = np.asarray(emodes)
-    evals = np.asarray(evals)
+    emodes = np.asarray_chkfinite(emodes)
+    evals = np.asarray_chkfinite(evals)
     r = float(r)
 
     if r <= 0:
         raise ValueError("Parameter `r` must be positive.")
     if emodes.ndim != 2:
-        raise ValueError("`emodes` must be a 2D array (vertices x modes).")
+        raise ValueError("`emodes` must be a 2D array of shape (n_verts, n_modes).")
     if evals.shape != (emodes.shape[1],):
         raise ValueError("`evals` must be a 1-dimensional array with length matching the number of "
                          "modes (columns) in `emodes`.")

@@ -27,8 +27,8 @@ def read_surf(
     mesh : str, Path, trimesh.Trimesh, lapy.TriaMesh, or dict
         Surface mesh specified as a file path (string or Path) to a VTK (.vtk), GIFTI (.gii), or
         FreeSurfer file (.white, .pial, .inflated, .orig, .sphere, .smoothwm, .qsphere, .fsaverage),
-        an instance of trimesh.Trimesh or lapy.TriaMesh, or a dictionary with "vertices" and "faces"
-        keys.
+        an instance of `trimesh.Trimesh` or `lapy.TriaMesh`, or a dictionary with `vertices` and
+        `faces` keys.
 
     Returns
     -------
@@ -57,14 +57,16 @@ def read_surf(
         elif mesh_str.endswith(
             ('white', 'pial', 'inflated', 'orig', 'sphere', 'smoothwm', 'qsphere', 'fsaverage')
             ):
-            vertices, faces = read_geometry(mesh_str, read_metadata=False, read_stamp=False) # will only return two outputs now # type: ignore
+            vertices, faces = read_geometry(
+                mesh_str, read_metadata=False, read_stamp=False
+                ) # will only return two outputs now # type: ignore
             trimesh = Trimesh(vertices=vertices, faces=faces) # type: ignore
         else:
             raise ValueError(
                 '`surf` must be a path-like string to a valid VTK (.vtk), GIFTI (.gii), or '
                 'FreeSurfer file (.white, .pial, .inflated, .orig, .sphere, .smoothwm, .qsphere, '
-                '.fsaverage), an instance of trimesh.Trimesh or lapy.TriaMesh, or a dictionary of '
-                '"faces" and "vertices".'
+                '.fsaverage), an instance of `trimesh.Trimesh` or `lapy.TriaMesh`, or a dictionary '
+                'of `faces` and `vertices`.'
                 )
     
     # Validate the mesh before returning
@@ -77,7 +79,7 @@ def mask_surf(
     mask: ArrayLike
 ) -> Trimesh:
     """Remove specified vertices and corresponding faces from the surface mesh. Returns a validated 
-    trimesh.Trimesh object."""
+    `trimesh.Trimesh` object."""
     mask = np.asarray(mask, dtype=bool)
 
     if len(mask) != surf.vertices.shape[0]:
@@ -118,7 +120,38 @@ def fetch_surf(
     density: str = '32k',
     hemi: str = 'L'
 ) -> Tuple[Trimesh, NDArray]:
-    """Load cortical surface mesh and medial wall mask from neuromodes data directory."""
+    """
+    Load a cortical triangular surface mesh and medial wall mask from neuromodes data directory. For
+    a list of available surfaces, see
+    https://github.com/NSBLab/neuromodes/tree/main/neuromodes/data/included_data.csv.
+
+    Parameters
+    ----------
+    surf : str, optional
+        Surface type to load. Currently only supports `'midthickness'`. Default is `'midthickness'`.
+    species : str, optional
+        Species of the surface mesh. Options include `'human'`, `'macaque'`, and `'marmoset'`.
+        Default is `'human'`.
+    template : str, optional
+        Template of the surface mesh. Currently only supports `'fsLR'`. Default is `'fsLR'`.
+    density : str, optional
+        Density of the surface mesh. Options include `'32k'` for all species, and `'4k'` for human.
+        Default is `'32k'`.
+    hemi : str, optional
+        Hemisphere of the surface mesh. Options are `'L'` for all species, and `'R'` for human.
+        Default is `'L'`.
+    Returns
+    -------
+    mesh : trimesh.Trimesh
+        The loaded surface mesh.
+    medmask : np.ndarray
+        The medial wall mask as a boolean array.
+
+    Raises
+    ------
+    ValueError
+        If the specified surface data is not found in the neuromodes data directory.
+    """
     data_dir = files('neuromodes.data')
     meshname = f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_{surf}.surf.gii'
     maskname = f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_medmask.label.gii'
@@ -133,8 +166,8 @@ def fetch_surf(
     except Exception as e:
         raise ValueError(
             f"Surface data not found. Please see {data_dir}/included_data.csv or "
-            "https://github.com/NSBLab/neuromodes/tree/main/neuromodes/data/included_data.csv for a "
-            "list of available surfaces."
+            "https://github.com/NSBLab/neuromodes/tree/main/neuromodes/data/included_data.csv for a"
+            " list of available surfaces."
             ) from e
 
 def fetch_map(
@@ -144,7 +177,33 @@ def fetch_map(
     density: str = '32k',
     hemi: str = 'L'
 ) -> NDArray:
-    """Load data from neuromodes data directory."""
+    """
+    Load cortical surface data from neuromodes data directory. For a list of available maps, see
+    https://github.com/NSBLab/neuromodes/tree/main/neuromodes/data/included_data.csv.
+
+    Parameters
+    ----------
+    data : str
+        Cortical map to load. Options include `'fcgradient1'`, `'myelinmap'`, `'ndi'`, `'odi'`, and
+        `'thickness'`.
+    species : str, optional
+        Species of the surface mesh. Currently only supports `'human'`. Default is `'human'`.
+    template : str, optional
+        Template of the surface mesh. Currently only supports `'fsLR'`. Default is `'fsLR'`.
+    density : str, optional
+        Density of the surface mesh. Currently only supports `'32k'`. Default is `'32k'`.
+    hemi : str, optional
+        Hemisphere of the surface mesh. Currently only supports `'L'`. Default is `'L'`.
+    Returns
+    -------
+    np.ndarray
+        The loaded cortical map data.
+
+    Raises
+    ------
+    ValueError
+        If the specified map data is not found in the neuromodes data directory.
+    """
     data_dir = files('neuromodes.data')
     filename = f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_{data}.func.gii'
 
@@ -155,8 +214,8 @@ def fetch_map(
     except Exception as e:
         raise ValueError(
             f"Map '{filename}' not found. Please see {data_dir}/included_data.csv or "
-            "https://github.com/NSBLab/neuromodes/tree/main/neuromodes/data/included_data.csv for a "
-            "list of available data files."
+            "https://github.com/NSBLab/neuromodes/tree/main/neuromodes/data/included_data.csv for a"
+            " list of available data files."
         ) from e
 
 def _set_cache():
@@ -174,7 +233,7 @@ def _set_cache():
     if CACHE_DIR is None:
         CACHE_DIR = Path.home() / ".neuromodes_cache"
         print(f"Using default cache directory at {CACHE_DIR}. To cache elsewhere, set the CACHE_DIR"
-              " environment variable.")
+              " environment variable beforehand.")
     else:
         CACHE_DIR = Path(CACHE_DIR)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
