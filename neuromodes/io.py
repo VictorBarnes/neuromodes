@@ -1,7 +1,6 @@
 """Module for reading, validating, and manipulating surface meshes."""
 
 import os
-from joblib import Memory
 from trimesh import Trimesh
 import numpy as np
 from nibabel.gifti.gifti import GiftiImage
@@ -164,5 +163,6 @@ def _set_cache():
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         print(f"Using default cache directory at {CACHE_DIR}. To cache elsewhere, set the CACHE_DIR"
               " environment variable.")
+
 
     return Memory(CACHE_DIR, verbose=0)
