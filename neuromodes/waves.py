@@ -20,13 +20,15 @@ def simulate_waves(
     nt: int = 1000,
     bold_out: bool = False,
     ext_input: Union[ArrayLike, None] = None,
-    dt: float = 0.1,
+    dt: float = 1e-4,
     r: float = 18.0,
-    gamma: float = 0.116,
+    gamma: float = 116.0,
     pde_method: str = "fourier",
     decomp_method: str = "project",
-    mass: Union[ArrayLike, spmatrix, None] = None,
+    mass: Union[spmatrix, ArrayLike, None] = None,
+    speed_limits: Union[tuple[float, float], None] = (0, 150),
     scaled_hetero: Union[ArrayLike, None] = None,
+    check_ortho: bool = True,
     seed: Union[int, None] = None,
     cache_input: bool = False,
     **balloon_params
@@ -52,11 +54,11 @@ def simulate_waves(
         External input array of shape (n_verts, n_timepoints). If `None`, random input is generated.
         Default is `None`.
     dt : float, optional
-        Time step for simulation in milliseconds. Default is `0.1`.
+        Time step for simulation in seconds. Default is `1e-4`.
     r : float, optional
         Spatial length scale of wave propagation in millimeters. Default is `18.0`.
     gamma : float, optional
-        Damping rate of wave propagation in milliseconds^-1. Default is `0.116`.
+        Damping rate of wave propagation in seconds^-1. Default is `116.0`.
     pde_method : str, optional
         Method for solving the wave PDE. Either `'fourier'` or `'ode'`. Default is `'fourier'`.
     decomp_method : str, optional
@@ -67,11 +69,17 @@ def simulate_waves(
     mass : array-like, optional
         The mass matrix of shape (n_verts, n_verts) used for the decomposition when method is
         `'project'`. If using `EigenSolver`, provide its `self.mass`. Default is `None`.
+    speed_limits : tuple, optional
+        If any wave speeds are outside this range (in m/s), a warning is raised. If `None`, no
+        warning is raised. Default is `(0, 150)`.
     scaled_hetero : array-like, optional
-        Scaled heterogeneity map of shape (n_verts,), used only to check whether wave speeds are
-        physiologically plausible at each vertex. If not provided, wave speed is assumed to be
-        spatially uniform. To scale a heterogeneity map, use the `eigen.scale_hetero` function.
+        Scaled heterogeneity map of shape (n_verts,), used only to check wave speeds (see
+        `speed_limits` above). If not provided, wave speed is assumed to be spatially uniform. To
+        scale a heterogeneity map, use the `eigen.scale_hetero` function.
         Default is `None`.
+    check_ortho : bool, optional
+        Whether to check if `emodes` are mass-orthonormal before using the `'project'` method for
+        decomposition. Default is `True`.
     seed : int, optional
         Random seed for generating external input. Default is `None`.
     cache_input : bool, optional
@@ -99,7 +107,7 @@ def simulate_waves(
     Since the simulation begins at rest, consider discarding the first ~50 timepoints to allow the
     system to reach a steady state.
     """
-    # Format / validate inputs
+    # Format / validate arguments
     emodes = np.asarray_chkfinite(emodes)
     evals = np.asarray_chkfinite(evals)
     r = float(r)
@@ -119,9 +127,17 @@ def simulate_waves(
         raise ValueError("`dt` must be positive.")
     if nt <= 0 or not isinstance(nt, int):
         raise ValueError("`nt` must be a positive integer.")
-    if np.any(estimate_wave_speed(r, gamma, scaled_hetero=scaled_hetero) > 150):
-        warn("The combination of heterogeneity, r, and gamma may lead to non-physiological " \
-                "wave speeds (>150 m/s). Consider adjusting these parameters.")
+    if speed_limits is not None:
+        if not isinstance(speed_limits, tuple) or not len(speed_limits) == 2 \
+            or speed_limits[0] < 0 or speed_limits[0] >= speed_limits[1]:
+            raise ValueError("`speed_limits` must be a tuple of (min_speed, max_speed), where "
+                             "min_speed is non-negative and less than max_speed.")
+        speed = calc_wave_speed(r, gamma, scaled_hetero=scaled_hetero)
+        if np.min(speed) < speed_limits[0] or np.max(speed) > speed_limits[1]:
+            warn("The combination of `r`, `gamma`, and `scaled_hetero` leads to wave speeds " \
+                 f"outside the specified `speed_limits` range ({speed_limits[0]}-{speed_limits[1]}"\
+                 " m/s). Consider changing these parameters to ensure physiologically plausible " \
+                 "wave speeds.")
     if len(balloon_params) > 0 and not bold_out:
         warn("Balloon model parameters will be ignored as `bold_out` is False.")
     if pde_method not in ['fourier', 'ode']:
@@ -162,14 +178,15 @@ def simulate_waves(
         t = np.linspace(0, dt * (nt - 1), nt)
 
     # Eigendecomposition of external input
-    input_coeffs = decompose(ext_input, emodes, method=decomp_method, mass=mass)
+    input_coeffs = decompose(ext_input, emodes, method=decomp_method,
+                             mass=mass, check_ortho=check_ortho)
 
     # Compute activity timeseries for each mode
     mode_coeffs = np.zeros((n_modes, nt))
-    for mode_ind in range(n_modes):
-        mode_coeff = _model_wave_fourier(input_coeffs[mode_ind, :], dt, r, gamma, evals[mode_ind]) \
+    for mode_idx in range(n_modes):
+        mode_coeff = _model_wave_fourier(input_coeffs[mode_idx, :], dt, r, gamma, evals[mode_idx]) \
                       if pde_method == "fourier" else \
-                     _model_wave_ode(input_coeffs[mode_ind, :], t, r, gamma, evals[mode_ind])
+                     _model_wave_ode(input_coeffs[mode_idx, :], t, r, gamma, evals[mode_idx])
 
         if bold_out:
             # Apply Balloon-Windkessel model
@@ -177,26 +194,26 @@ def simulate_waves(
                 if pde_method == "fourier" else \
                     _model_balloon_ode(mode_coeff, t, all_balloon_params)
 
-        mode_coeffs[mode_ind, :] = mode_coeff
+        mode_coeffs[mode_idx, :] = mode_coeff
 
     # Transform timeseries from modal coefficients back to vertex space
     return emodes @ mode_coeffs
 
-def estimate_wave_speed(
+def calc_wave_speed(
     r: float,
     gamma: float,
     scaled_hetero: Union[ArrayLike, None] = None
 ) -> Union[float, NDArray]:
     """
-    Estimate wave speed based on the two parameters of the simple wave model. If a scaled
-    heterogeneity map is provided, the wave speed is estimated at each cortical vertex.
+    Calculate wave speed based on the two parameters of the wave model. If a scaled
+    heterogeneity map is provided, wave speeds are calculated for each cortical vertex.
     
     Parameters
     ----------
     r : float
         Axonal length scale for wave propagation in millimeters.
     gamma : float
-        Damping parameter for wave propagation in milliseconds^-1.
+        Damping parameter for wave propagation in seconds^-1.
     scaled_hetero : array-like, optional
         Scaled heterogeneity map of shape (n_verts,). If `None`, wave speed is assumed to be
         spatially uniform. To scale a heterogeneity map, use the `eigen.scale_hetero` function.
@@ -205,10 +222,10 @@ def estimate_wave_speed(
     Returns
     -------
     float or np.ndarray
-        Estimation of wave speed across the whole surface, or at each cortical vertex if
-        `scaled_hetero` is provided.
+        Wave speed across the whole surface, or at each cortical vertex if `scaled_hetero` is
+        provided.
     """
-    speed = r * gamma
+    speed = (r / 1000) * gamma # Convert r to meters
     if scaled_hetero is not None:
         speed *= np.sqrt(scaled_hetero)
 
@@ -233,13 +250,14 @@ def _model_wave_fourier(
     Parameters
     ----------
     input_coeff : np.ndarray
-        Array of mode coefficients at each time representing the input signal to the model.
+        Array of mode coefficients at each time representing the input signal to the model, with
+        shape (nt,).
     dt : float
-        Time step for the simulation in milliseconds.
+        Time step for the simulation in seconds.
     r : float
-        Spatial length scale of wave propagation.
+        Spatial length scale of wave propagation in millimeters.
     gamma : float
-        Damping rate of wave propagation.
+        Damping rate of wave propagation in seconds^-1.
     eval : float or array_like
         The eigenvalue associated with the mode.
 
@@ -267,13 +285,13 @@ def _model_wave_fourier(
 
     # Pad input with zeros on negative side to ensure causality (system is only driven for t >= 0)
     # This is required for the correct Green's function solution of the damped wave equation.
-    input_coeff_padded = np.concatenate([np.zeros(nt-1), input_coeff])
+    input_coeff_padded = np.concatenate([np.zeros(nt), input_coeff])
 
     # Apply inverse Fourier transform to get frequency-domain representation of the causal signal.
     input_coeff_f = np.fft.fftshift(np.fft.ifft(input_coeff_padded))
 
     # Frequencies for full signal
-    omega = 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(2*nt-1, d=dt))
+    omega = 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(2*nt, d=dt))
 
     # Compute transfer function and apply it to frequency-domain input
     H = gamma**2 / (-omega**2 - 2j * omega * gamma + gamma**2 * (1 + r**2 * eval))
@@ -283,7 +301,7 @@ def _model_wave_fourier(
     out_full = np.real(np.fft.fft(np.fft.ifftshift(out_fft)))
 
     # Return only the non-negative time part (t >= 0)
-    return out_full[nt-1:]
+    return out_full[nt:]
 
 def _model_wave_ode(
     input_coeff: NDArray,
@@ -298,11 +316,11 @@ def _model_wave_ode(
     Parameters
     ----------
     input_coeff : np.ndarray
-        Input drive to the system with the same length as `t` (written as `qj` in equation below).
+        Input drive to the system with shape (nt,) (written as `qj` in equation below).
     t : np.ndarray
-        Time points (must be increasing).
+        Vector of timepoints in seconds.
     gamma : float
-        Damping coefficient in milliseconds^-1.
+        Damping coefficient seconds^-1.
     r : float
         Spatial length scale in millimeters.
     eval : float
@@ -370,7 +388,7 @@ def get_balloon_params(**overrides) -> dict:
         - `alpha`: Grubb's exponent [unitless]. Default is `0.32`.
         - `rho`: Resting oxygen extraction fraction [unitless]. Default is `0.34`.
         - `V_0`: Resting blood volume fraction [unitless]. Default is `0.02`.
-        - `w_f`: Frequency of blood flow response [Hz]. Default is `0.56`.
+        - `w_f`: Frequency of blood flow response [rad/s]. Default is `0.56`.
         - `k1`, `k2`, `k3`: Coefficients for BOLD signal equation [unitless]. Defaults are `3.72`,
         `0.527`, and `0.48`, respectively.
     
@@ -418,7 +436,7 @@ def _model_balloon_fourier(
     Parameters
     ----------
     activity_coeff : np.ndarray
-        Array of mode coefficients representing the input signal to the model.
+        Array of mode coefficients representing the input signal to the model, with shape (nt,).
     balloon_freq_response : np.ndarray
         Frequency response of the balloon model at each frequency.
 
@@ -444,7 +462,7 @@ def _model_balloon_fourier(
     """
     # Zero-pad input at t < 0 for causality)
     nt = len(activity_coeff)
-    activity_coeff_padded = np.concatenate([np.zeros(nt-1), activity_coeff])
+    activity_coeff_padded = np.concatenate([np.zeros(nt), activity_coeff])
 
     # Apply Fourier transform (implemented as inverse FFT for causality)
     activity_coeff_f = np.fft.fftshift(np.fft.ifft(activity_coeff_padded))
@@ -456,7 +474,7 @@ def _model_balloon_fourier(
     out_full = np.real(np.fft.fft(np.fft.ifftshift(out_fft)))
 
     # Remove zero padding
-    return out_full[nt-1:]
+    return out_full[nt:]
 
 def _model_balloon_ode(
     activity_coeff: NDArray,
@@ -471,10 +489,9 @@ def _model_balloon_ode(
     Parameters
     ----------
     activity_coeff : np.ndarray
-        Array of mode coefficients representing the input signal to the model (neural activity, same 
-        length as `t`).
+        Array of mode coefficients representing the input signal to the model, with shape (nt,).
     t : np.ndarray
-        Array of time points (must be increasing, same length as `activity_coeff`).
+        Vector of timepoints in seconds with shape (nt,).
     params: dict
         Balloon model parameters. See the `get_balloon_params` function for default parameters.
 
@@ -503,13 +520,13 @@ def _model_balloon_ode(
         dsdt = u - kappa * s - gamma_h * (f - 1)
         dfdt = s
         dvdt = (f - v ** (1 / alpha)) / tau
-        dqdt = (f * (1 - (1 - rho) ** (1 / f)) / rho - q * v ** (1 / alpha - 1) / v) / tau
+        dqdt = (f * (1 - (1 - rho) ** (1 / f)) / rho - q * v ** (1 / alpha - 1)) / tau
         return [dsdt, dfdt, dvdt, dqdt]
 
     # Initial conditions for [s, f, v, q]
     y0 = [0.0, 1.0, 1.0, 1.0]
 
-    # Solve ODEs
+    # Solve ODEs, raise error if overflows occur
     sol = solve_ivp(
         balloon_rhs,
         t_span=(t[0], t[-1]),
@@ -519,9 +536,14 @@ def _model_balloon_ode(
         rtol=1e-6,
         atol=1e-9
     )
-    _, _, v, q = sol.y
+
+    if not sol.success:
+        raise RuntimeError("Balloon model ODE solver failed. Try using `pde_method='fourier'` or " \
+                           "a smaller `dt` timestep without altering balloon model parameters. " \
+                           f"`scipy.integrate.solve_ivp` message: {sol.message}")
 
     # Apply standard BOLD signal equation
+    _, _, v, q = sol.y
     return V_0 * (k1 * (1 - q) + k2 * (1 - q / v) + k3 * (1 - v))
 
 def _calc_balloon_freq_response(
@@ -537,14 +559,14 @@ def _calc_balloon_freq_response(
     nt : int
         Number of time points.
     dt : float
-        Time step in milliseconds.
+        Time step in seconds.
     params : dict
         Balloon model parameters. See the `get_balloon_params` function for default parameters.
     
     Returns
     -------
     np.ndarray
-        Frequency response of the balloon model at each frequency.
+        Frequency response of the balloon model at each frequency, of shape (2*nt,).
     """
     # Extract parameters
     kappa = params['kappa']
@@ -558,7 +580,7 @@ def _calc_balloon_freq_response(
     rho = params['rho']
 
     # Frequencies for full signal
-    omega = 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(2*nt-1, d=dt))
+    omega = 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(2*nt, d=dt))
 
     # Calculate the frequency response of the system
     beta = (rho + (1 - rho) * np.log(1 - rho)) / rho

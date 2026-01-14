@@ -87,7 +87,7 @@ API Reference
    :toctree: generated/
 
    neuromodes.waves.simulate_waves
-   neuromodes.waves.estimate_wave_speed
+   neuromodes.waves.calc_wave_speed
    neuromodes.waves.get_balloon_params
 
 .. _ref_connectome:

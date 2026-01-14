@@ -22,7 +22,7 @@ testing = [
 tutorials = [
     "ipykernel>=6.31.0",
     "matplotlib>=3.9.4",
-    "nsbutils @ git+https://github.com/NSBLab/nsbutils.git@main",
+    "nsbutils @ git+https://github.com/NSBLab/nsbutils.git@dev",
 ]
 cache = [
     "joblib>=1.5.3",

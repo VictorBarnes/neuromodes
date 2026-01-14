@@ -20,7 +20,7 @@ def presolver(surf_medmask_hetero):
 
 @pytest.fixture
 def solver(presolver):
-    presolver.solve(n_modes=10)
+    presolver.solve(n_modes=10, seed=0)
     return presolver
 
 def test_decompose_eigenmodes(solver):
@@ -54,7 +54,7 @@ def test_decompose_nan_inf_mode(solver):
 
 def test_decompose_massless(solver):
 
-    with pytest.raises(ValueError, match=r"Mass matrix must be provided when method is 'project'"):
+    with pytest.raises(ValueError, match="do not form an orthonormal basis set in Euclidean space"):
         decompose(np.ones(solver.n_verts), solver.emodes)
 
 def test_decompose_invalid_method(solver):
@@ -103,8 +103,8 @@ def test_reconstruct_mode_superposition(solver, gen_eigenmap):
 def test_reconstruct_regress_method(solver, gen_eigenmap):
     eigenmaps, _ = gen_eigenmap
 
-    _, correlation_error, _ = reconstruct(eigenmaps, solver.emodes, method='regress', metric='correlation')
-    _, euclidean_error, _ = reconstruct(eigenmaps, solver.emodes, method='regress', metric='euclidean')
+    _, correlation_error, _ = reconstruct(eigenmaps, solver.emodes, method='regress', check_ortho=False, metric='correlation')
+    _, euclidean_error, _ = reconstruct(eigenmaps, solver.emodes, method='regress', check_ortho=False, metric='euclidean')
 
     # Errors should strictly decrease when adding modes
     assert np.all(np.diff(correlation_error[1:,:], axis=0) < 0), \
@@ -129,10 +129,10 @@ def test_reconstruct_mode_superposition_timeseries(solver, gen_eigenmap):
 
     # Treat eigenmaps as timepoints of activity
     fc_recon, correlation_error, _, _, _ = reconstruct_timeseries(
-        eigen_ts, solver.emodes, method='regress', metric='correlation')
+        eigen_ts, solver.emodes, method='regress', check_ortho=False, metric='correlation')
 
     _, euclidean_error, _, _, _ = reconstruct_timeseries(
-        eigen_ts, solver.emodes, method='regress', metric='euclidean')
+        eigen_ts, solver.emodes, method='regress', check_ortho=False, metric='euclidean')
     mse = euclidean_error / fc.size  # Convert to MSE
     
     assert np.allclose(np.tanh(fc_recon[:,-1]), np.tanh(fc), atol=1e-5), \
@@ -166,7 +166,7 @@ def test_reconstruct_invalid_map_shape(solver):
 
 def test_reconstruct_massless(solver):
 
-    with pytest.raises(ValueError, match="Mass matrix must be provided when method is 'project'"):
+    with pytest.raises(ValueError, match="do not form an orthonormal basis set in Euclidean space"):
         reconstruct(np.ones(solver.n_verts), solver.emodes)
 
 def test_calc_norm_power():

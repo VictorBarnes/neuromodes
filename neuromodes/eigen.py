@@ -123,7 +123,7 @@ class EigenSolver(Solver):
             str_out += f' ({np.sum(self.mask == 0)} vertices masked out)'
         if self._raw_hetero is not None:
             str_out += f'\nHeterogeneity map scaling: {self._scaling} (alpha={self._alpha})'
-        str_out += f'\n{self.n_modes if hasattr(self, "n_modes") else 0} eigenmodes computed'
+        str_out += f'\n{self.n_modes if hasattr(self, "n_modes") else "No"} eigenmodes computed'
 
         return str_out
 
@@ -167,6 +167,7 @@ class EigenSolver(Solver):
         standardize: bool = True,
         fix_mode1: bool = True,
         atol: float = 1e-3,
+        rtol: float = 1e-5,
         sigma: Union[float, None] = -0.01,
         seed: Union[int, ArrayLike, None] = None, 
         **kwargs
@@ -188,6 +189,8 @@ class EigenSolver(Solver):
             `is_mass_orthonormal_modes` function for details.
         atol : float, optional
             Absolute tolerance for mass-orthonormality validation. Default is `1e-3`.
+        rtol : float, optional
+            Relative tolerance for mass-orthonormality validation. Default is `1e-5`.
         sigma : float, optional
             Shift-invert parameter to speed up the computation of eigenvalues close to this value.
             Default is `-0.01`.
@@ -217,10 +220,6 @@ class EigenSolver(Solver):
         # Validate inputs
         if n_modes <= 0 or not isinstance(n_modes, int):
             raise ValueError("`n_modes` must be a positive integer.")
-        
-        for key in kwargs:
-            if key not in {"lump", "smoothit"}:
-                raise ValueError(f"Invalid keyword argument: {key}")
 
         # Compute the Laplace-Beltrami operator / set stiffness and mass matrices
         self.compute_lbo(**kwargs)
@@ -258,8 +257,8 @@ class EigenSolver(Solver):
             "Computed eigenvalues or eigenmodes contain NaNs. This may indicate numerical " \
             "instability; consider adjusting `sigma` or checking mesh quality."
 
-        if not is_mass_orthonormal_modes(self.emodes, self.mass, atol=atol):
-            warn(f"Computed eigenmodes are not mass-orthonormal (atol={atol}).")
+        if not is_mass_orthonormal_modes(self.emodes, self.mass, atol=atol, rtol=rtol):
+            warn(f"Computed eigenmodes are not mass-orthonormal (atol={atol}, rtol={rtol}).")
 
         # Post-process
         if fix_mode1:
@@ -285,7 +284,8 @@ class EigenSolver(Solver):
         This is a wrapper for `neuromodes.basis.decompose`, see its documentation for details: 
         https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.basis.decompose.html
 
-        Note that `emodes` and `mass` are passed automatically by the `EigenSolver` instance.
+        Note that `emodes`, `mass`, and `check_ortho` are passed automatically by the `EigenSolver`
+        instance.
         """
         from neuromodes.basis import decompose
 
@@ -295,6 +295,7 @@ class EigenSolver(Solver):
             data,
             self.emodes,
             mass=self.mass,
+            check_ortho=False,
             **kwargs
         )
     
@@ -307,7 +308,8 @@ class EigenSolver(Solver):
         This is a wrapper for `neuromodes.basis.reconstruct`, see its documentation for details:
         https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.basis.reconstruct.html
 
-        Note that `emodes` and `mass` are passed automatically by the `EigenSolver` instance.
+        Note that `emodes`, `mass`, and `check_ortho` are passed automatically by the `EigenSolver`
+        instance.
         """
         from neuromodes.basis import reconstruct
         
@@ -317,6 +319,7 @@ class EigenSolver(Solver):
             data,
             self.emodes,
             mass=self.mass,
+            check_ortho=False,
             **kwargs
         )
     
@@ -330,7 +333,8 @@ class EigenSolver(Solver):
         details:
         https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.basis.reconstruct_timeseries.html
 
-        Note that `emodes` and `mass` are passed automatically by the `EigenSolver` instance.
+        Note that `emodes`, `mass`, and `check_ortho` are passed automatically by the `EigenSolver`
+        instance.
         """
         from neuromodes.basis import reconstruct_timeseries
 
@@ -340,6 +344,7 @@ class EigenSolver(Solver):
             data,
             self.emodes,
             mass=self.mass,
+            check_ortho=False,
             **kwargs
         )
     
@@ -372,8 +377,8 @@ class EigenSolver(Solver):
         This is a wrapper for `neuromodes.waves.simulate_waves`, see its documentation for details:
         https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.waves.simulate_waves.html
 
-        Note that `emodes`, `evals`, `mass`, and `hetero` are passed automatically by the
-        `EigenSolver` instance.
+        Note that `emodes`, `evals`, `mass`, `scaled_hetero`, and `check_ortho` are passed
+        automatically by the `EigenSolver` instance.
         """
         from neuromodes.waves import simulate_waves
 
@@ -384,6 +389,7 @@ class EigenSolver(Solver):
             evals=self.evals,
             mass=self.mass,
             scaled_hetero=self.hetero,
+            check_ortho=False,
             **kwargs
         )
 
@@ -416,7 +422,7 @@ def scale_hetero(
         If the scaling parameter is not a supported function, if `alpha` is zero, or if `hetero` is 
         constant.
     """
-    # Validate inputs
+    # Validate arguments
     if scaling not in ["exponential", "sigmoid"]:
         raise ValueError(f"Invalid scaling '{scaling}'. Must be 'exponential' or 'sigmoid'.")
     if alpha == 0:
@@ -427,17 +433,19 @@ def scale_hetero(
     
     # Scale the heterogeneity map
     hetero_z = (hetero - np.mean(hetero)) / std
-    hetero_scaled = 2 / (1 + np.exp(-alpha * hetero_z)) if scaling == "sigmoid" \
-        else np.exp(alpha * hetero_z)
 
-    return hetero_scaled
+    if scaling == 'sigmoid':
+        return 2 / (1 + np.exp(-alpha * hetero_z))
+    else: # scaling == 'exponential'
+        return np.exp(alpha * hetero_z)
 
 def standardize_modes(
     emodes: ArrayLike
 ) -> NDArray:
     """
-    Perform standardisation by flipping the modes such that the first element of each eigenmode is
-    positive. This is helpful when visualising eigenmodes.
+    Flips the modes' signs such that the first element of each eigenmode has positive amplitude. 
+    Note that the sign of each mode is arbitrary--standardisation is only helpful to compare sets of
+    eigenmodes.
 
     Parameters
     ----------
@@ -453,7 +461,7 @@ def standardize_modes(
     emodes = np.asarray_chkfinite(emodes)
 
     # Find the sign of each mode's amplitude at the first vertex
-    signs = np.sign(emodes[0, :])
+    signs = np.sign(emodes[0])
     signs[signs == 0] = 1  # Treat zero as positive (unlikely case)
     
     # Flip modes where the first element is negative
@@ -461,9 +469,9 @@ def standardize_modes(
 
 def is_mass_orthonormal_modes(
     emodes: ArrayLike,
-    mass: Union[ArrayLike, spmatrix, None] = None,
-    rtol: float = 1e-05,
-    atol: float = 1e-03
+    mass: Union[spmatrix, ArrayLike, None] = None,
+    atol: float = 1e-03,
+    rtol: float = 1e-05
 ) -> bool:
     """
     Check if a set of eigenmodes is approximately mass-orthonormal (i.e., `emodes.T @ mass @ emodes
@@ -491,15 +499,14 @@ def is_mass_orthonormal_modes(
     mass-orthonormality (e.g., decomposition, wave simulation), this function serves to ensure the
     validity of any calculated or provided eigenmodes.
     """
-    # Format inputs
+    # Format / validate arguments
     emodes = np.asarray_chkfinite(emodes)
-    if mass is not None and not isinstance(mass, spmatrix):
+    if not isinstance(mass, (spmatrix, type(None))):
         mass = np.asarray_chkfinite(mass)
 
-    # Check inputs (ie mass matrix shape)
-    n_verts = emodes.shape[0]
+    n_verts, n_modes = emodes.shape
     if mass is not None and (mass.shape != (n_verts, n_verts)):
         raise ValueError(f"The mass matrix must have shape ({n_verts}, {n_verts}).")
 
     prod = emodes.T @ emodes if mass is None else emodes.T @ mass @ emodes
-    return np.allclose(prod, np.eye(emodes.shape[1]), rtol=rtol, atol=atol, equal_nan=False)
+    return np.allclose(prod, np.eye(n_modes), rtol=rtol, atol=atol, equal_nan=False)

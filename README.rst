@@ -51,6 +51,7 @@ or
 
   uv add "neuromodes[tutorials] @ git+https://github.com/NSBLab/neuromodes.git"
 |
+Please note that this will not build on Python 3.13+ due to subdependency issues with the brain plotter, and this will be rectified in the near future.
 If you encounter any problems, please consider `opening an issue <https://github.com/NSBLab/neuromodes/issues>`_. Meanwhile, try switching to the exact environment used for development via UV:
 
 ::

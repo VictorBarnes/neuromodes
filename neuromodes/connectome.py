@@ -47,6 +47,7 @@ def model_connectome(
     If comparing this model to empirical connectomes, consider thresholding the generated connectome
     to match the density of the empirical data.
     """
+    # Format / validate arguments
     emodes = np.asarray_chkfinite(emodes)
     evals = np.asarray_chkfinite(evals)
     r = float(r)
@@ -61,23 +62,16 @@ def model_connectome(
     if k <= 0 or k > len(evals) or not isinstance(k, int):
         raise ValueError(f"Parameter `k` must be an integer in the range [1, {len(evals)}].")
 
-    # Select the first k eigenmodes and eigenvalues
-    k_evals = evals[:k]
-    k_emodes = emodes[:, :k]
-
-    # Compute structural connectivity
-    denom = 1/(1 + k_evals * r**2)
-
-    connectome = k_emodes @ np.diag(denom) @ np.linalg.pinv(k_emodes)
+    # Compute the Geometric Eigenmode Model
+    denom = 1/(1 + evals[:k] * r**2)
+    gem = emodes[:, :k] @ np.diag(denom) @ np.linalg.pinv(emodes[:, :k])
 
     # Replace diagonal and negative values with zero
-    np.fill_diagonal(connectome, 0)
-    connectome[connectome < 0] = 0
-    
-    # Symmetrize
-    connectome = (connectome + connectome.T) / 2
+    np.fill_diagonal(gem, 0)
+    gem = np.maximum(gem, 0)
 
-    # Normalize
-    connectome /= np.max(connectome)
+    # Symmetrise
+    gem = (gem + gem.T) / 2
 
-    return connectome
+    # Normalise
+    return gem / np.max(gem)
