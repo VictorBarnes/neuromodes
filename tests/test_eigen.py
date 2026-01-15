@@ -2,7 +2,7 @@ from pathlib import Path
 from lapy import TriaMesh
 import numpy as np
 import pytest
-from neuromodes.eigen import EigenSolver, is_mass_orthonormal_modes, scale_hetero
+from neuromodes.eigen import EigenSolver, is_orthonormal_basis, scale_hetero
 from neuromodes.io import fetch_surf, fetch_map, mask_surf
 
 @pytest.fixture
@@ -34,7 +34,7 @@ def test_no_medmask(surf_medmask_hetero):
 def test_invalid_mask_shape(surf_medmask_hetero):
     surf, _, _ = surf_medmask_hetero
     bad_mask = np.ones(10)
-    with pytest.raises(ValueError, match=r"`mask` \(10\) must match .* mesh \(4002\)."):
+    with pytest.raises(ValueError, match=r"`mask` must have shape \(4002,\)"):
         EigenSolver(surf, mask=bad_mask)
 
 def test_no_hetero(surf_medmask_hetero):
@@ -63,7 +63,7 @@ def test_no_hetero_alpha_scaling(surf_medmask_hetero):
 def test_invalid_hetero_shape(surf_medmask_hetero):
     surf, _, _ = surf_medmask_hetero
     bad_hetero = np.ones(10)
-    with pytest.raises(ValueError, match=r"`hetero` \(10\) must match .* mesh \(4002\)."):
+    with pytest.raises(ValueError, match=r"vertices in the surface mesh \(4002\)."):
         EigenSolver(surf, hetero=bad_hetero)
 
 def test_nan_inf_hetero(surf_medmask_hetero):
@@ -174,7 +174,7 @@ def test_vector_seeded_modes(presolver):
 
 def test_invalid_vector_seed(presolver):
     with pytest.raises(ValueError,
-                       match=r"of shape \((3636,)\)."):
+                       match=r"of shape \(n_verts,\) = \(3636,\)."):
         presolver.solve(16, seed=np.ones(10))
 
 @pytest.fixture
@@ -236,19 +236,19 @@ def test_check_orthonorm(solver):
     emodes = solver.emodes
 
     # Check that modes are not orthonormal in Euclidean space
-    assert not is_mass_orthonormal_modes(emodes)
+    assert not is_orthonormal_basis(emodes)
 
     emodes[:, 0] += 0.1 # Destroy mass-orthonormality by changing first mode's value
 
-    assert not is_mass_orthonormal_modes(emodes, solver.mass)
+    assert not is_orthonormal_basis(emodes, solver.mass)
 
 def test_check_euclidean_orthonorm():
     # Create orthonormal vectors in Euclidean space
     vecs = np.eye(5)
 
-    assert is_mass_orthonormal_modes(vecs)
-    assert is_mass_orthonormal_modes(vecs, mass=np.eye(5))
-    assert not is_mass_orthonormal_modes(vecs, mass=np.zeros((5, 5)))
+    assert is_orthonormal_basis(vecs)
+    assert is_orthonormal_basis(vecs, mass=np.eye(5))
+    assert not is_orthonormal_basis(vecs, mass=np.zeros((5, 5)))
 
 def test_scale_hetero(surf_medmask_hetero):
     _, _, hetero = surf_medmask_hetero

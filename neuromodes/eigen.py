@@ -59,16 +59,20 @@ class EigenSolver(Solver):
         alpha : float, optional
             Scaling parameter for the heterogeneity map. If a heterogenity map is specified, the
             default is `1.0`. Otherwise, this value is ignored (and is set to `None`).
+
         Raises
-        -------
+        ------
         ValueError
-            Raised if any input parameter is invalid, such as negative or non-numeric values for `r`
-            or `gamma`.
+            If `hetero` length does not match the number of vertices (masked or unmasked).
+        ValueError
+            If `scaling` is not 'sigmoid' or 'exponential' (raised by `scale_hetero`).
+        ValueError
+            If `hetero` is constant (raised by `scale_hetero`).
         """
         # Surface inputs and checks (check_surf called in read_surf and mask_surf)
         surf = read_surf(surf)
         if mask is not None:
-            self.mask = np.asarray_chkfinite(mask, dtype=bool)
+            self.mask = np.asarray(mask, dtype=bool)
             surf = mask_surf(surf, self.mask)
         else:
             self.mask = None
@@ -93,19 +97,17 @@ class EigenSolver(Solver):
             scaling = "sigmoid" if scaling is None else scaling
 
             # Ensure hetero has correct length (masked or unmasked)
-            if len(hetero) == self.n_verts:
+            if hetero.shape == (self.n_verts,):
                 pass
-            elif self.mask is None:
-                raise ValueError(f"The number of elements in `hetero` ({len(hetero)}) must match "
-                                f"the number of vertices in the surface mesh ({self.n_verts}).")
-            elif len(hetero) == len(self.mask):
+            elif self.mask is not None and hetero.shape == (len(self.mask),):
                 hetero = hetero[self.mask]
             else:
-                raise ValueError(f"The number of elements in `hetero` ({len(hetero)}) must match "
-                                f"the number of vertices in the surface mesh ({self.n_verts}) "
-                                f"or the surface mask (of size {len(self.mask)}).") 
-
-            hetero = np.asarray_chkfinite(hetero) # Ensure no NaNs/Infs after masking
+                err_str = f"the number of vertices in the surface mesh ({self.n_verts})"
+                if self.mask is not None:
+                    err_str += f" or the masked surface mesh (of size {self.mask.sum()})"
+                raise ValueError(
+                    f"`hetero` must be a 1D array with length matching {err_str}."
+                )
 
             # Scale and assign the heterogeneity map
             self._scaling = scaling    
@@ -135,7 +137,7 @@ class EigenSolver(Solver):
         """
         This method computes the Laplace-Beltrami operator using finite element methods on a
         triangular mesh, optionally incorporating spatial heterogeneity and smoothing of the
-        curvature. The resulting stiffness and mass matrices are stored as attributes.
+        curvature. The resulting `stiffness` and `mass` matrices are stored as attributes.
 
         Parameters
         ----------
@@ -144,12 +146,17 @@ class EigenSolver(Solver):
         smoothit : int, optional
             Number of smoothing iterations for curvature calculation. Default is `10`.
 
+        Returns
+        -------
+        EigenSolver
+            The EigenSolver instance.
+
         Raises
         ------
         ValueError
             If `smoothit` is negative or not an integer.
         """
-        if smoothit < 0 or not isinstance(smoothit, int):
+        if not isinstance(smoothit, int) or smoothit < 0:
             raise ValueError("`smoothit` must be a non-negative integer.")
 
         u1, u2, _, _ = self.geometry.curvature_tria(smoothit)
@@ -173,8 +180,8 @@ class EigenSolver(Solver):
         **kwargs
     ) -> EigenSolver:
         """
-        Solve the generalized eigenvalue problem for the Laplace-Beltrami operator and compute
-        eigenvalues and eigenmodes.
+        Solves the generalized eigenvalue problem for the Laplace-Beltrami operator and compute
+        eigenvalues and eigenmodes, which are stored as attributes (`emodes` and `evals`).
 
         Parameters
         ----------
@@ -185,8 +192,8 @@ class EigenSolver(Solver):
             Default is `False`.
         fix_mode1 : bool, optional
             If `True`, sets the first eigenmode to a constant value and the first eigenvalue to
-            zero, as is expected analytically. Default is `True`. See the
-            `is_mass_orthonormal_modes` function for details.
+            zero, as is expected analytically. Default is `True`. See the `is_orthonormal_basis`
+            function for details.
         atol : float, optional
             Absolute tolerance for mass-orthonormality validation. Default is `1e-3`.
         rtol : float, optional
@@ -205,20 +212,20 @@ class EigenSolver(Solver):
 
         Returns
         -------
-        numpy.ndarray
-            The computed eigenmodes.
-        numpy.ndarray
-            The computed eigenvalues.
+        EigenSolver
+            The EigenSolver instance.
 
         Raises
         ------
         ValueError
-            If `seed` is an array but does not have the correct shape of (n_verts,).
+            If `n_modes` is not a positive integer.
+        ValueError
+            If `seed` is an array but does not have shape (n_verts,).
         AssertionError
             If computed eigenvalues or eigenmodes contain NaNs.
         """
         # Validate inputs
-        if n_modes <= 0 or not isinstance(n_modes, int):
+        if not isinstance(n_modes, int) or n_modes <= 0:
             raise ValueError("`n_modes` must be a positive integer.")
 
         # Compute the Laplace-Beltrami operator / set stiffness and mass matrices
@@ -231,8 +238,8 @@ class EigenSolver(Solver):
         else:
             v0 = np.asarray_chkfinite(seed)
             if v0.shape != (self.n_verts,):
-                raise ValueError("`seed` must be either an integer or an array-like of shape "
-                                f"({self.n_verts},).")
+                raise ValueError("`seed` must be either an integer or an array of shape (n_verts,) "
+                                 f"= {(self.n_verts,)}.")
 
         # Solve the eigenvalue problem
         lu = splu(self.stiffness - sigma * self.mass)
@@ -253,11 +260,11 @@ class EigenSolver(Solver):
         )
 
         # Validate results
-        assert not np.isnan(self.evals).any() or np.isnan(self.emodes).any(), \
-            "Computed eigenvalues or eigenmodes contain NaNs. This may indicate numerical " \
-            "instability; consider adjusting `sigma` or checking mesh quality."
+        assert not np.isnan(self.evals).any() or np.isnan(self.emodes).any(), (
+            "Computed eigenvalues or eigenmodes contain NaNs. This may indicate numerical "
+            "instability; consider adjusting `sigma` or checking mesh quality.")
 
-        if not is_mass_orthonormal_modes(self.emodes, self.mass, atol=atol, rtol=rtol):
+        if not is_orthonormal_basis(self.emodes, self.mass, atol=atol, rtol=rtol):
             warn(f"Computed eigenmodes are not mass-orthonormal (atol={atol}, rtol={rtol}).")
 
         # Post-process
@@ -419,14 +426,20 @@ def scale_hetero(
     Raises
     ------
     ValueError
-        If the scaling parameter is not a supported function, if `alpha` is zero, or if `hetero` is 
-        constant.
+        If `hetero` is not a 1D array.
+    ValueError
+        If `scaling` is not 'exponential' or 'sigmoid'.
+    ValueError
+        If `hetero` is constant.
     """
-    # Validate arguments
+    # Format / validate arguments
+    hetero = np.asarray_chkfinite(hetero)
+    if hetero.ndim != 1:
+        raise ValueError("`hetero` must be a 1D array.")
     if scaling not in ["exponential", "sigmoid"]:
         raise ValueError(f"Invalid scaling '{scaling}'. Must be 'exponential' or 'sigmoid'.")
     if alpha == 0:
-        warn("`alpha` is set to 0, meaning heterogeneity map will have no effect.")    
+        warn("`alpha` is set to 0, meaning heterogeneity map will have no effect.")
     std = np.std(hetero)
     if std == 0:
         raise ValueError("`hetero` is constant; please provide a non-constant heterogeneity map.")
@@ -467,26 +480,41 @@ def standardize_modes(
     # Flip modes where the first element is negative
     return emodes * signs
 
-def is_mass_orthonormal_modes(
+def is_orthonormal_basis(
     emodes: ArrayLike,
     mass: Union[spmatrix, ArrayLike, None] = None,
     atol: float = 1e-03,
     rtol: float = 1e-05
 ) -> bool:
     """
-    Check if a set of eigenmodes is approximately mass-orthonormal (i.e., `emodes.T @ mass @ emodes
-    == I`).
+    Check if a set of vectors is orthonormal in Euclidean space (i.e., `emodes.T @ emodes == I`) or
+    with respect to a mass matrix (i.e., `emodes.T @ mass @ emodes == I`), where `I` is the identity
+    matrix. Mass-orthonormality is expected for the geometric eigenmodes (see notes).
 
     Parameters
     ----------
     emodes : array-like
-        The eigenmodes array of shape (n_verts, n_modes), where n_modes is the number of modes.
+        The vectors array of shape (n_verts, n_modes), where n_modes is the number of vectors.
     mass : array-like, optional
-        The mass matrix of shape (n_verts, n_verts). If using `EigenSolver`, provide its
-        `self.mass`. If `None`, an identity matrix will be used, corresponding to Euclidean
-        orthonormality. Default is `None`.
+        The mass matrix of shape (n_verts, n_verts). If `None`, Euclidean orthonormality is checked.
+        Default is `None`.
     atol : float, optional
         Absolute tolerance for the orthonormality check. Default is `1e-3`.
+    rtol : float, optional
+        Relative tolerance for the orthonormality check. Default is `1e-5`.
+
+    Returns
+    -------
+    bool
+        `True` if the set of vectors is orthonormal (Euclidean or mass-orthonormal), `False`
+        otherwise.
+
+    Raises
+    ------
+    ValueError
+        If `emodes` does not have shape (n_verts, n_modes), where n_verts ≥ n_modes.
+    ValueError
+        If `mass` is provided but does not have shape (n_verts, n_verts).
 
     Notes
     -----
@@ -504,9 +532,12 @@ def is_mass_orthonormal_modes(
     if not isinstance(mass, (spmatrix, type(None))):
         mass = np.asarray_chkfinite(mass)
 
+    if emodes.ndim != 2 or emodes.shape[0] < emodes.shape[1]:
+        raise ValueError("`emodes` must have shape (n_verts, n_modes), where n_verts ≥ n_modes.")
     n_verts, n_modes = emodes.shape
     if mass is not None and (mass.shape != (n_verts, n_verts)):
-        raise ValueError(f"The mass matrix must have shape ({n_verts}, {n_verts}).")
+        raise ValueError(f"`mass` must have shape (n_verts, n_verts) = {(n_verts, n_verts)}.")
 
+    # Check Euclidean or mass-orthonormality
     prod = emodes.T @ emodes if mass is None else emodes.T @ mass @ emodes
     return np.allclose(prod, np.eye(n_modes), rtol=rtol, atol=atol, equal_nan=False)

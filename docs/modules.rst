@@ -48,7 +48,7 @@ API Reference
 
    neuromodes.eigen.scale_hetero
    neuromodes.eigen.standardize_modes
-   neuromodes.eigen.is_mass_orthonormal_modes
+   neuromodes.eigen.is_orthonormal_basis
 
 .. _ref_basis:
 

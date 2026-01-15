@@ -39,28 +39,33 @@ def model_connectome(
     Raises
     ------
     ValueError
-        If any input parameter is invalid, such as negative or non-numeric values for  
-        `r`, or if `k` is not a positive integer within the valid range.
+        If `emodes` does not have shape (n_verts, n_modes) where n_verts ≥ n_modes.
+    ValueError
+        If `evals` does not have shape (n_modes,).
+    ValueError
+        If `r` is not a positive number.
+    ValueError
+        If `k` is not a positive integer in the range [1, n_modes].
 
     Notes
     -----
-    If comparing this model to empirical connectomes, consider thresholding the generated connectome
-    to match the density of the empirical data.
+    If comparing this model to empirical connectomes, consider thresholding the returned matrix to
+    match the density of the empirical data.
     """
     # Format / validate arguments
     emodes = np.asarray_chkfinite(emodes)
     evals = np.asarray_chkfinite(evals)
-    r = float(r)
 
-    if r <= 0:
-        raise ValueError("Parameter `r` must be positive.")
-    if emodes.ndim != 2:
-        raise ValueError("`emodes` must be a 2D array of shape (n_verts, n_modes).")
-    if evals.shape != (emodes.shape[1],):
-        raise ValueError("`evals` must be a 1-dimensional array with length matching the number of "
-                         "modes (columns) in `emodes`.")
-    if k <= 0 or k > len(evals) or not isinstance(k, int):
-        raise ValueError(f"Parameter `k` must be an integer in the range [1, {len(evals)}].")
+    if emodes.ndim != 2 or emodes.shape[0] < emodes.shape[1]:
+        raise ValueError("`emodes` must have shape (n_verts, n_modes), where n_verts ≥ n_modes.")
+    n_modes = emodes.shape[1]
+    if evals.shape != (n_modes,):
+        raise ValueError(f"`evals` must have shape (n_modes,) = {(n_modes,)}, matching the number "
+                         "of columns in `emodes`.")
+    if not isinstance(r, (int, float)) or r <= 0:
+        raise ValueError("Parameter `r` must be a positive number.")
+    if not isinstance(k, int) or k <= 0 or k > n_modes:
+        raise ValueError(f"Parameter `k` must be an integer in the range [1, {n_modes}].")
 
     # Compute the Geometric Eigenmode Model
     denom = 1/(1 + evals[:k] * r**2)

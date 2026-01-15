@@ -37,7 +37,7 @@ def test_decompose_eigenmodes(solver):
 
 def test_decompose_invalid_data_shape(solver):
 
-    with pytest.raises(ValueError, match=r"`data` \(4002\) must match .* `emodes` \(3636\)."):
+    with pytest.raises(ValueError, match=r"`emodes` \(3636\)."):
         decompose(np.ones(4002), solver.emodes, mass=solver.mass)
 
 def test_decompose_nan_inf_mode(solver):
@@ -161,7 +161,7 @@ def test_reconstruct_real_map_32k():
 
 def test_reconstruct_invalid_map_shape(solver):
 
-    with pytest.raises(ValueError, match=r"`data` \(4002\) must match .* `emodes` \(3636\)."):
+    with pytest.raises(ValueError, match=r"`emodes` \(3636\)."):
         reconstruct(np.ones(4002), solver.emodes, mass=solver.mass)
 
 def test_reconstruct_massless(solver):

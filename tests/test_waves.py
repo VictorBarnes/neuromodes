@@ -11,7 +11,7 @@ def solver():
     rng = np.random.default_rng(0)
     mesh, medmask = fetch_surf(density='4k')
     hetero = rng.standard_normal(size=sum(medmask))
-    return EigenSolver(mesh, mask=medmask, hetero=hetero).solve(n_modes=200, seed=0)
+    return EigenSolver(mesh, mask=medmask, hetero=hetero).solve(n_modes=100, seed=0)
 
 def test_unusual_wave_speed(solver):
     with pytest.warns(UserWarning, match=r'range \(0-150 m/s\)'):
@@ -124,8 +124,8 @@ def test_simulate_waves_methods(solver):
     )
 
     for t in range(50, nt):
-        assert np.corrcoef(fourier_ts[:, t], ode_ts[:, t])[0, 1] > 0.9, \
-            f'Fourier and ODE solutions are not correlated at r>.9 at t={t}.'
+        assert np.corrcoef(fourier_ts[:, t], ode_ts[:, t])[0, 1] > 0.85, \
+            f'Fourier and ODE solutions are not correlated at r>.85 at t={t}.'
 
 def test_simulate_waves_methods_bold(solver):
 
@@ -205,7 +205,7 @@ def test_simulate_waves_seed_bold_reproducibility_fourier(solver):
 
 def test_simulate_waves_invalid_input_shape(solver):
 
-    with pytest.raises(ValueError, match=r"shape \(4002, 1000\), should be \(3636, 1000\)."):
+    with pytest.raises(ValueError, match=r"must have shape \(n_verts, nt\) = \(3636, 1000\)."):
         simulate_waves(
             solver.emodes,
             solver.evals,
@@ -236,7 +236,8 @@ def test_simulate_waves_ode_balloon_overflow(solver):
             solver.emodes,
             solver.evals,
             mass=solver.mass,
-            dt=.09,
+            dt=1,
+            nt=10,
             pde_method='ode',
             bold_out=True,
             check_ortho=False

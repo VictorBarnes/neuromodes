@@ -7,7 +7,7 @@ from typing import Union, Tuple, TYPE_CHECKING
 import numpy as np
 from scipy.sparse import spmatrix
 from scipy.spatial.distance import cdist
-from neuromodes.eigen import is_mass_orthonormal_modes
+from neuromodes.eigen import is_orthonormal_basis
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray, ArrayLike
@@ -26,8 +26,8 @@ def decompose(
     Parameters
     ----------
     data : array-like
-        The input data array of shape (n_verts, n_maps), where n_verts is the number of vertices and
-        n_maps is the number of brain maps.
+        The input data array of shape (n_verts,) or (n_verts, n_maps), where n_verts is the number
+        of vertices and n_maps is the number of maps.
     emodes : array-like
         The vectors array of shape (n_verts, n_modes), where n_modes is the number of basis vectors.
     method : str, optional
@@ -38,7 +38,7 @@ def decompose(
     mass : array-like, optional
         The mass matrix of shape (n_verts, n_verts) used for the decomposition when method is
         `'project'`. If vectors are orthonormal in Euclidean space, leave as `None`. See
-        `eigen.is_mass_orthonormal_modes` for more details. Default is `None`.
+        `eigen.is_orthonormal_basis` for more details. Default is `None`.
     check_ortho : bool, optional
         Whether to check if `emodes` are mass-orthonormal before using the `'project'` method. 
         Default is `True`.
@@ -51,24 +51,33 @@ def decompose(
     Raises
     ------
     ValueError
-        If `emodes` contains NaNs/Infs, if the number of rows (vertices) in `data` and `emodes` do
-        not match, if an invalid method is specified, if `mass` is not provided when using the
-        'project' method, or if `emodes` are not mass-orthonormal with the provided mass matrix.
+        If `emodes` does not have shape (n_verts, n_modes), where n_verts ≥ n_modes.
+    ValueError
+        If `data` does not have shape (n_verts,) or (n_verts, n_maps).
+    ValueError
+        If `method='project'` and `emodes` columns do not form an orthonormal basis set (when
+        `check_ortho=True`).
+    ValueError
+        If `method` is not 'project' or 'regress'.
     """
     # Format / validate inputs
-    data = np.asarray(data)
-    data = np.expand_dims(data, axis=1) if data.ndim == 1 else data
+    data = np.asarray_chkfinite(data)
     emodes = np.asarray_chkfinite(emodes)
-    if data.shape[0] != emodes.shape[0]:
-        raise ValueError(f"The number of elements in `data` ({data.shape[0]}) must match "
-                            f"the number of vertices in `emodes` ({emodes.shape[0]}).")
+
+    if emodes.ndim != 2 or emodes.shape[0] < emodes.shape[1]:
+        raise ValueError("`emodes` must have shape (n_verts, n_modes), where n_verts ≥ n_modes.")
+    n_verts = emodes.shape[0]
+    if data.ndim == 1:
+        data = data[:, np.newaxis]
+    if data.ndim != 2 or data.shape[0] != n_verts:
+        raise ValueError("`data` must have shape (n_verts,) or (n_verts, n_maps), where n_verts is "
+                         f"the number of rows in `emodes` ({n_verts}).")
     if method == 'project':
-        if check_ortho and not is_mass_orthonormal_modes(emodes, mass):
+        if check_ortho and not is_orthonormal_basis(emodes, mass):
             err_str = "in Euclidean space" if mass is None else "with the provided mass matrix"
-            raise ValueError(
-                f"The columns of `emodes` do not form an orthonormal basis set {err_str}. " \
-                "Consider providing a suitable `mass` matrix or using method='regress'."
-                )
+            raise ValueError("The columns of `emodes` do not form an orthonormal basis set "
+                             f"{err_str}. Consider providing a suitable `mass` matrix or using "
+                             "`method='regress'`.")
         if not isinstance(mass, (spmatrix, type(None))):
             mass = np.asarray_chkfinite(mass)
     elif method != 'regress':
@@ -92,13 +101,13 @@ def reconstruct(
 ) -> Tuple[NDArray, NDArray, list[NDArray]]:
     """
     Calculate and score the reconstruction of the given independent data using the provided
-    orthogonal vectors.
+    orthogonal vectors (e.g., geometric eigenmodes).
 
     Parameters
     ----------
     data : array-like
-        The input data array of shape (n_verts, n_maps), where n_verts is the number of vertices and
-        n_maps is the number of maps.
+        The input data array of shape (n_verts,) or (n_verts, n_maps), where n_verts is the number
+        of vertices and n_maps is the number of brain maps.
     emodes : array-like
         The vectors array of shape (n_verts, n_modes), where n_modes is the number of orthogonal
         vectors.
@@ -110,7 +119,7 @@ def reconstruct(
     mass : array-like, optional
         The mass matrix of shape (n_verts, n_verts) used for the decomposition when method is
         `'project'`. If vectors are orthonormal in Euclidean space, leave as `None`. See
-        `eigen.is_mass_orthonormal_modes` for more details. Default is `None`.
+        `eigen.is_orthonormal_basis` for more details. Default is `None`.
     mode_counts : array-like, optional
         The sequence of vectors to be used for reconstruction. For example,
         `mode_counts=np.array([10,20,30])` will run three analyses: with the first 10 vectors, with
@@ -143,15 +152,19 @@ def reconstruct(
     Raises
     ------
     ValueError
-        If the number of vertices in `data` and `emodes` do not match, if `emodes` contain NaNs, or
-        if an invalid method/mass matrix is specified.
+        If `mode_counts` is not a 1D array of integers within the range [1, n_modes].
     """
     # Format / validate arguments
-    data = np.asarray(data)
-    data = np.expand_dims(data, axis=1) if data.ndim == 1 else data
-    emodes = np.asarray(emodes)
-    mode_counts = np.arange(emodes.shape[1])+1 if mode_counts is None \
-        else np.asarray_chkfinite(mode_counts)
+    data = np.asarray(data) # chkfinite in decompose
+    if data.ndim == 1:
+        data = data[:, np.newaxis]
+    emodes = np.asarray(emodes) # chkfinite in decompose
+    mode_counts = (np.arange(emodes.shape[1])+1 if mode_counts is None
+                   else np.asarray_chkfinite(mode_counts))
+    if (mode_counts.ndim != 1 or not np.issubdtype(mode_counts.dtype, np.integer)
+        or mode_counts.min() < 1 or mode_counts.max() > emodes.shape[1]):
+        raise ValueError("`mode_counts` must be a 1D array-like of integers within the range [1, "
+                         f"{emodes.shape[1]}].")
 
     # Decompose the data to get beta coefficients
     if method == 'project':
@@ -186,7 +199,7 @@ def reconstruct_timeseries(
 ) -> Tuple[NDArray, NDArray, NDArray, NDArray, list[NDArray]]:
     """
     Calculate and score the reconstruction of the given time-series data using the provided
-    orthogonal vectors.
+    orthogonal vectors (e.g., geometric eigenmodes).
 
     Parameters
     ----------
@@ -204,7 +217,7 @@ def reconstruct_timeseries(
     mass : array-like, optional
         The mass matrix of shape (n_verts, n_verts) used for the decomposition when method is
         `'project'`. If vectors are orthonormal in Euclidean space, leave as `None`. See
-        `eigen.is_mass_orthonormal_modes` for more details. Default is `None`.
+        `eigen.is_orthonormal_basis` for more details. Default is `None`.
     mode_counts : array-like, optional
         The sequence of vectors to be used for reconstruction. For example, `mode_counts =
         np.array([10,20,30])` will run three analyses: with the first 10 vectors, with the first 20
@@ -246,13 +259,11 @@ def reconstruct_timeseries(
     Raises
     ------
     ValueError
-        If the number of vertices in `data` and `emodes` do not match, if `emodes` contain NaNs, or
-        if an invalid method/mass matrix is specified.
+        If `data` does not have shape (n_verts, n_timepoints).
     """
     # Format / validate arguments
-    data = np.asarray(data)
-    if data.ndim != 2: 
-        raise ValueError("`data` must be a 2D array of shape (n_verts, n_timepoints).")
+    if np.ndim(data) != 2:
+        raise ValueError("`data` must have shape (n_verts, n_timepoints).")
     
     # Use reconstruct to get independent reconstructions
     recon, recon_error, beta = reconstruct(
@@ -267,8 +278,8 @@ def reconstruct_timeseries(
 
     fc = calc_vec_fc(data)[np.newaxis, :]
     fc_recon = np.stack([calc_vec_fc(recon[:, i, :]) for i in range(recon.shape[1])], axis=1)
-    fc_recon_error = cdist(fc_recon.T, fc, metric=metric, **cdist_kwargs).ravel() \
-        if metric is not None else np.empty(0)
+    fc_recon_error = (cdist(fc_recon.T, fc, metric=metric, **cdist_kwargs).ravel()
+                      if metric is not None else np.empty(0))
 
     return fc_recon, fc_recon_error, recon, recon_error, beta
 
@@ -281,14 +292,15 @@ def calc_norm_power(
     Parameters
     ----------
     beta : array-like
-        The beta coefficients array of shape (n_modes, n_maps), where n_modes is the number of 
-        orthogonal vectors and n_maps is the number of brain maps.
+        The beta coefficients array of shape (n_modes,) or (n_modes, n_maps), where n_modes is the
+        number of orthogonal vectors and n_maps is the number of brain maps.
 
     Returns
     -------
     numpy.ndarray
-        The normalized power array of shape (n_modes, n_maps), where each element represents the 
-        proportion of power contributed by the corresponding orthogonal vector to each brain map.
+        The normalized power array of shape (n_modes,) or (n_modes, n_maps), where each element
+        represents the proportion of power contributed by the corresponding orthogonal vector to
+        each brain map.
     """
     beta_sq = np.asarray_chkfinite(beta)**2
     total_power = np.sum(beta_sq, axis=0)
