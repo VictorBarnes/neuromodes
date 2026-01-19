@@ -260,7 +260,7 @@ class EigenSolver(Solver):
         )
 
         # Validate results
-        assert not np.isnan(self.evals).any() or np.isnan(self.emodes).any(), (
+        assert not (np.isnan(self.evals).any() or np.isnan(self.emodes).any()), (
             "Computed eigenvalues or eigenmodes contain NaNs. This may indicate numerical "
             "instability; consider adjusting `sigma` or checking mesh quality.")
 
@@ -395,7 +395,7 @@ class EigenSolver(Solver):
             emodes=self.emodes,
             evals=self.evals,
             mass=self.mass,
-            scaled_hetero=self.hetero,
+            scaled_hetero=(self.hetero if self._raw_hetero is not None else None),
             check_ortho=False,
             **kwargs
         )

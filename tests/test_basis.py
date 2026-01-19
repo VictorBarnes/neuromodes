@@ -128,9 +128,24 @@ def test_reconstruct_mode_superposition_timeseries(solver, gen_eigenmap):
     fc = calc_vec_fc(eigen_ts)
 
     # Treat eigenmaps as timepoints of activity
-    fc_recon, correlation_error, _, _, _ = reconstruct_timeseries(
+    fc_recon, correlation_error, recon, recon_error, beta = reconstruct_timeseries(
         eigen_ts, solver.emodes, method='regress', check_ortho=False, metric='correlation')
+    
+    # check shapes
+    assert fc_recon.shape == (solver.n_verts*(solver.n_verts-1)/2, solver.n_modes), \
+        'fc_recon has incorrect shape.'
+    assert correlation_error.shape == (solver.n_modes,), \
+        'fc_recon_error has incorrect shape.'
+    assert recon.shape == (solver.n_verts, solver.n_modes, eigen_ts.shape[1]), \
+        'recon has incorrect shape.'
+    assert recon_error.shape == (solver.n_modes, eigen_ts.shape[1]), \
+        'recon_error has incorrect shape.'
+    assert beta[0].shape == (1, eigen_ts.shape[1]), \
+        'beta[0] has incorrect shape.'
+    assert beta[-1].shape == (solver.n_modes, eigen_ts.shape[1]), \
+        'beta[-1] has incorrect shape.'
 
+    # Use another metric for fc recon error
     _, euclidean_error, _, _, _ = reconstruct_timeseries(
         eigen_ts, solver.emodes, method='regress', check_ortho=False, metric='euclidean')
     mse = euclidean_error / fc.size  # Convert to MSE
