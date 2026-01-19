@@ -79,7 +79,7 @@ def test_nan_inf_hetero(surf_medmask_hetero):
 def test_constant_hetero(surf_medmask_hetero):
     surf, _, hetero = surf_medmask_hetero
     hetero[:] = 2.0
-    with pytest.raises(ValueError, match="`hetero` is constant"):
+    with pytest.warns(UserWarning, match="Provided `hetero` is constant"):
         EigenSolver(surf, hetero=hetero)
 
 def test_nan_inf_hetero_medmask(surf_medmask_hetero):

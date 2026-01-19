@@ -111,7 +111,7 @@ def simulate_waves(
     ValueError
         If `ext_input` is provided but does not have shape (n_verts, nt).
     ValueError
-        If `pde_method` is not 'fourier' or 'ode'.
+        If `pde_method` is not `'fourier'` or `'ode'`.
     RuntimeError
         If the ODE solver fails when using `pde_method='ode'` and `bold_out=True`.
 
@@ -146,11 +146,13 @@ def simulate_waves(
             raise ValueError("`speed_limits` must be a tuple of (min_speed, max_speed), where "
                              "0 ≤ min_speed < max_speed.")
         speed = calc_wave_speed(r, gamma, scaled_hetero=scaled_hetero)
-        if np.min(speed) < speed_limits[0] or np.max(speed) > speed_limits[1]:
+        min_speed, max_speed = np.min(speed), np.max(speed)
+        if min_speed < speed_limits[0] or max_speed > speed_limits[1]:
+            calc_str = min_speed if min_speed == max_speed else f"{min_speed:.1f}-{max_speed:.1f}"
             warn("The combination of `r`, `gamma`, and `scaled_hetero` leads to wave speeds "
-                 f"outside the specified `speed_limits` range ({speed_limits[0]}-{speed_limits[1]} "
-                 "m/s). Consider changing these parameters to ensure physiologically plausible "
-                 "wave speeds.")
+                 f"outside the range of {speed_limits[0]}-{speed_limits[1]} m/s (calculated "
+                 f"{calc_str} m/s). Consider changing these parameters to ensure physiologically "
+                 "plausible wave speeds, or adjust `speed_limits`.")
     if len(balloon_params) > 0 and not bold_out:
         warn("Balloon model parameters will be ignored as `bold_out` is `False`.")
     if pde_method not in ['fourier', 'ode']:
@@ -245,7 +247,7 @@ def _model_wave_fourier(
 ) -> NDArray:
     """
     Simulates the time evolution of wave models for all modes using a frequency-domain approach.
-    This method applies a Fourier transform to the input mode coefficients, computes the system's
+    This function applies a Fourier transform to the input mode coefficients, computes the system's
     frequency response, and then applies an inverse Fourier transform to obtain the time-domain
     response of each mode.
 
@@ -346,29 +348,26 @@ def _model_wave_ode(
     n_modes, nt = input_coeffs.shape
     t = np.linspace(0, dt * (nt - 1), nt)
     
-    def wave_rhs(input_coeff, eval_j):
-        """Returns a closure defining the wave ODEs for the given `input_coeff` and `eval_j`."""
-        def wave_odes(t_, y):
+    # Simulate wave equation for each mode
+    mode_coeffs = np.zeros((n_modes, nt))
+    for j in range(n_modes):
+        def wave_odes_j(t_, y):
+            """Returns the wave ODEs for mode j."""
             x1, x2 = y
 
             # Interpolate input coefficient at time t_
-            qval = np.interp(t_, t, input_coeff)
+            qval = np.interp(t_, t, input_coeffs[j, :])
             if isinstance(qval, np.ndarray):
                 qval = qval.item()
 
             # Set expressions for time derivatives
             dx1dt = x2
-            dx2dt = -2 * gamma * x2 - gamma**2 * (1 + r**2 * eval_j) * x1 + gamma**2 * qval
+            dx2dt = -2 * gamma * x2 - gamma**2 * (1 + r**2 * evals[j]) * x1 + gamma**2 * qval
             return [dx1dt, dx2dt]
-        
-        return wave_odes
-    
-    # Simulate wave equation for each mode
-    mode_coeffs = np.zeros((n_modes, nt))
-    for i in range(n_modes):
 
+        # Call ODE solver
         sol = solve_ivp(
-            wave_rhs(input_coeffs[i, :], evals[i]),
+            wave_odes_j,
             t_span=(t[0], t[-1]),
             y0=[0.0, 0.0],  # Initial condition: phi_j(0) = 0, dphi_j/dt(0) = 0
             t_eval=t,
@@ -377,7 +376,7 @@ def _model_wave_ode(
             atol=1e-9
         )
 
-        mode_coeffs[i, :] = sol.y[0]  # Store phi_j(t)
+        mode_coeffs[j, :] = sol.y[0]  # Store phi_j(t)
 
     return mode_coeffs
 
@@ -445,7 +444,7 @@ def _model_balloon_fourier(
 ) -> NDArray:
     """
     Simulates the hemodynamic response of all modes using the balloon model in the frequency domain. 
-    This method computes the balloon model's frequency response and applies it to the input mode 
+    This function computes the balloon model's frequency response and applies it to the input mode 
     coefficients via Fourier transforms, returning the modeled hemodynamic response over time.
 
     Parameters
@@ -561,13 +560,15 @@ def _model_balloon_ode(
     n_modes, nt = activity_coeffs.shape
     t = np.linspace(0, dt * (nt - 1), nt)
 
-    def balloon_rhs(activity_coeff):
-        """Returns a closure defining the balloon ODEs for the given `activity_coeff`."""
-        def balloon_odes(t_, y):
+    # Simulate balloon model for each mode
+    bold_coeffs = np.zeros((n_modes, nt))
+    for j in range(n_modes):
+        def balloon_odes_j(t_, y):
+            """Returns the balloon model ODEs for mode j."""
             s, f, v, q = y
 
             # Interpolate input coefficient at time t_
-            u = np.interp(t_, t, activity_coeff)
+            u = np.interp(t_, t, activity_coeffs[j])
 
             # Set expressions for time derivatives
             dsdt = u - kappa * s - gamma_h * (f - 1)
@@ -575,15 +576,10 @@ def _model_balloon_ode(
             dvdt = (f - v ** (1 / alpha)) / tau
             dqdt = (f * (1 - (1 - rho) ** (1 / f)) / rho - q * v ** (1 / alpha - 1)) / tau
             return [dsdt, dfdt, dvdt, dqdt]
-        
-        return balloon_odes
 
-    # Simulate balloon model for each mode
-    bold_coeffs = np.zeros((n_modes, nt))
-    for i in range(n_modes):
-
+        # Call ODE solver
         sol = solve_ivp(
-            balloon_rhs(activity_coeffs[i, :]),
+            balloon_odes_j,
             t_span=(t[0], t[-1]),
             y0=[0.0, 1.0, 1.0, 1.0], # Initial condition for [s, f, v, q]
             t_eval=t,
@@ -599,6 +595,6 @@ def _model_balloon_ode(
 
         # Apply standard BOLD signal equation
         _, _, v, q = sol.y
-        bold_coeffs[i, :] = V_0 * (k1 * (1 - q) + k2 * (1 - q / v) + k3 * (1 - v))
+        bold_coeffs[j, :] = V_0 * (k1 * (1 - q) + k2 * (1 - q / v) + k3 * (1 - v))
 
     return bold_coeffs

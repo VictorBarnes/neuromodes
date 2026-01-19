@@ -14,11 +14,11 @@ def solver():
     return EigenSolver(mesh, mask=medmask, hetero=hetero).solve(n_modes=100, seed=0)
 
 def test_unusual_wave_speed(solver):
-    with pytest.warns(UserWarning, match=r'range \(0-150 m/s\)'):
+    with pytest.warns(UserWarning, match=r'range of 0-150 m/s \(calculated 23.3-160.4 m/s\).'):
         solver.simulate_waves(r=1000)
 
 def test_unusual_wave_speed_no_hetero(solver):
-    with pytest.warns(UserWarning, match=r'range \(0-115 m/s\)'):
+    with pytest.warns(UserWarning, match=r'range of 0-115 m/s \(calculated 116.0 m/s\).'):
         simulate_waves(
             solver.emodes,
             solver.evals,

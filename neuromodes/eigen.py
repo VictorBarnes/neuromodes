@@ -32,8 +32,8 @@ class EigenSolver(Solver):
         mask: Union[ArrayLike, None] = None,
         normalize: bool = False,
         hetero: Union[ArrayLike, None] = None,
-        scaling: Union[str, None] = None, # default to "sigmoid" if hetero given (and remains None)
-        alpha: Union[float, None] = None  # default to 1.0 if hetero given (and remains None)
+        alpha: Union[float, None] = None, # default to 1.0 if hetero given (and remains None)
+        scaling: Union[str, None] = None  # default to "sigmoid" if hetero given (and remains None)
     ):
         """
         Initialize the EigenSolver class with surface, and optionally with a heterogeneity map.
@@ -52,13 +52,13 @@ class EigenSolver(Solver):
             origin (modifies the vertices). Default is `False`.
         hetero : array-like, optional
             A heterogeneity map to scale the Laplace-Beltrami operator. Default is `None`.
+        alpha : float, optional
+            Scaling parameter for the heterogeneity map. If a heterogenity map is specified, the
+            default is `1.0`. Otherwise, this value is ignored (and is set to `None`).
         scaling : str, optional
             Scaling function to apply to the heterogeneity map. Must be `'sigmoid'` or
             `'exponential'`. If a heterogenity map is specified, the default is `'sigmoid'`.
             Otherwise, this value is ignored (and is set to `None`).
-        alpha : float, optional
-            Scaling parameter for the heterogeneity map. If a heterogenity map is specified, the
-            default is `1.0`. Otherwise, this value is ignored (and is set to `None`).
 
         Raises
         ------
@@ -442,15 +442,15 @@ def scale_hetero(
         warn("`alpha` is set to 0, meaning heterogeneity map will have no effect.")
     std = np.std(hetero)
     if std == 0:
-        raise ValueError("`hetero` is constant; please provide a non-constant heterogeneity map.")
+        warn("Provided `hetero` is constant; scaling `hetero` to a vector of ones.")
+        hetero_scaled = np.ones_like(hetero)
+    else:
+        # Scale the heterogeneity map
+        hetero_z = (hetero - np.mean(hetero)) / std
+        hetero_scaled = (2 / (1 + np.exp(-alpha * hetero_z))
+                         if scaling == 'sigmoid' else np.exp(alpha * hetero_z))
     
-    # Scale the heterogeneity map
-    hetero_z = (hetero - np.mean(hetero)) / std
-
-    if scaling == 'sigmoid':
-        return 2 / (1 + np.exp(-alpha * hetero_z))
-    else: # scaling == 'exponential'
-        return np.exp(alpha * hetero_z)
+    return hetero_scaled
 
 def standardize_modes(
     emodes: ArrayLike
@@ -474,7 +474,7 @@ def standardize_modes(
     emodes = np.asarray_chkfinite(emodes)
 
     # Find the sign of each mode's amplitude at the first vertex
-    signs = np.sign(emodes[0])
+    signs = np.sign(emodes[0, :])
     signs[signs == 0] = 1  # Treat zero as positive (unlikely case)
     
     # Flip modes where the first element is negative

@@ -171,7 +171,7 @@ def reconstruct(
         # only need to decompose once (with n=max modes) if using orthogonal method
         tmp = decompose(data, emodes[:, :np.max(mode_counts)], mass=mass,
                         method=method, check_ortho=check_ortho)
-        beta = [tmp[:mq] for mq in mode_counts]
+        beta = [tmp[:mq, :] for mq in mode_counts]
     else:
         beta = [
             decompose(data, emodes[:, :mq], mass=mass, method=method)
@@ -278,7 +278,7 @@ def reconstruct_timeseries(
 
     fc = calc_vec_fc(data)[np.newaxis, :]
     fc_recon = np.stack([calc_vec_fc(recon[:, i, :]) for i in range(recon.shape[1])], axis=1)
-    fc_recon_error = (cdist(fc_recon.T, fc, metric=metric, **cdist_kwargs).ravel()
+    fc_recon_error = (cdist(fc_recon.T, fc, metric=metric, **cdist_kwargs)[:, 0]
                       if metric is not None else np.empty(0))
 
     return fc_recon, fc_recon_error, recon, recon_error, beta

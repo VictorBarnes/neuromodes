@@ -3,7 +3,7 @@
 
 **NOTE: neuromodes is currently under active development. Breaking changes to function naming and behaviour may occur prior to a stable release.**
 
-Eigenmode-based neuroimaging tools developed by the `Neural Systems and Behaviour Lab <https://www.monash.edu/medicine/psych/alex-fornito-lab>`_. Documentation can be found `here <https://neuromodes.readthedocs.io/en/latest/>`_.
+Eigenmode-based brain mapping and modelling toolbox developed by the `Neural Systems and Behaviour Lab <https://www.monash.edu/medicine/psych/alex-fornito-lab>`_. Documentation can be found `here <https://neuromodes.readthedocs.io/en/latest/>`_.
 
 Features
 --------
@@ -23,58 +23,49 @@ Installation
 ------------
 ``neuromodes`` works with Python 3.9+, and can be pip-installed into your environment via:
 
-::
+.. code-block:: bash
 
   pip install git+https://github.com/NSBLab/neuromodes.git
 
 This will clone ``main``, our most stable branch. To try out any newer features under development, clone from our ``dev`` branch instead via:
 
-::
+.. code-block:: bash
 
   pip install git+https://github.com/NSBLab/neuromodes.git@dev.
 
 Alternatively, ``neuromodes`` can be added as a dependency to your ``pyproject.toml`` with `UV <https://docs.astral.sh/uv/>`_ via:
 
-::
+.. code-block:: bash
 
   uv add git+https://github.com/NSBLab/neuromodes.git.
 |
 If you wish to run the tutorials, please instead install our extra ``tutorials`` dependencies via:
 
-::
+.. code-block:: bash
 
   pip install "neuromodes[tutorials] @ git+https://github.com/NSBLab/neuromodes.git"
 
 or
 
-::
+.. code-block:: bash
 
   uv add "neuromodes[tutorials] @ git+https://github.com/NSBLab/neuromodes.git"
 |
-Please note that this will not build on Python 3.13+ due to subdependency issues with the brain plotter, and this will be rectified in the near future.
 If you encounter any problems, please consider `opening an issue <https://github.com/NSBLab/neuromodes/issues>`_. Meanwhile, try switching to the exact environment used for development via UV:
 
-::
+.. code-block:: bash
 
   git clone https://github.com/NSBLab/neuromodes
   cd neuromodes
-  uv venv --python 3.12.10
+  uv venv --python 3.13.3
   uv sync --frozen
 |
 Tests can be run with ``pytest`` via:
 
-::
+.. code-block:: bash
 
   cd neuromodes
-  pip install pytest
-  pytest tests
-
-or
-
-::
-
-  cd neuromodes
-  uv sync --extra testing
+  pip install pytest  # or `uv sync --extra testing`
   pytest tests
 
 Citing
