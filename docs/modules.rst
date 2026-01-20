@@ -46,10 +46,9 @@ API Reference
    :template: function.rst
    :toctree: generated/
 
-   estimate_wave_speed
-   scale_hetero
-   standardize_modes
-   is_mass_orthonormal_modes
+   neuromodes.eigen.scale_hetero
+   neuromodes.eigen.standardize_modes
+   neuromodes.eigen.is_orthonormal_basis
 
 .. _ref_basis:
 
@@ -68,7 +67,9 @@ API Reference
 
    neuromodes.basis.decompose
    neuromodes.basis.reconstruct
+   neuromodes.basis.reconstruct_timeseries
    neuromodes.basis.calc_norm_power
+   neuromodes.basis.calc_vec_fc
 
 .. _ref_waves:
 
@@ -86,6 +87,8 @@ API Reference
    :toctree: generated/
 
    neuromodes.waves.simulate_waves
+   neuromodes.waves.calc_wave_speed
+   neuromodes.waves.get_balloon_params
 
 .. _ref_connectome:
 

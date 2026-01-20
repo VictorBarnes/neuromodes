@@ -1,16 +1,21 @@
-"""Module for reading, validating, and manipulating surface meshes."""
+"""
+Module for reading, validating, and manipulating surface meshes.
+"""
 
+from __future__ import annotations
+from importlib.resources import files, as_file
 import os
-from trimesh import Trimesh
-import numpy as np
+from pathlib import Path
+from typing import Union, Tuple, cast, TYPE_CHECKING
+from lapy import TriaMesh
+from nibabel.freesurfer.io import read_geometry
 from nibabel.gifti.gifti import GiftiImage
 from nibabel.loadsave import load
-from nibabel.freesurfer.io import read_geometry
-from pathlib import Path
-from typing import Union, Tuple, cast
-from lapy import TriaMesh
-from numpy.typing import NDArray, ArrayLike
-from importlib.resources import files, as_file
+import numpy as np
+from trimesh import Trimesh
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray, ArrayLike
 
 def read_surf(
     mesh: Union[str, Path, Trimesh, TriaMesh, dict]
@@ -22,13 +27,20 @@ def read_surf(
     mesh : str, Path, trimesh.Trimesh, lapy.TriaMesh, or dict
         Surface mesh specified as a file path (string or Path) to a VTK (.vtk), GIFTI (.gii), or
         FreeSurfer file (.white, .pial, .inflated, .orig, .sphere, .smoothwm, .qsphere, .fsaverage),
-        an instance of trimesh.Trimesh or lapy.TriaMesh, or a dictionary with "vertices" and "faces"
-        keys.
+        an instance of `trimesh.Trimesh` or `lapy.TriaMesh`, or a dictionary with `vertices` and
+        `faces` keys.
 
     Returns
     -------
     trimesh.Trimesh
         Validated surface mesh with vertices and faces.
+
+    Raises
+    ------
+    ValueError
+        If `mesh` is a path-like string to an unsupported format.
+    ValueError
+        If `mesh` is a path-like string to a file that does not exist.
     """
     if isinstance(mesh, Trimesh):
         trimesh = mesh
@@ -52,14 +64,16 @@ def read_surf(
         elif mesh_str.endswith(
             ('white', 'pial', 'inflated', 'orig', 'sphere', 'smoothwm', 'qsphere', 'fsaverage')
             ):
-            vertices, faces = read_geometry(mesh_str, read_metadata=False, read_stamp=False) # will only return two outputs now # type: ignore
+            vertices, faces = read_geometry(
+                mesh_str, read_metadata=False, read_stamp=False
+                ) # will only return two outputs now # type: ignore
             trimesh = Trimesh(vertices=vertices, faces=faces) # type: ignore
         else:
             raise ValueError(
                 '`surf` must be a path-like string to a valid VTK (.vtk), GIFTI (.gii), or '
                 'FreeSurfer file (.white, .pial, .inflated, .orig, .sphere, .smoothwm, .qsphere, '
-                '.fsaverage), an instance of trimesh.Trimesh or lapy.TriaMesh, or a dictionary of '
-                '"faces" and "vertices".'
+                '.fsaverage), an instance of `trimesh.Trimesh` or `lapy.TriaMesh`, or a dictionary '
+                'of `faces` and `vertices`.'
                 )
     
     # Validate the mesh before returning
@@ -71,13 +85,34 @@ def mask_surf(
     surf: Trimesh,
     mask: ArrayLike
 ) -> Trimesh:
-    """Remove specified vertices and corresponding faces from the surface mesh. Returns a validated 
-    trimesh.Trimesh object."""
+    """
+    Remove specified vertices and corresponding faces from the surface mesh. Returns a validated 
+    `trimesh.Trimesh` object.
+
+    Parameters
+    ----------
+    surf : trimesh.Trimesh
+        The input surface mesh.
+    mask : array-like
+        A boolean array indicating which vertices to keep (`True`) or remove (`False`).
+
+    Returns
+    -------
+    trimesh.Trimesh
+        The masked surface mesh.
+
+    Raises
+    ------
+    ValueError
+        If `mask` does not have a length matching the number of vertices in `surf`.
+    
+    
+    """
     mask = np.asarray(mask, dtype=bool)
 
-    if len(mask) != surf.vertices.shape[0]:
-        raise ValueError(f"The number of elements in `mask` ({len(mask)}) must match "
-                         f"the number of vertices in the surface mesh ({surf.vertices.shape[0]}).")
+    if mask.shape != (surf.vertices.shape[0],):
+        raise ValueError(f"`mask` must have shape {(surf.vertices.shape[0],)} to match the number "
+                         "of vertices in the surface mesh.")
     
     # Mask faces where all vertices are in the mask
     face_mask = np.all(mask[surf.faces], axis=1)
@@ -91,7 +126,22 @@ def mask_surf(
 def check_surf(
     surf: Trimesh
 ) -> None:
-    """Check if the surface mesh is contiguous with no unreferenced vertices."""
+    """
+    Check if the surface mesh is contiguous with no unreferenced vertices.
+    
+    Parameters
+    ----------
+    surf : trimesh.Trimesh
+        The surface mesh to check.
+
+    Raises
+    ------
+    ValueError
+        If the surface mesh contains unreferenced vertices.
+    ValueError
+        If the surface mesh is not contiguous.
+    
+    """
 
     # Check for unreferenced vertices
     referenced = np.zeros(len(surf.vertices), dtype=bool)
@@ -107,13 +157,45 @@ def check_surf(
                          'found.')
 
 def fetch_surf(
-    surf: str = 'midthickness',
     species: str = 'human',
-    template: str = 'fsLR',
     density: str = '32k',
-    hemi: str = 'L'
+    hemi: str = 'L',
+    surf: str = 'midthickness',
+    template: str = 'fsLR'
 ) -> Tuple[Trimesh, NDArray]:
-    """Load cortical surface mesh and medial wall mask from neuromodes data directory."""
+    """
+    Load a cortical triangular surface mesh and medial wall mask from neuromodes data directory. For
+    a list of available surfaces, see
+    https://github.com/NSBLab/neuromodes/tree/main/neuromodes/data/included_data.csv.
+
+    Parameters
+    ----------
+    species : str, optional
+        Species of the surface mesh. Options include `'human'`, `'macaque'`, and `'marmoset'`.
+        Default is `'human'`.
+    density : str, optional
+        Density of the surface mesh. Options include `'32k'` for all species, and `'4k'` for human.
+        Default is `'32k'`.
+    hemi : str, optional
+        Hemisphere of the surface mesh. Options are `'L'` for all species, and `'R'` for human.
+        Default is `'L'`.
+    surf : str, optional
+        Surface type to load. Currently only supports `'midthickness'`. Default is `'midthickness'`.
+    template : str, optional
+        Template of the surface mesh. Currently only supports `'fsLR'`. Default is `'fsLR'`.
+    
+    Returns
+    -------
+    mesh : trimesh.Trimesh
+        The loaded surface mesh.
+    medmask : np.ndarray
+        The medial wall mask as a boolean array.
+
+    Raises
+    ------
+    ValueError
+        If the specified surface data is not found in the `neuromodes/data` directory.
+    """
     data_dir = files('neuromodes.data')
     meshname = f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_{surf}.surf.gii'
     maskname = f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_medmask.label.gii'
@@ -128,18 +210,45 @@ def fetch_surf(
     except Exception as e:
         raise ValueError(
             f"Surface data not found. Please see {data_dir}/included_data.csv or "
-            "https://github.com/NSBLab/neuromodes/tree/main/neuromodes/data/included_data.csv for a "
-            "list of available surfaces."
+            "https://github.com/NSBLab/neuromodes/tree/main/neuromodes/data/included_data.csv for a"
+            " list of available surfaces."
             ) from e
 
 def fetch_map(
     data: str,
     species: str = 'human',
-    template: str = 'fsLR',
     density: str = '32k',
-    hemi: str = 'L'
+    hemi: str = 'L',
+    template: str = 'fsLR'
 ) -> NDArray:
-    """Load data from neuromodes data directory."""
+    """
+    Load cortical surface data from neuromodes data directory. For a list of available maps, see
+    https://github.com/NSBLab/neuromodes/tree/main/neuromodes/data/included_data.csv.
+
+    Parameters
+    ----------
+    data : str
+        Cortical map to load. Options include `'fcgradient1'`, `'myelinmap'`, `'ndi'`, `'odi'`, and
+        `'thickness'`.
+    species : str, optional
+        Species of the surface mesh. Currently only supports `'human'`. Default is `'human'`.
+    density : str, optional
+        Density of the surface mesh. Currently only supports `'32k'`. Default is `'32k'`.
+    hemi : str, optional
+        Hemisphere of the surface mesh. Currently only supports `'L'`. Default is `'L'`.
+    template : str, optional
+        Template of the surface mesh. Currently only supports `'fsLR'`. Default is `'fsLR'`.
+
+    Returns
+    -------
+    np.ndarray
+        The loaded cortical map data.
+
+    Raises
+    ------
+    ValueError
+        If the specified map data is not found in the `neuromodes/data` directory.
+    """
     data_dir = files('neuromodes.data')
     filename = f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_{data}.func.gii'
 
@@ -150,19 +259,40 @@ def fetch_map(
     except Exception as e:
         raise ValueError(
             f"Map '{filename}' not found. Please see {data_dir}/included_data.csv or "
-            "https://github.com/NSBLab/neuromodes/tree/main/neuromodes/data/included_data.csv for a "
-            "list of available data files."
+            "https://github.com/NSBLab/neuromodes/tree/main/neuromodes/data/included_data.csv for a"
+            " list of available data files."
         ) from e
 
 def _set_cache():
-    """Set up joblib memory caching."""
+    """
+    Set up joblib memory caching.
+    
+    Returns
+    -------
+    joblib.Memory
+        Configured joblib Memory object for caching.
+
+    Raises
+    ------
+    ImportError
+        If `joblib` is not installed.
+    """
+    try:
+        from joblib import Memory
+    except ImportError:
+        raise ImportError(
+            "joblib is required for caching. Please install it via 'pip install joblib' (or "
+            "install neuromodes with UV via 'uv add \"neuromodes[cache] @ "
+            "git+https://github.com/NSBLab/neuromodes.git\")."
+        )
 
     CACHE_DIR = os.getenv("CACHE_DIR")
-    if CACHE_DIR is None or not os.path.exists(CACHE_DIR):
+    if CACHE_DIR is None:
         CACHE_DIR = Path.home() / ".neuromodes_cache"
-        CACHE_DIR.mkdir(parents=True, exist_ok=True)
         print(f"Using default cache directory at {CACHE_DIR}. To cache elsewhere, set the CACHE_DIR"
-              " environment variable.")
-
+              " environment variable beforehand.")
+    else:
+        CACHE_DIR = Path(CACHE_DIR)
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     return Memory(CACHE_DIR, verbose=0)

@@ -1,7 +1,13 @@
-"""Module for generating structural connectomes using geometric eigenmodes of the cortex."""
+"""
+Module for generating models of cortical structural connectomes.
+"""
 
+from __future__ import annotations
+from typing import TYPE_CHECKING
 import numpy as np
-from numpy.typing import NDArray, ArrayLike
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray, ArrayLike
 
 def model_connectome(
     emodes: ArrayLike,
@@ -21,9 +27,9 @@ def model_connectome(
     evals : array-like
         The eigenvalues array of shape (n_modes,).
     r : float, optional
-        Spatial scale parameter for the Green's function. Default is 9.53.
+        Spatial scale parameter for the Green's function, in millimeters. Default is `9.53`.
     k : int, optional
-        Number of eigenmodes to use. Default is 108.
+        Number of eigenmodes to use. Default is `108`.
 
     Returns
     -------
@@ -33,44 +39,44 @@ def model_connectome(
     Raises
     ------
     ValueError
-        If any input parameter is invalid, such as negative or non-numeric values for  
-        `r`, or if `k` is not a positive integer within the valid range.
+        If `emodes` does not have shape (n_verts, n_modes) where n_verts ≥ n_modes.
+    ValueError
+        If `evals` does not have shape (n_modes,).
+    ValueError
+        If `r` is not a positive number.
+    ValueError
+        If `k` is not a positive integer in the range [1, n_modes].
 
     Notes
     -----
-    If comparing this model to empirical connectomes, consider thresholding the generated connectome
-    to match the density of the empirical data.
+    If comparing this model to empirical connectomes, consider thresholding the returned matrix to
+    match the density of the empirical data.
     """
-    emodes = np.asarray(emodes)
-    evals = np.asarray(evals)
-    r = float(r)
+    # Format / validate arguments
+    emodes = np.asarray_chkfinite(emodes)
+    evals = np.asarray_chkfinite(evals)
 
-    if r <= 0:
-        raise ValueError("Parameter `r` must be positive.")
-    if emodes.ndim != 2:
-        raise ValueError("`emodes` must be a 2D array (vertices x modes).")
-    if len(evals) != emodes.shape[1]:
-        raise ValueError("Length of `evals` must match the number of modes (columns) in `emodes`.")
-    if k <= 0 or k > len(evals) or not isinstance(k, int):
-        raise ValueError(f"Parameter `k` must be an integer in the range [1, {len(evals)}].")
+    if emodes.ndim != 2 or emodes.shape[0] < emodes.shape[1]:
+        raise ValueError("`emodes` must have shape (n_verts, n_modes), where n_verts ≥ n_modes.")
+    n_modes = emodes.shape[1]
+    if evals.shape != (n_modes,):
+        raise ValueError(f"`evals` must have shape (n_modes,) = {(n_modes,)}, matching the number "
+                         "of columns in `emodes`.")
+    if not isinstance(r, (int, float)) or r <= 0:
+        raise ValueError("Parameter `r` must be a positive number.")
+    if not isinstance(k, int) or k <= 0 or k > n_modes:
+        raise ValueError(f"Parameter `k` must be an integer in the range [1, {n_modes}].")
 
-    # Select the first k eigenmodes and eigenvalues
-    k_evals = evals[:k]
-    k_emodes = emodes[:, :k]
-
-    # Compute structural connectivity
-    denom = 1/(1 + k_evals * r**2)
-
-    connectome = k_emodes @ np.diag(denom) @ np.linalg.pinv(k_emodes)
+    # Compute the Geometric Eigenmode Model
+    denom = 1/(1 + evals[:k] * r**2)
+    gem = emodes[:, :k] @ np.diag(denom) @ np.linalg.pinv(emodes[:, :k])
 
     # Replace diagonal and negative values with zero
-    np.fill_diagonal(connectome, 0)
-    connectome[connectome < 0] = 0
-    
-    # Symmetrize
-    connectome = (connectome + connectome.T) / 2
+    np.fill_diagonal(gem, 0)
+    gem = np.maximum(gem, 0)
 
-    # Normalize
-    connectome /= np.max(connectome)
+    # Symmetrise
+    gem = (gem + gem.T) / 2
 
-    return connectome
+    # Normalise
+    return gem / np.max(gem)
