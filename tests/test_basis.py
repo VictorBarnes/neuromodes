@@ -118,13 +118,16 @@ def test_reconstruct_regress_method(solver, gen_eigenmap):
 # z-transforming the matrix, this results in a RuntimeWarning (due to division by 0) and an output
 # which has inf values. This also creates another warning when using the 'correlation' metric due to
 # the prescence of inf values. These behaviours are reasonable, and should be flagged for the user,
-# but we can filter these warnings for this test.
+# but we can filter these warnings for this test. Due to precision errors, some reconstructed FC
+# matrices may have a correlation of 1 which leads to NaN values in the correlation_error output. 
+# This is also reasonable. This can be mitigated by using more timepoints in gen_eigenmap, but for
+# computaional efficiency we only use 3 timepoints.
 @pytest.mark.filterwarnings("ignore:divide by zero encountered in arctanh:RuntimeWarning")
 @pytest.mark.filterwarnings("ignore:invalid value encountered in subtract:RuntimeWarning")
 def test_reconstruct_mode_superposition_timeseries(solver, gen_eigenmap):
     eigenmaps, _ = gen_eigenmap
 
-    eigen_ts = eigenmaps.astype(np.float32) # Prevent memory allocation error
+    eigen_ts = eigenmaps.astype(np.float64) # Prevent memory allocation error
     fc = calc_vec_fc(eigen_ts)
 
     # Treat eigenmaps as timepoints of activity
