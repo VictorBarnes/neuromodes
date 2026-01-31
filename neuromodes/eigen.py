@@ -399,6 +399,30 @@ class EigenSolver(Solver):
             check_ortho=False,
             **kwargs
         )
+    
+    def generate_nulls(
+            self,
+            data: ArrayLike,
+            **kwargs
+    ) -> NDArray:
+        """
+        This is a wrapper for `neuromodes.nulls.generate_nulls`, see its documentation
+        for details:
+        https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.nulls.generate_nulls.html
+
+        Note that `emodes`, `evals`, and `mass` are passed automatically by the `EigenSolver` instance.
+        """
+        from neuromodes.nulls import generate_nulls
+
+        self._check_for_emodes()
+
+        return generate_nulls(
+            data=data,
+            emodes=self.emodes[:, 1:],  # exclude non-constant mode
+            evals=self.evals[1:],   # exclude non-constant mode
+            mass=self.mass,
+            **kwargs
+        )
 
 def scale_hetero(
     hetero: ArrayLike,
@@ -541,3 +565,58 @@ def is_orthonormal_basis(
     # Check Euclidean or mass-orthonormality
     prod = emodes.T @ emodes if mass is None else emodes.T @ mass @ emodes
     return np.allclose(prod, np.eye(n_modes), rtol=rtol, atol=atol, equal_nan=False)
+
+def get_eigengroups(emodes: NDArray) -> list[NDArray]:
+    """
+    Identify eigengroups based on eigenmode degeneracy patterns.
+    
+    Eigenmodes are grouped according to spherical harmonics pattern where group l
+    contains 2l+1 modes. This degeneracy arises from the Laplace-Beltrami operator
+    on spherical surfaces.
+    
+    Parameters
+    ----------
+    emodes : ndarray of shape (n_vertices, n_modes)
+        Eigenmodes (excluding zeroth mode if present).
+    suppress_message : bool, optional
+        Whether to suppress the warning message. Default is True.
+    
+    Returns
+    -------
+    list of ndarray
+        List of arrays, where each array contains indices of modes in that eigengroup.
+    
+    Raises
+    ------
+    ValueError
+        If number of modes is less than 3.
+    
+    Notes
+    -----
+    Eigenmodes must be truncated at first non-zero mode for this function to work correctly.
+    """
+    
+    n_modes = emodes.shape[1]  # number of eigenmodes
+    l = int(np.floor((n_modes - 1) / 2))
+    
+    # Handle edge cases
+    if n_modes < 3:
+        raise ValueError('Number of eigenmodes cannot be less than 3')
+    elif n_modes == 3:
+        return [np.arange(0, 3)]
+    elif 4 <= n_modes < 8:
+        return [np.arange(0, 3), np.arange(3, n_modes)]
+    
+    # General case: construct eigengroups following 2l+1 pattern
+    groups = []
+    ii = 0
+    i = 0
+    for g in range(1, l):
+        ii += 2 * g + 1
+        if ii >= n_modes:
+            groups.append(np.arange(i, n_modes))
+            return groups
+        groups.append(np.arange(i, ii))
+        i = ii
+    
+    return groups
