@@ -18,13 +18,13 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray, ArrayLike
 
 def read_surf(
-    mesh: Union[str, Path, Trimesh, TriaMesh, dict]
+    surf: Union[str, Path, Trimesh, TriaMesh, dict]
 ) -> Trimesh:
     """Load and validate a surface mesh.
 
     Parameters
     ----------
-    mesh : str, Path, trimesh.Trimesh, lapy.TriaMesh, or dict
+    surf : str, Path, trimesh.Trimesh, lapy.TriaMesh, or dict
         Surface mesh specified as a file path (string or Path) to a VTK (.vtk), GIFTI (.gii), or
         FreeSurfer file (.white, .pial, .inflated, .orig, .sphere, .smoothwm, .qsphere, .fsaverage),
         an instance of `trimesh.Trimesh` or `lapy.TriaMesh`, or a dictionary with `vertices` and
@@ -38,34 +38,34 @@ def read_surf(
     Raises
     ------
     ValueError
-        If `mesh` is a path-like string to an unsupported format.
+        If `surf` is a path-like string to an unsupported format.
     ValueError
-        If `mesh` is a path-like string to a file that does not exist.
+        If `surf` is a path-like string to a file that does not exist.
     """
-    if isinstance(mesh, Trimesh):
-        trimesh = mesh
-    elif isinstance(mesh, TriaMesh):
-        trimesh = Trimesh(vertices=mesh.v, faces=mesh.t)
-    elif isinstance(mesh, dict):
-        trimesh = Trimesh(vertices=mesh['vertices'], faces=mesh['faces'])
+    if isinstance(surf, Trimesh):
+        trimesh = surf
+    elif isinstance(surf, TriaMesh):
+        trimesh = Trimesh(vertices=surf.v, faces=surf.t)
+    elif isinstance(surf, dict):
+        trimesh = Trimesh(vertices=surf['vertices'], faces=surf['faces'])
     else:
-        mesh_str = str(mesh)
+        surf_str = str(surf)
         # check that file exists
-        if not Path(mesh_str).is_file():
-            raise ValueError(f'File not found: {mesh_str}')
+        if not Path(surf_str).is_file():
+            raise ValueError(f'File not found: {surf_str}')
 
         # Handle different file types
-        if mesh_str.endswith('.vtk'):
-            mesh_lapy = TriaMesh.read_vtk(mesh_str)
-            trimesh = Trimesh(vertices=mesh_lapy.v, faces=mesh_lapy.t)
-        elif mesh_str.endswith('.gii'):
-            mesh_data = cast(GiftiImage, load(mesh_str)).darrays
-            trimesh = Trimesh(vertices=mesh_data[0].data, faces=mesh_data[1].data)
-        elif mesh_str.endswith(
+        if surf_str.endswith('.vtk'):
+            surf_lapy = TriaMesh.read_vtk(surf_str)
+            trimesh = Trimesh(vertices=surf_lapy.v, faces=surf_lapy.t)
+        elif surf_str.endswith('.gii'):
+            surf_data = cast(GiftiImage, load(surf_str)).darrays
+            trimesh = Trimesh(vertices=surf_data[0].data, faces=surf_data[1].data)
+        elif surf_str.endswith(
             ('white', 'pial', 'inflated', 'orig', 'sphere', 'smoothwm', 'qsphere', 'fsaverage')
             ):
             vertices, faces = read_geometry(
-                mesh_str, read_metadata=False, read_stamp=False
+                surf_str, read_metadata=False, read_stamp=False
                 ) # will only return two outputs now # type: ignore
             trimesh = Trimesh(vertices=vertices, faces=faces) # type: ignore
         else:
@@ -75,9 +75,6 @@ def read_surf(
                 '.fsaverage), an instance of `trimesh.Trimesh` or `lapy.TriaMesh`, or a dictionary '
                 'of `faces` and `vertices`.'
                 )
-    
-    # Validate the mesh before returning
-    check_surf(trimesh)
 
     return trimesh
 
@@ -105,8 +102,6 @@ def mask_surf(
     ------
     ValueError
         If `mask` does not have a length matching the number of vertices in `surf`.
-    
-    
     """
     mask = np.asarray(mask, dtype=bool)
 
@@ -116,12 +111,9 @@ def mask_surf(
     
     # Mask faces where all vertices are in the mask
     face_mask = np.all(mask[surf.faces], axis=1)
-    mesh = surf.submesh([face_mask])[0] #type: ignore # submesh returns a list by default
-
-    # Validate the mesh before returning
-    check_surf(mesh)
+    masked_surf = surf.submesh([face_mask])[0] #type: ignore # submesh returns a list by default
     
-    return mesh
+    return masked_surf
 
 def check_surf(
     surf: Trimesh
@@ -140,9 +132,7 @@ def check_surf(
         If the surface mesh contains unreferenced vertices.
     ValueError
         If the surface mesh is not contiguous.
-    
     """
-
     # Check for unreferenced vertices
     referenced = np.zeros(len(surf.vertices), dtype=bool)
     referenced[surf.faces] = True
@@ -150,7 +140,7 @@ def check_surf(
         raise ValueError(f'Surface mesh contains {np.sum(~referenced)} unreferenced '
                          'vertices (i.e., not part of any face).')
 
-    # Check if the mesh is contiguous
+    # Check if the surf is contiguous
     n_components = surf.body_count
     if n_components != 1:
         raise ValueError(f'Surface mesh is not contiguous: {n_components} connected components '
@@ -160,7 +150,7 @@ def fetch_surf(
     species: str = 'human',
     density: str = '32k',
     hemi: str = 'L',
-    surf: str = 'midthickness',
+    surf_type: str = 'midthickness',
     template: str = 'fsLR'
 ) -> Tuple[Trimesh, NDArray]:
     """
@@ -179,14 +169,14 @@ def fetch_surf(
     hemi : str, optional
         Hemisphere of the surface mesh. Options are `'L'` for all species, and `'R'` for human.
         Default is `'L'`.
-    surf : str, optional
+    surf_type : str, optional
         Surface type to load. Currently only supports `'midthickness'`. Default is `'midthickness'`.
     template : str, optional
         Template of the surface mesh. Currently only supports `'fsLR'`. Default is `'fsLR'`.
     
     Returns
     -------
-    mesh : trimesh.Trimesh
+    surf : trimesh.Trimesh
         The loaded surface mesh.
     medmask : np.ndarray
         The medial wall mask as a boolean array.
@@ -197,16 +187,16 @@ def fetch_surf(
         If the specified surface data is not found in the `neuromodes/data` directory.
     """
     data_dir = files('neuromodes.data')
-    meshname = f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_{surf}.surf.gii'
+    surfname = f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_{surf_type}.surf.gii'
     maskname = f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_medmask.label.gii'
 
     try:
-        with as_file(data_dir / meshname) as fpath:
-            mesh = read_surf(fpath)
+        with as_file(data_dir / surfname) as fpath:
+            surf = read_surf(fpath)
         with as_file(data_dir / maskname) as fpath:
             medmask = cast(GiftiImage, load(fpath)).darrays[0].data.astype(bool)
         
-        return mesh, medmask
+        return surf, medmask
     except Exception as e:
         raise ValueError(
             f"Surface data not found. Please see {data_dir}/included_data.csv or "
@@ -265,7 +255,8 @@ def fetch_map(
 
 def _set_cache():
     """
-    Set up joblib memory caching.
+    Set up joblib memory caching based. Uses the directory specified by the `CACHE_DIR` 
+    environment variable, or defaults to `~/.neuromodes_cache` if not set.
     
     Returns
     -------

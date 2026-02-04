@@ -12,7 +12,7 @@ import numpy as np
 from scipy.sparse import spmatrix
 from scipy.sparse.linalg import LinearOperator, eigsh, splu
 from trimesh import Trimesh
-from neuromodes.io import read_surf, mask_surf
+from neuromodes.io import read_surf, mask_surf, check_surf
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray, ArrayLike
@@ -46,7 +46,7 @@ class EigenSolver(Solver):
             `'faces'` keys.
         mask : array-like, optional
             A boolean mask to exclude certain points (e.g., medial wall) from the surface mesh.
-            Default is `None`.
+            Vertices labelled as `False` in the mask will be excluded. Default is `None`.
         normalize : bool, optional
             Whether to normalize the surface mesh to have unit surface area and centroid at the
             origin (modifies the vertices). Default is `False`.
@@ -69,13 +69,16 @@ class EigenSolver(Solver):
         ValueError
             If `hetero` is constant (raised by `scale_hetero`).
         """
-        # Surface inputs and checks (check_surf called in read_surf and mask_surf)
+        # Surface inputs and checks
         surf = read_surf(surf)
         if mask is not None:
             self.mask = np.asarray(mask, dtype=bool)
             surf = mask_surf(surf, self.mask)
         else:
             self.mask = None
+        check_surf(surf)
+        
+        # Convert to lapy TriaMesh and normalize if desired
         self.geometry = TriaMesh(surf.vertices, surf.faces)
         if normalize:
             self.geometry.normalize_()
