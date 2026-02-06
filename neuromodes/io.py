@@ -102,6 +102,11 @@ def mask_surf(
     ------
     ValueError
         If `mask` does not have a length matching the number of vertices in `surf`.
+
+    Notes
+    -----
+    In `Trimesh.submesh`, `repair=False` is used to avoid an unnecessary dependency on 
+    `networkx`. Mesh validation is handled separately in `check_surf` in `EigenSolver`.
     """
     mask = np.asarray(mask, dtype=bool)
 
@@ -109,9 +114,9 @@ def mask_surf(
         raise ValueError(f"`mask` must have shape {(surf.vertices.shape[0],)} to match the number "
                          "of vertices in the surface mesh.")
     
-    # Mask faces where all vertices are in the mask
+    # Remove faces where all vertices are in the mask
     face_mask = np.all(mask[surf.faces], axis=1)
-    masked_surf = surf.submesh([face_mask])[0] #type: ignore # submesh returns a list by default
+    masked_surf = surf.submesh([face_mask], repair=False)[0] #type: ignore # submesh returns a list by default
     
     return masked_surf
 
