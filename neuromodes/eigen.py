@@ -24,8 +24,49 @@ class EigenSolver(Solver):
     This class computes the Laplace-Beltrami operator on a triangular mesh via the Finite Element
     Method, which discretizes the eigenvalue problem according to mass and stiffness matrices.
     Spatial heterogeneity and various normalization/scaling options are supported.
-    """
 
+    Parameters
+    ----------
+    surf : str, pathlib.Path, trimesh.Trimesh, lapy.TriaMesh, or dict
+        The surface mesh to be used. Can be a file path to a supported format (see
+        `io.read_surf`), a supported mesh object, or a dictionary with `'vertices'` and
+        `'faces'` keys.
+    mask : array-like, optional
+        A boolean mask to exclude certain points (e.g., medial wall) from the surface mesh.
+        Vertices labelled as `False` in the mask will be excluded. Default is `None`.
+    normalize : bool, optional
+        Whether to normalize the surface mesh to have unit surface area and centroid at the
+        origin (modifies the vertices). Default is `False`.
+    hetero : array-like, optional
+        A heterogeneity map to scale the Laplace-Beltrami operator. Default is `None`.
+    alpha : float, optional
+        Scaling parameter for the heterogeneity map. If a heterogenity map is specified, the
+        default is `1.0`. Otherwise, this value is ignored (and is set to `None`).
+    scaling : str, optional
+        Scaling function to apply to the heterogeneity map. Must be `'sigmoid'` or
+        `'exponential'`. If a heterogenity map is specified, the default is `'sigmoid'`.
+        Otherwise, this value is ignored (and is set to `None`).
+
+    Raises
+    ------
+    ValueError
+        If `hetero` length does not match the number of vertices (masked or unmasked).
+    ValueError
+        If `scaling` is not 'sigmoid' or 'exponential' (raised by `scale_hetero`).
+    ValueError
+        If `hetero` is constant (raised by `scale_hetero`).
+
+    References
+    ----------
+    ..  [1] Pang, J. C., et al. (2023). Geometric constraints on human brain function. Nature.
+        https://doi.org/10.1038/s41586-023-06098-1
+    ..  [2] Barnes, V., et al. (2026). Regional heterogeneity shapes macroscopic wave dynamics of
+        the human and non-human primate cortex. bioRxiv. https://doi.org/10.64898/2026.01.22.701178
+    ..  [3] Reuter, M., et al. (2006). Laplace-Beltrami spectra as 'Shape-DNA' of surfaces and
+        solids, Computer-Aided Design. https://doi.org/10.1016/j.cad.2005.10.011
+    ..  [4] Wachinger, C., et al. (2015). BrainPrint: a discriminative characterization of brain
+        morphology, Neuroimage. https://doi.org/10.1016/j.neuroimage.2015.01.032
+    """
     def __init__(
         self,
         surf: Union[str, Path, Trimesh, TriaMesh, dict],
@@ -35,40 +76,6 @@ class EigenSolver(Solver):
         alpha: Union[float, None] = None, # default to 1.0 if hetero given (and remains None)
         scaling: Union[str, None] = None  # default to "sigmoid" if hetero given (and remains None)
     ):
-        """
-        Initialize the EigenSolver class with surface, and optionally with a heterogeneity map.
-
-        Parameters
-        ----------
-        surf : str, pathlib.Path, trimesh.Trimesh, lapy.TriaMesh, or dict
-            The surface mesh to be used. Can be a file path to a supported format (see
-            `io.read_surf`), a supported mesh object, or a dictionary with `'vertices'` and
-            `'faces'` keys.
-        mask : array-like, optional
-            A boolean mask to exclude certain points (e.g., medial wall) from the surface mesh.
-            Vertices labelled as `False` in the mask will be excluded. Default is `None`.
-        normalize : bool, optional
-            Whether to normalize the surface mesh to have unit surface area and centroid at the
-            origin (modifies the vertices). Default is `False`.
-        hetero : array-like, optional
-            A heterogeneity map to scale the Laplace-Beltrami operator. Default is `None`.
-        alpha : float, optional
-            Scaling parameter for the heterogeneity map. If a heterogenity map is specified, the
-            default is `1.0`. Otherwise, this value is ignored (and is set to `None`).
-        scaling : str, optional
-            Scaling function to apply to the heterogeneity map. Must be `'sigmoid'` or
-            `'exponential'`. If a heterogenity map is specified, the default is `'sigmoid'`.
-            Otherwise, this value is ignored (and is set to `None`).
-
-        Raises
-        ------
-        ValueError
-            If `hetero` length does not match the number of vertices (masked or unmasked).
-        ValueError
-            If `scaling` is not 'sigmoid' or 'exponential' (raised by `scale_hetero`).
-        ValueError
-            If `hetero` is constant (raised by `scale_hetero`).
-        """
         # Surface inputs and checks
         surf = read_surf(surf)
         if mask is not None:
@@ -134,8 +141,7 @@ class EigenSolver(Solver):
 
     def compute_lbo(
         self, 
-        lump: bool = False,
-        smoothit: int = 10
+        lump: bool = False
     ) -> EigenSolver:
         """
         This method computes the Laplace-Beltrami operator using finite element methods on a
@@ -146,23 +152,13 @@ class EigenSolver(Solver):
         ----------
         lump : bool, optional
             Whether to use lumped mass matrix for the Laplace-Beltrami operator. Default is `False`.
-        smoothit : int, optional
-            Number of smoothing iterations for curvature calculation. Default is `10`.
 
         Returns
         -------
         EigenSolver
             The EigenSolver instance.
-
-        Raises
-        ------
-        ValueError
-            If `smoothit` is negative or not an integer.
         """
-        if not isinstance(smoothit, int) or smoothit < 0:
-            raise ValueError("`smoothit` must be a non-negative integer.")
-
-        u1, u2, _, _ = self.geometry.curvature_tria(smoothit)
+        u1, u2, _, _ = self.geometry.curvature_tria()
 
         hetero_tri = self.geometry.map_vfunc_to_tfunc(self.hetero)
         hetero_mat = np.tile(hetero_tri[:, np.newaxis], (1, 2))
@@ -180,7 +176,7 @@ class EigenSolver(Solver):
         rtol: float = 1e-5,
         sigma: Union[float, None] = -0.01,
         seed: Union[int, ArrayLike, None] = None, 
-        **kwargs
+        lump: bool = False
     ) -> EigenSolver:
         """
         Solves the generalized eigenvalue problem for the Laplace-Beltrami operator and compute
@@ -210,8 +206,8 @@ class EigenSolver(Solver):
             of eigenmodes on the same surface can have different orientations). Specify as an `int`
             (to set the seed) or a vector with n_verts elements (to directly set the initialisation
             vector). Default is `None` (not reproducible).
-        **kwargs
-            Additional keyword arguments passed to `compute_lbo` (`lump`, `smoothit`).
+        lump: bool = False
+            Whether to use lumped mass matrix for the Laplace-Beltrami operator. Default is `False`.
 
         Returns
         -------
@@ -232,7 +228,7 @@ class EigenSolver(Solver):
             raise ValueError("`n_modes` must be a positive integer.")
 
         # Compute the Laplace-Beltrami operator / set stiffness and mass matrices
-        self.compute_lbo(**kwargs)
+        self.compute_lbo(lump)
         
         # Set intitialization vector (if desired) for reproducibile eigenvectors 
         if seed is None or isinstance(seed, int):
