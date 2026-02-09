@@ -410,7 +410,7 @@ class EigenSolver(Solver):
         for details:
         https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.nulls.generate_nulls.html
 
-        Note that `emodes`, `evals`, and `mass` are passed automatically by the `EigenSolver` instance.
+        Note that `emodes`, `evals`, `mass`, and `mask` are passed automatically by the `EigenSolver` instance.
         """
         from neuromodes.nulls import generate_nulls
 
@@ -421,6 +421,7 @@ class EigenSolver(Solver):
             emodes=self.emodes[:, 1:],  # exclude non-constant mode
             evals=self.evals[1:],   # exclude non-constant mode
             mass=self.mass,
+            check_ortho=False,
             **kwargs
         )
 
@@ -566,7 +567,9 @@ def is_orthonormal_basis(
     prod = emodes.T @ emodes if mass is None else emodes.T @ mass @ emodes
     return np.allclose(prod, np.eye(n_modes), rtol=rtol, atol=atol, equal_nan=False)
 
-def get_eigengroups(emodes: NDArray) -> list[NDArray]:
+def get_eigengroup_inds(
+        emodes: NDArray
+    ) -> list[NDArray]:
     """
     Identify eigengroups based on eigenmode degeneracy patterns.
     
@@ -576,47 +579,46 @@ def get_eigengroups(emodes: NDArray) -> list[NDArray]:
     
     Parameters
     ----------
-    emodes : ndarray of shape (n_vertices, n_modes)
-        Eigenmodes (excluding zeroth mode if present).
-    suppress_message : bool, optional
-        Whether to suppress the warning message. Default is True.
+    emodes : array-like
+        The eigenmodes array of shape (n_verts, n_modes), where n_verts is the number of 
+        vertices and n_modes is the number of eigenmodes.
     
     Returns
     -------
     list of ndarray
         List of arrays, where each array contains indices of modes in that eigengroup.
-    
-    Raises
-    ------
-    ValueError
-        If number of modes is less than 3.
-    
+
     Notes
     -----
-    Eigenmodes must be truncated at first non-zero mode for this function to work correctly.
+    This function supports eigenmode arrays that either start at the first non-constant
+    mode (common when the constant mode has been excluded) or include the constant
+    mode as the first column. If a constant mode is detected in column 0 (near-zero
+    spatial variance), it is returned as its own singleton group ``[0]`` and subsequent
+    groups follow the spherical-harmonic degeneracy pattern ``3, 5, 7, ...``.
     """
-    
-    n_modes = emodes.shape[1]  # number of eigenmodes
-    l = int(np.floor((n_modes - 1) / 2))
-    
-    # Handle edge cases
-    if n_modes < 3:
-        raise ValueError('Number of eigenmodes cannot be less than 3')
-    elif n_modes == 3:
-        return [np.arange(0, 3)]
-    elif 4 <= n_modes < 8:
-        return [np.arange(0, 3), np.arange(3, n_modes)]
-    
-    # General case: construct eigengroups following 2l+1 pattern
+    emodes = np.asarray_chkfinite(emodes)
+    if emodes.ndim != 2:
+        raise ValueError("`emodes` must be a 2D array of shape (n_verts, n_modes).")
+
+    n_modes = emodes.shape[1]
+
+    # Detect if constant mode is present as first mode
+    constant_present = np.std(emodes[:, 0]) < 1e-6
+
     groups = []
-    ii = 0
-    i = 0
-    for g in range(1, l):
-        ii += 2 * g + 1
-        if ii >= n_modes:
-            groups.append(np.arange(i, n_modes))
-            return groups
-        groups.append(np.arange(i, ii))
-        i = ii
-    
+    start = 0
+    if constant_present:
+        groups.append(np.array([0], dtype=int))
+        start = 1
+
+    # Build groups with sizes 3, 5, 7, ... (i.e., 2l+1 for l=1,2,3,...) starting at `start`.
+    i = start
+    l = 1
+    while i < n_modes:
+        group_size = 2 * l + 1
+        j = min(i + group_size, n_modes)
+        groups.append(np.arange(i, j))
+        i = j
+        l += 1
+
     return groups

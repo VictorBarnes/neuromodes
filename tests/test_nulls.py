@@ -21,4 +21,15 @@ def test_reproducibility(solver):
 
     assert np.allclose(nulls1, nulls2), "Null spaces with the same seed should be identical"
 
-#TODO: test when parallelization is implemented
+# TODO: test when parallelization is implemented
+
+# TODO: constant mode failure
+
+# TODO: zero eval failure
+
+# TODO: n_modes < 3 failure
+
+# TODO: NaN in data failure
+
+# TODO: data shape mismatch failure
+
