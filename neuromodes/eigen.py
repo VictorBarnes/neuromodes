@@ -21,9 +21,10 @@ class EigenSolver(Solver):
     """
     EigenSolver class for spectral analysis and simulation on surface meshes.
 
-    This class computes the Laplace-Beltrami operator on a triangular mesh via the Finite Element
-    Method, which discretizes the eigenvalue problem according to mass and stiffness matrices.
-    Spatial heterogeneity and various normalization/scaling options are supported.
+    This class computes the Laplace-Beltrami operator (LBO) [1] on a triangular mesh via 
+    the Finite Element Method [2][3], which discretizes the eigenvalue problem according 
+    to mass and stiffness matrices. It also provides an option to incorporate spatial 
+    heterogeneity via the generalised LBO [4].
 
     Parameters
     ----------
@@ -60,12 +61,12 @@ class EigenSolver(Solver):
     ----------
     ..  [1] Pang, J. C., et al. (2023). Geometric constraints on human brain function. Nature.
         https://doi.org/10.1038/s41586-023-06098-1
-    ..  [2] Barnes, V., et al. (2026). Regional heterogeneity shapes macroscopic wave dynamics of
-        the human and non-human primate cortex. bioRxiv. https://doi.org/10.64898/2026.01.22.701178
-    ..  [3] Reuter, M., et al. (2006). Laplace-Beltrami spectra as 'Shape-DNA' of surfaces and
+    ..  [2] Reuter, M., et al. (2006). Laplace-Beltrami spectra as 'Shape-DNA' of surfaces and
         solids, Computer-Aided Design. https://doi.org/10.1016/j.cad.2005.10.011
-    ..  [4] Wachinger, C., et al. (2015). BrainPrint: a discriminative characterization of brain
+    ..  [3] Wachinger, C., et al. (2015). BrainPrint: a discriminative characterization of brain
         morphology, Neuroimage. https://doi.org/10.1016/j.neuroimage.2015.01.032
+    ..  [4] Barnes, V., et al. (2026). Regional heterogeneity shapes macroscopic wave dynamics of
+        the human and non-human primate cortex. bioRxiv. https://doi.org/10.64898/2026.01.22.701178
     """
     def __init__(
         self,

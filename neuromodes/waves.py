@@ -34,9 +34,10 @@ def simulate_waves(
     **balloon_params
 ) -> NDArray:
     """
-    Simulate neural activity or BOLD signals on the surface mesh using the eigenmode decomposition.
-    The simulation uses a Neural Field Theory wave model and optionally the Balloon-Windkessel model
-    for BOLD signal generation.
+    Simulate neural activity or BOLD signals on the surface mesh using the NFT wave 
+    equation [1][2] using homogeneous or heterogeneous modes [3]. Optionally, the output
+    of the wave model can be transformed into BOLD signals using the Balloon-Windkessel 
+    model [4][5].
 
     Parameters
     ----------
@@ -122,12 +123,12 @@ def simulate_waves(
 
     References
     ----------
-    ..  [1] Pang, J. C., et al. (2023). Geometric constraints on human brain function. Nature.
-        https://doi.org/10.1038/s41586-023-06098-1
-    ..  [2] Barnes, V., et al. (2026). Regional heterogeneity shapes macroscopic wave dynamics of
-        the human and non-human primate cortex. bioRxiv. https://doi.org/10.64898/2026.01.22.701178
-    ..  [3] Robinson, P. A., et al. (1997). Propagation and stability of waves of electrical
+    ..  [1] Robinson, P. A., et al. (1997). Propagation and stability of waves of electrical
         activity in the cerebral cortex. Physical Review E. https://doi.org/10.1103/physreve.56.826
+    ..  [2] Pang, J. C., et al. (2023). Geometric constraints on human brain function. Nature.
+        https://doi.org/10.1038/s41586-023-06098-1
+    ..  [3] Barnes, V., et al. (2026). Regional heterogeneity shapes macroscopic wave dynamics of
+        the human and non-human primate cortex. bioRxiv. https://doi.org/10.64898/2026.01.22.701178
     ..  [4] Buxton, R. B., et al. (1998). Dynamics of blood flow and oxygenation changes during
         brain activation: The balloon model. Magnetic Resonance in Med.
         https://doi.org/10.1002/mrm.1910390602

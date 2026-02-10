@@ -16,7 +16,8 @@ def model_connectome(
     k: int = 108
 ) -> NDArray:
     """
-    Generate a vertex-wise structural connectivity matrix using the Geometric Eigenmode Model.
+    Generate a vertex-wise structural connectivity matrix using the Geometric Eigenmode 
+    Model [1].
 
     Parameters
     ----------
