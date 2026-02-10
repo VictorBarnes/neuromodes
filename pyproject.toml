@@ -7,7 +7,7 @@ requires-python = ">=3.9"
 keywords = ["python", "modelling", "neuroimaging", "eigenmodes", "brain-mapping"]
 
 dependencies = [
-    "lapy>=1.1.0",
+    "lapy @ git+https://github.com/Deep-MI/LaPy.git@main",
     "nibabel>=5.2.1",
     "numpy>=1.24.4",
     "scipy>=1.10.1",
