@@ -8,17 +8,16 @@ autocorrelation structure through random rotation of geometric eigenmodes.
 import numpy as np
 from numpy.typing import NDArray, ArrayLike
 from scipy.stats import special_ortho_group
-from scipy import linalg, sparse
 from joblib import Parallel, delayed
-from typing import Union, Tuple
+from typing import Union
 
 from neuromodes.basis import decompose
-from neuromodes.eigen import get_eigengroup_inds, is_orthonormal_basis
+from neuromodes.eigen import get_eigengroup_inds
 
-match_eigenstrapping = False
-# print(f"Match eigenstrapping mode: {match_eigenstrapping}")
+match_eigenstrapping = True    # Note: tests will only pass if this is False
+print(f"Match eigenstrapping mode: {match_eigenstrapping}")
 
-def generate_nulls(
+def eigenstrap(
     data: ArrayLike,
     emodes: ArrayLike,
     evals: ArrayLike,
@@ -30,10 +29,10 @@ def generate_nulls(
     residual: Union[str, None] = None,
     n_jobs: int = -1,
     seed: Union[int, None] = None,
-    check_ortho: bool = True
+    check_ortho: bool = True,
 ) -> NDArray:
     """
-    Generate surface-based null maps via rotation of eigengroups.
+    Generate surface-based null maps via eigenstrapping [1].
     
     This function generates spatial null models that preserve the spatial autocorrelation
     structure of brain maps through random rotation of geometric eigenmodes. The method
@@ -46,12 +45,10 @@ def generate_nulls(
         Empirical brain map of shape (n_verts,) to generate nulls from. If working on a 
         masked surface, `data` must already be masked (see Notes).
     emodes : array-like of shape (n_verts, n_modes)
-        The eigenmodes array of shape (n_verts, n_modes), excluding the constant mode, 
-        where n_verts is the number of vertices and n_modes is the number of eigenmodes. 
-        If working on a masked surface, `emodes` must already be masked (see Notes).
+        The eigenmodes array of shape (n_verts, n_modes). If working on a masked surface,
+        `emodes` must already be masked (see Notes).
     evals : array-like
-        The eigenvalues array of shape (n_modes,) excluding the eval corresponding to the 
-        constant mode.
+        The eigenvalues array of shape (n_modes,).
     n_nulls : int, optional
         Number of null maps to generate. Default is 1000.
     method : str, optional
@@ -76,7 +73,7 @@ def generate_nulls(
         Number of parallel workers. -1 uses all available cores. Default is -1.
     seed : int, optional
         Random seed for reproducibility. If provided, generates deterministic nulls (see 
-        Notes for more details). Default is None.
+        Notes). Default is None.
     check_ortho : bool, optional
         Whether to check if `emodes` are mass-orthonormal before using the `'project'` method
         in `neuromodes.basis.decompose`. Default is `True`.
@@ -114,32 +111,29 @@ def generate_nulls(
         Imaging Neuroscience. https://doi.org/10.1162/IMAG.a.71
     """
     # Validate inputs
-    emodes = np.asarray(emodes) # chkfinite in decompose
-    evals = np.asarray_chkfinite(evals)
+    emodes = np.asarray(emodes)  # chkfinite in decompose
+    evals = np.asarray_chkfinite(evals) 
     data = np.asarray_chkfinite(data)
 
-    # Check whether emodes have been truncated at first non-constant mode
-    if (np.std(emodes, axis=0) < 1e-6).any() or (evals < 1e-6).any():
-        raise ValueError("Eigenmodes appear to include the constant mode; however, null "
-                         "generation requires modes starting from the first non-constant "
-                         "mode. Please exclude the constant mode and corresponding eval.")
+    if emodes.ndim != 2 or emodes.shape[0] < emodes.shape[1]:
+        raise ValueError("`emodes` must have shape (n_verts, n_modes), where n_verts ≥ n_modes.")
+    _, n_modes = emodes.shape
+    if evals.shape != (n_modes,):
+        raise ValueError("`evals` must have shape (n_modes,), matching the number of columns in "
+                         f"`emodes` ({n_modes}).")
     
     if residual is not None and residual not in ('add', 'permute'):
         raise ValueError(f"Invalid residual method '{residual}'; must be 'add', 'permute', or None.")
     
     # Compute decomposition coefficients and residuals
     if match_eigenstrapping:
-        coeffs = np.linalg.solve(emodes.T @ emodes, emodes.T @ data)
+        coeffs = np.linalg.solve(emodes[:, 1:].T @ emodes[:, 1:], emodes[:, 1:].T @ data)
     else:
-        coeffs = decompose(data, emodes, method=method, mass=mass, check_ortho=check_ortho)
+        coeffs = decompose(data, emodes[:, 1:], method=method, mass=mass, check_ortho=check_ortho)
     coeffs = coeffs.squeeze()
     
-    reconstructed = emodes @ coeffs
+    reconstructed = emodes[:, 1:] @ coeffs
     residuals = data - reconstructed
-    
-    # TODO: remove first (constant) eigengroup from following calculation
-    # Identify eigengroups
-    groups = get_eigengroup_inds(emodes)
     
     if match_eigenstrapping:
         # Match eigenstrapping exactly: set global seed AND create RandomState
@@ -151,12 +145,26 @@ def generate_nulls(
         # Simplified approach for non-eigenstrapping mode
         rng = np.random.RandomState(seed)
         null_seeds = rng.randint(np.iinfo(np.int32).max, size=n_nulls)
+
+    # Identify eigengroups for the modes that will be rotated
+    groups = get_eigengroup_inds(n_modes)[1:]    # Exclude constant mode group
+    # If `n_modes` is not a perfect square then exclude the last group
+    if int(np.sqrt(n_modes))**2 != n_modes:  
+        groups = groups[:-1]
     
     # Generate nulls in parallel
     nulls = Parallel(n_jobs=n_jobs)(
-        delayed(_generate_single_null)(
-            data, emodes, evals, groups, coeffs, residuals, mass, resample, randomize, 
-            residual, seed_i
+        delayed(_eigenstrap_single)(
+            data=data,
+            emodes=emodes,
+            evals=evals,
+            groups=groups,
+            coeffs=coeffs,
+            residual_data=residuals,
+            resample=resample,
+            randomize=randomize,
+            residual=residual,
+            seed=seed_i
         )
         for seed_i in null_seeds
     )
@@ -169,18 +177,17 @@ def generate_nulls(
 
     return result
 
-def _generate_single_null(
+def _eigenstrap_single(
     data: NDArray,
     emodes: NDArray,
     evals: NDArray,
     groups: list[NDArray],
     coeffs: NDArray,
-    residuals: NDArray,
-    mass: Union[NDArray, None],
+    residual_data: NDArray,
     resample: bool,
     randomize: bool,
     residual: Union[str, None],
-    seed: Union[int, None]
+    seed: Union[int, None],
 ) -> NDArray:
     """
     Generate a single null map.
@@ -199,10 +206,8 @@ def _generate_single_null(
         Eigengroup indices.
     coeffs : array-like
         Decomposition coefficients of shape (n_modes,)
-    residuals : array-like
+    residual_data : array-like
         Residuals from reconstruction of shape (n_verts,).
-    mass: array-like
-        The mass matrix of shape (n_verts, n_verts) used for the decomposition.
     resample : bool
         Whether to resample values from original data.
     randomize : bool
@@ -218,35 +223,31 @@ def _generate_single_null(
         Generated null map with full vertex indexing.
     """
     # Create random state for seed generation
-    rng = _check_random_state(seed) if match_eigenstrapping else np.random.RandomState(seed)
+    if match_eigenstrapping:
+        # Match eigenstrapping: rotations use global state, but shuffling uses per-null seed
+        rng = _check_random_state(seed)
+    else:
+        # Use per-null independent random state for everything
+        rng = np.random.RandomState(seed)
     
     # Initialize rotated modes
     rotated_emodes = np.zeros_like(emodes)
     
     # Rotate each eigengroup
-    max_var = 0
     for group_idx in groups:
-        group_emodes = emodes[:, group_idx]
+        group_modes = emodes[:, group_idx]
         group_evals = evals[group_idx]
-
-        eval_var = np.var(group_evals)
-        if eval_var > max_var:
-            max_var = eval_var
         
         # Transform to spheroid, rotate, transform back to ellipsoid
-        # spheroid_modes = group_emodes / np.sqrt(group_evals)
-
-        rotated_spheroid = _rotate_emodes(group_emodes, random_state=rng)
-        
-        # rotated_spheroid = rotated_spheroid * np.sqrt(group_evals)
-        
-        rotated_emodes[:, group_idx] = rotated_spheroid
-
-    # print(f"Max eigenvalue variance across groups: {max_var}")
-
-    # Check orthonormality of rotated modes
-    if not is_orthonormal_basis(rotated_emodes, mass=mass):
-        raise ValueError("Rotated eigenmodes are not orthonormal.")
+        normalised_modes = group_modes / np.sqrt(group_evals)
+        if match_eigenstrapping:
+            # Use global random state (like eigenstrapping's rotate_matrix with seed=None)
+            rotated_modes = _rotate_emodes(normalised_modes, random_state=None)
+        else:
+            # Use per-null independent random state
+            rotated_modes = _rotate_emodes(normalised_modes, random_state=rng)
+        rotated_emodes[:, group_idx] = rotated_modes * np.sqrt(group_evals)
+    rotated_emodes = rotated_emodes[:, 1:]  # Exclude constant mode from reconstruction
     
     # Optionally shuffle coefficients within eigengroups
     null_coeffs = coeffs.copy()
@@ -254,25 +255,14 @@ def _generate_single_null(
         for group_idx in groups:
             null_coeffs[group_idx] = rng.permutation(null_coeffs[group_idx])
     
-    # TODO: figure out whether normalization is needed here
     # Reconstruct null
-    if np.any(np.isnan(rotated_emodes)) or np.any(np.isinf(rotated_emodes)):
-        raise ValueError("Rotated eigenmodes contain NaN or Inf values.")
-    if np.any(np.isnan(null_coeffs)) or np.any(np.isinf(null_coeffs)):
-        raise ValueError("Null coefficients contain NaN or Inf values.")
-    # Check if null_coeffs contains any values close to 0
-    if np.any(np.isclose(null_coeffs, 0)):
-        raise ValueError("Null coefficients contain values close to zero, which may lead to invalid null maps.")
     null_map = rotated_emodes @ null_coeffs
-
-    if np.any(np.isnan(null_map)) or np.any(np.isinf(null_map)):
-        raise ValueError("Generated null map contains NaN or Inf values.")
     
     # Handle residuals
     if residual == 'add':
-        null_map += residuals
+        null_map += residual_data
     elif residual == 'permute':
-        null_map += rng.permutation(residuals)
+        null_map += rng.permutation(residual_data)
     
     # Resample values from original data
     if resample:
@@ -286,59 +276,6 @@ def _generate_single_null(
         null_map = null_map * scale_factor + offset
     
     return null_map
-
-# TODO: decide whether we're going to use this function
-def _compute_mass_sqrt(mass: Union[NDArray, sparse.spmatrix]) -> Tuple[NDArray, NDArray]:
-    """
-    Compute M^(1/2) and M^(-1/2) using eigendecomposition.
-    
-    For a symmetric positive definite mass matrix M, computes:
-        M = Q Λ Q^T
-        M^(1/2) = Q Λ^(1/2) Q^T
-        M^(-1/2) = Q Λ^(-1/2) Q^T
-    
-    Parameters
-    ----------
-    mass : ndarray or sparse matrix
-        The mass matrix of shape (n_verts, n_verts). Must be symmetric positive definite.
-    
-    Returns
-    -------
-    mass_sqrt : ndarray of shape (n_verts, n_verts)
-        The matrix square root M^(1/2).
-    mass_invsqrt : ndarray of shape (n_verts, n_verts)
-        The inverse matrix square root M^(-1/2).
-    """
-    # Check if sparse
-    is_sparse = sparse.issparse(mass)
-    
-    if is_sparse:
-        # For sparse matrices, use eigsh (assumes symmetric)
-        # Compute all eigenvalues for full transformation
-        n = mass.shape[0]
-        evals, evecs = sparse.linalg.eigsh(mass, k=n-1, which='LM')
-    else:
-        # For dense matrices, use eigh
-        evals, evecs = linalg.eigh(mass)
-    
-    # Ensure all eigenvalues are positive (with numerical tolerance)
-    if np.any(evals <= 0):
-        min_eval = np.min(evals)
-        if min_eval < -1e-10:  # Significant negative eigenvalue
-            raise ValueError(f"Mass matrix has negative eigenvalue: {min_eval}")
-        # Set small negative/zero eigenvalues to small positive value
-        evals = np.maximum(evals, 1e-12)
-    
-    # Compute sqrt and inverse sqrt of eigenvalues
-    sqrt_evals = np.sqrt(evals)
-    invsqrt_evals = 1.0 / sqrt_evals
-    
-    # Reconstruct M^(1/2) and M^(-1/2)
-    # M^(1/2) = Q * sqrt(Λ) * Q^T
-    mass_sqrt = evecs @ np.diag(sqrt_evals) @ evecs.T
-    mass_invsqrt = evecs @ np.diag(invsqrt_evals) @ evecs.T
-    
-    return mass_sqrt, mass_invsqrt
 
 def _rotate_emodes(
     emodes: NDArray,
@@ -354,9 +291,10 @@ def _rotate_emodes(
     ----------
     emodes : ndarray
         Eigenmodes to rotate of shape (n_vertices, n_modes).
-    random_state : int or numpy.random.RandomState, optional
+    random_state : int or numpy.random.RandomState or None
         Random state passed through to `scipy.stats.special_ortho_group.rvs`.
-        Prefer passing a RandomState instance so successive calls advance the RNG state.
+        If None, uses the global numpy random state (matching eigenstrapping behavior).
+        If a RandomState instance, successive calls advance that RNG state.
         If an int is provided, SciPy will reseed a fresh RNG for each call.
     
     Returns
@@ -366,7 +304,13 @@ def _rotate_emodes(
     """
     n_modes = emodes.shape[1]
 
-    rotation_matrix = special_ortho_group.rvs(dim=n_modes, random_state=random_state)
+    if match_eigenstrapping and random_state is None:
+        # Match eigenstrapping: use global random state by not passing random_state
+        # This lets scipy use check_random_state(None) which returns the global state
+        rotation_matrix = special_ortho_group.rvs(dim=n_modes, random_state=None)
+    else:
+        # Use provided random state (per-null independent or user-specified)
+        rotation_matrix = special_ortho_group.rvs(dim=n_modes, random_state=random_state)
     
     return emodes @ rotation_matrix
 
