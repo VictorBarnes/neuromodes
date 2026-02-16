@@ -5,6 +5,7 @@ This module provides functions for generating null brain maps that preserve spat
 autocorrelation structure through random rotation of geometric eigenmodes.
 """
 
+import warnings
 import numpy as np
 from numpy.typing import NDArray, ArrayLike
 from scipy.stats import special_ortho_group
@@ -14,8 +15,6 @@ from typing import Union
 from neuromodes.basis import decompose
 from neuromodes.eigen import get_eigengroup_inds
 
-match_eigenstrapping = True    # Note: tests will only pass if this is False
-print(f"Match eigenstrapping mode: {match_eigenstrapping}")
 
 def eigenstrap(
     data: ArrayLike,
@@ -46,7 +45,11 @@ def eigenstrap(
         masked surface, `data` must already be masked (see Notes).
     emodes : array-like of shape (n_verts, n_modes)
         The eigenmodes array of shape (n_verts, n_modes). If working on a masked surface,
-        `emodes` must already be masked (see Notes).
+        `emodes` must already be masked (see Notes). The first mode (column) should
+        correspond to the constant mode and will be removed from the computation. Note 
+        that this function rotates modes within eigengroups. If `n_modes` is not a perfect 
+        square (i.e. number of modes doesn't allow for complete eigengroups), then the 
+        last incomplete eigengroup will be excluded.
     evals : array-like
         The eigenvalues array of shape (n_modes,).
     n_nulls : int, optional
@@ -86,11 +89,11 @@ def eigenstrap(
     Raises
     ------
     ValueError
-        If residual is not None, 'add', or 'permute'.
+        If `emodes` is not 2D or has more columns than rows.
     ValueError
-        If number of modes is less than 3.
+        If `evals` length doesn't match number of columns in `emodes`.
     ValueError
-        If emodes columns are not orthonormal when method='project' and check_ortho=True.
+        If `residual` is not one of None, 'add', or 'permute'.
 
     Notes
     -----
@@ -100,9 +103,9 @@ def eigenstrap(
 
     Seeding is handled in two stages to ensure reproducibility when parallelising. First 
     `seed` is used to initialize a master random number generator (RNG) that generates an 
-    independent integer seed for each null map. Then each null uses that its allocated 
-    integer to generate its own RNG to use for all rotations/permutations of that null. 
-    This ensures that each null is independent of the number of parallel jobs used.
+    independent integer seed for each null map. Then each null uses its allocated integer 
+    to generate its own RNG to use for all rotations/permutations of that null. This 
+    ensures that each null is independent of the number of parallel jobs used.
     
     References
     ----------
@@ -126,30 +129,22 @@ def eigenstrap(
         raise ValueError(f"Invalid residual method '{residual}'; must be 'add', 'permute', or None.")
     
     # Compute decomposition coefficients and residuals
-    if match_eigenstrapping:
-        coeffs = np.linalg.solve(emodes[:, 1:].T @ emodes[:, 1:], emodes[:, 1:].T @ data)
-    else:
-        coeffs = decompose(data, emodes[:, 1:], method=method, mass=mass, check_ortho=check_ortho)
+    coeffs = decompose(data, emodes[:, 1:], method=method, mass=mass, check_ortho=check_ortho)
     coeffs = coeffs.squeeze()
     
     reconstructed = emodes[:, 1:] @ coeffs
     residuals = data - reconstructed
     
-    if match_eigenstrapping:
-        # Match eigenstrapping exactly: set global seed AND create RandomState
-        if seed is not None:
-            np.random.seed(seed)
-        rng = _check_random_state(seed)
-        null_seeds = rng.randint(np.iinfo(np.int32).max, size=n_nulls)
-    else:
-        # Simplified approach for non-eigenstrapping mode
-        rng = np.random.RandomState(seed)
-        null_seeds = rng.randint(np.iinfo(np.int32).max, size=n_nulls)
+    # Simplified approach for non-eigenstrapping mode
+    rng = np.random.RandomState(seed)
+    null_seeds = rng.randint(np.iinfo(np.int32).max, size=n_nulls)
 
     # Identify eigengroups for the modes that will be rotated
     groups = get_eigengroup_inds(n_modes)[1:]    # Exclude constant mode group
     # If `n_modes` is not a perfect square then exclude the last group
-    if int(np.sqrt(n_modes))**2 != n_modes:  
+    if int(np.sqrt(n_modes))**2 != n_modes:
+        warnings.warn(f"Number of modes ({n_modes}) is not a perfect square; Last "
+                      f"eigengroup will be excluded.")
         groups = groups[:-1]
     
     # Generate nulls in parallel
@@ -169,11 +164,7 @@ def eigenstrap(
         for seed_i in null_seeds
     )
     
-    if match_eigenstrapping:
-        result = np.row_stack(nulls)
-        result = np.asarray(result.squeeze()).T
-    else:
-        result = np.asarray(nulls).T
+    result = np.asarray(nulls).T
 
     return result
 
@@ -197,15 +188,14 @@ def _eigenstrap_single(
     data : array-like
         Empirical brain map of shape (n_verts,) to generate nulls from. 
     emodes : array-like
-        The eigenmodes array of shape (n_verts, n_modes), excluding the constant mode, 
-        where n_verts is the number of vertices and n_modes is the number of eigenmodes. 
+        The eigenmodes array of shape (n_verts, n_modes), where n_verts is the number of 
+        vertices and n_modes is the number of eigenmodes. 
     evals : array-like
-        The eigenvalues array of shape (n_modes,) excluding the eval corresponding to the 
-        constant mode.
+        The eigenvalues array of shape (n_modes,).
     groups : list of array-like
         Eigengroup indices.
     coeffs : array-like
-        Decomposition coefficients of shape (n_modes,)
+        Decomposition coefficients of shape (n_modes-1,) excluding the constant mode.
     residual_data : array-like
         Residuals from reconstruction of shape (n_verts,).
     resample : bool
@@ -222,13 +212,8 @@ def _eigenstrap_single(
     ndarray of shape (n_verts,)
         Generated null map with full vertex indexing.
     """
-    # Create random state for seed generation
-    if match_eigenstrapping:
-        # Match eigenstrapping: rotations use global state, but shuffling uses per-null seed
-        rng = _check_random_state(seed)
-    else:
-        # Use per-null independent random state for everything
-        rng = np.random.RandomState(seed)
+    # Initialize RNG for this null using the provided seed to ensure reproducibility
+    rng = np.random.RandomState(seed)
     
     # Initialize rotated modes
     rotated_emodes = np.zeros_like(emodes)
@@ -240,12 +225,7 @@ def _eigenstrap_single(
         
         # Transform to spheroid, rotate, transform back to ellipsoid
         normalised_modes = group_modes / np.sqrt(group_evals)
-        if match_eigenstrapping:
-            # Use global random state (like eigenstrapping's rotate_matrix with seed=None)
-            rotated_modes = _rotate_emodes(normalised_modes, random_state=None)
-        else:
-            # Use per-null independent random state
-            rotated_modes = _rotate_emodes(normalised_modes, random_state=rng)
+        rotated_modes = _rotate_emodes(normalised_modes, random_state=rng)
         rotated_emodes[:, group_idx] = rotated_modes * np.sqrt(group_evals)
     rotated_emodes = rotated_emodes[:, 1:]  # Exclude constant mode from reconstruction
     
@@ -253,7 +233,8 @@ def _eigenstrap_single(
     null_coeffs = coeffs.copy()
     if randomize:
         for group_idx in groups:
-            null_coeffs[group_idx] = rng.permutation(null_coeffs[group_idx])
+            adjusted_idx = np.array(group_idx) - 1  # Adjust for excluded constant mode
+            null_coeffs[adjusted_idx] = rng.permutation(null_coeffs[adjusted_idx])
     
     # Reconstruct null
     null_map = rotated_emodes @ null_coeffs
@@ -292,10 +273,8 @@ def _rotate_emodes(
     emodes : ndarray
         Eigenmodes to rotate of shape (n_vertices, n_modes).
     random_state : int or numpy.random.RandomState or None
-        Random state passed through to `scipy.stats.special_ortho_group.rvs`.
-        If None, uses the global numpy random state (matching eigenstrapping behavior).
-        If a RandomState instance, successive calls advance that RNG state.
-        If an int is provided, SciPy will reseed a fresh RNG for each call.
+        Random seed or RNG for reproducibility. If int, will be used to create a new RNG.
+        If None, will use the global RNG.
     
     Returns
     -------
@@ -304,33 +283,8 @@ def _rotate_emodes(
     """
     n_modes = emodes.shape[1]
 
-    if match_eigenstrapping and random_state is None:
-        # Match eigenstrapping: use global random state by not passing random_state
-        # This lets scipy use check_random_state(None) which returns the global state
-        rotation_matrix = special_ortho_group.rvs(dim=n_modes, random_state=None)
-    else:
-        # Use provided random state (per-null independent or user-specified)
-        rotation_matrix = special_ortho_group.rvs(dim=n_modes, random_state=random_state)
+    # Generate a random rotation matrix from the special orthogonal group SO(n_modes)
+    rotation_matrix = special_ortho_group.rvs(dim=n_modes, random_state=random_state)
     
     return emodes @ rotation_matrix
 
-#TODO: remove this function
-def _check_random_state(seed):
-    """
-    Turn seed into a np.random.RandomState instance.
-
-    Parameters
-    ----------
-    seed : None | int | np.random.RandomState
-
-    Returns
-    -------
-    np.random.RandomState
-    """
-    if seed is None or seed is np.random:
-        return np.random.mtrand._rand
-    if isinstance(seed, (int, np.integer)):
-        return np.random.RandomState(seed)
-    if isinstance(seed, np.random.RandomState):
-        return seed
-    raise ValueError(f"{seed} cannot be used to seed a numpy.random.RandomState instance")

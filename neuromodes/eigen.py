@@ -572,7 +572,9 @@ def get_eigengroup_inds(
     ) -> list[NDArray]:
     """
     Identify eigengroups based on ordering of spherical harmonics. Each eigengroup 
-    contains the next 2k+1 modes, where k is the eigengroup number (starting from 0).
+    contains the next 2k+1 modes, where k is the eigengroup number (starting from 0). If
+    n_modes does not include a complete eigengroup, the final group will contain the 
+    remaining modes.
     
     Parameters
     ----------

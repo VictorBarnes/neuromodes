@@ -1078,8 +1078,8 @@ wheels = [
 
 [[package]]
 name = "lapy"
-version = "1.3.0"
-source = { registry = "https://pypi.org/simple" }
+version = "1.6.0.dev0"
+source = { git = "https://github.com/Deep-MI/LaPy.git?rev=main#83344c52354eb0cf060a9b3f79314785375db1e3" }
 dependencies = [
     { name = "nibabel" },
     { name = "numpy", version = "2.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
@@ -1090,10 +1090,6 @@ dependencies = [
     { name = "scipy", version = "1.13.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.10.*'" },
     { name = "scipy", version = "1.16.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/b1/20/28e7496b23211bbeac30911b1412dd3ab4241a4ad953a13ff26cdb7208d6/lapy-1.3.0.tar.gz", hash = "sha256:b1bdf050bac7924aeb070fadff89ee081ed19d57243fcae07656f4e9635d5b23", size = 60411, upload-time = "2025-09-16T07:33:47.231Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/aa/1d/14508d20428a1f0dbf15d3bb79047f66e4346315550c5aadf1d7252d4029/lapy-1.3.0-py3-none-any.whl", hash = "sha256:fb013799aa477c1f74093c3ed43e3b8673eb726a2a5dbb8778ae2d081b57a439", size = 64845, upload-time = "2025-09-16T07:33:46.216Z" },
 ]
 
 [[package]]
@@ -1303,7 +1299,7 @@ tutorials = [
 requires-dist = [
     { name = "ipykernel", marker = "extra == 'tutorials'", specifier = ">=6.31.0" },
     { name = "joblib", specifier = ">=1.5.3" },
-    { name = "lapy", specifier = ">=1.1.0" },
+    { name = "lapy", git = "https://github.com/Deep-MI/LaPy.git?rev=main" },
     { name = "matplotlib", marker = "extra == 'tutorials'", specifier = ">=3.9.4" },
     { name = "nibabel", specifier = ">=5.2.1" },
     { name = "nsbutils", marker = "extra == 'tutorials'", git = "https://github.com/NSBLab/nsbutils.git?rev=dev" },
