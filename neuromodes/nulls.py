@@ -228,11 +228,15 @@ def _eigenstrap_single(
     rotated_emodes = np.zeros_like(emodes)
     
     # Rotate each eigengroup
-    evals[0] = 1 # Set this to avoid infs/nans in first eigenmode -- doesn't affect anything else
-    for group_idx in groups:
+    for i, group_idx in enumerate(groups):
         group_modes = emodes[:, group_idx]
-        group_evals = evals[group_idx]
-        
+
+        # Set this to avoid infs/nans in first eigenmode -- doesn't affect anything else
+        if i == 0:
+            group_evals = np.array([1])
+        else:
+            group_evals = evals[group_idx]
+            
         # Transform to spheroid, rotate, transform back to ellipsoid
         normalised_modes = group_modes / np.sqrt(group_evals)
         rotated_modes = _rotate_emodes(normalised_modes, random_state=rng)
@@ -282,7 +286,7 @@ def _eigenstrap_single(
 
 def _rotate_emodes(
     emodes: NDArray,
-    random_state: Union[int, np.random.RandomState, None]
+    random_state: Union[np.random.RandomState, None]
     ) -> NDArray:
     """
     Apply random orthogonal rotation to eigenmodes.
