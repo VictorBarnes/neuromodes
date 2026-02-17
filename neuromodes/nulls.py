@@ -228,27 +228,33 @@ def _eigenstrap_single(
     rotated_emodes = np.zeros_like(emodes)
     
     # Rotate each eigengroup
-    for i, group_idx in enumerate(groups):
-        group_modes = emodes[:, group_idx]
+    for group in groups:
+        n_modes = group.size
 
-        # Set this to avoid infs/nans in first eigenmode -- doesn't affect anything else
-        if i == 0:
-            group_evals = np.array([1])
-        else:
-            group_evals = evals[group_idx]
-            
-        # Transform to spheroid, rotate, transform back to ellipsoid
-        normalised_modes = group_modes / np.sqrt(group_evals)
-        rotated_modes = _rotate_emodes(normalised_modes, random_state=rng)
-        rotated_emodes[:, group_idx] = rotated_modes * np.sqrt(group_evals)
-        # TODO: profile group-wise multiplication vs. generating a large sparse blockdiagonal matrix 
-        # and then multiplying/reconstructing all at once (perhaps including the coefficients too)
+        if n_modes == 1: # No rotation in groups with exactly one mode (e.g. first group)
+            rotated_emodes[:, group] = emodes[:, group]
+        else: # Transform to spheroid, rotate, transform back to ellipsoid
+            sqrt_evals = np.sqrt(evals[group])
+            rotation = special_ortho_group.rvs(dim=n_modes, random_state=rng)
+            rotated_emodes[:, group] = ((emodes[:, group] / sqrt_evals) @ rotation) * sqrt_evals
+
+    # TODO: profile group-wise multiplication vs. generating a large sparse blockdiagonal matrix 
+    # and then multiplying/reconstructing all at once (perhaps including the coefficients too)
+    # Something along the lines of: 
+    # for group in groups: 
+    #   n_modes = group.size
+    #   sqrt_evals = np.sqrt(evals[group]) if n_modes != 1 else np.array([1])
+    #   rotation = special_ortho_group.rvs(dim=n_modes, random_state=rng) if n_modes != 1 else np.array([[1]])
+    #   cufrrent_tform = np.diag(1 / sqrt_evals) @ rotation @ np.diag(sqrt_evals)
+    # << cat all the tforms into a large sparse matrix >>
+    # rotated_emodes[:, group] = emodes[:, group] @ tform
+
     
     # Optionally shuffle coefficients within eigengroups
     null_coeffs = coeffs.copy()
     if randomize:
-        for group_idx in groups:
-            null_coeffs[group_idx] = rng.permutation(null_coeffs[group_idx])
+        for group in groups:
+            null_coeffs[group] = rng.permutation(null_coeffs[group])
     
     # Reconstruct null
     null_map = rotated_emodes @ null_coeffs
@@ -286,37 +292,4 @@ def _eigenstrap_single(
                              f"'affine', 'mean', or 'range'.")
     
     return null_map
-
-def _rotate_emodes(
-    emodes: NDArray,
-    random_state: Union[np.random.RandomState, None]
-    ) -> NDArray:
-    """
-    Apply random orthogonal rotation to eigenmodes.
-    
-    Uses scipy's special_ortho_group to generate random rotation matrices from the
-    special orthogonal group SO(n), which preserves orthonormality.
-    
-    Parameters
-    ----------
-    emodes : ndarray
-        Eigenmodes to rotate of shape (n_vertices, n_modes).
-    random_state : int or numpy.random.RandomState or None
-        Random seed or RNG for reproducibility. If int, will be used to create a new RNG.
-        If None, will use the global RNG.
-    
-    Returns
-    -------
-    ndarray of shape (n_vertices, n_modes)
-        Rotated eigenmodes.
-    """
-    n_modes = emodes.shape[1]
-
-    # Generate a random rotation matrix from the special orthogonal group SO(n_modes)
-    if n_modes == 1:
-        rotation_matrix = np.array([[1]]) # degenerate case where SO(1) := [1]
-    else:
-        rotation_matrix = special_ortho_group.rvs(dim=n_modes, random_state=random_state)
-    
-    return emodes @ rotation_matrix
 
