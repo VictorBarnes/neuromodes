@@ -45,11 +45,11 @@ def eigenstrap(
         masked surface, `data` must already be masked (see Notes).
     emodes : array-like of shape (n_verts, n_modes)
         The eigenmodes array of shape (n_verts, n_modes). If working on a masked surface,
-        `emodes` must already be masked (see Notes). The first mode (column) should
-        correspond to the constant mode and will be removed from the computation. Note 
-        that this function rotates modes within eigengroups. If `n_modes` is not a perfect 
-        square (i.e. number of modes doesn't allow for complete eigengroups), then the 
-        last incomplete eigengroup will be excluded.
+        `emodes` must already be masked (see Notes). The first column is assumed to be the 
+        constant mode and will be removed from the computation. Note that this function 
+        rotates modes within eigengroups. If `n_modes` is not a perfect square (i.e. 
+        number of modes doesn't allow for complete eigengroups), then the last incomplete 
+        eigengroup will be excluded.
     evals : array-like
         The eigenvalues array of shape (n_modes,).
     n_nulls : int, optional
@@ -143,8 +143,8 @@ def eigenstrap(
     groups = get_eigengroup_inds(n_modes)[1:]    # Exclude constant mode group
     # If `n_modes` is not a perfect square then exclude the last group
     if int(np.sqrt(n_modes))**2 != n_modes:
-        warnings.warn(f"Number of modes ({n_modes}) is not a perfect square; Last "
-                      f"eigengroup will be excluded.")
+        warnings.warn(f"Number of modes ({n_modes}) is not a perfect square. Last "
+                      f"eigengroup containing {len(groups[-1])} modes will be excluded.")
         groups = groups[:-1]
     
     # Generate nulls in parallel
