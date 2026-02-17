@@ -70,9 +70,9 @@ def test_shape_mismatch_emodes_evals(solver, test_data):
     with pytest.raises(ValueError, match="must have shape"):
         eigenstrap(test_data, solver.emodes, wrong_evals, mass=solver.mass)
 
-def test_resample_preserves_distribution(solver, test_data):
+def test_resample_match(solver, test_data):
     """With resample=True, nulls should have same values as original data"""
-    nulls = solver.eigenstrap(test_data, n_nulls=10, resample=True, seed=0)
+    nulls = solver.eigenstrap(test_data, n_nulls=10, resample="match", seed=0)
     
     # Check that each null has the exact same values as original data (just reordered)
     for i in range(nulls.shape[1]):
@@ -81,18 +81,38 @@ def test_resample_preserves_distribution(solver, test_data):
         assert np.allclose(null_sorted, data_sorted), \
             f"Null {i} doesn't preserve data distribution"
 
-def test_non_square_modes(test_data):
-    """Should handle non-square n_modes by truncating last eigengroup with warning"""
-    # Use 95 modes (not a perfect square)
-    mesh, medmask = fetch_surf(density='4k')
-    non_square_solver = EigenSolver(mesh, mask=medmask).solve(n_modes=95, seed=0)
+def test_resample_zscore(solver, test_data):
+    """With resample='zscore', nulls should have mean ~0 and std ~1"""
+    nulls = solver.eigenstrap(test_data, n_nulls=10, resample="zscore", seed=0)
     
-    # Should complete with a warning about truncating last eigengroup
-    with pytest.warns(UserWarning, match="not a perfect square.*Last eigengroup.*will be excluded"):
-        nulls = non_square_solver.eigenstrap(test_data, n_nulls=3, seed=0)
+    for i in range(nulls.shape[1]):
+        mean = np.mean(nulls[:, i])
+        std = np.std(nulls[:, i])
+        assert np.isclose(mean, 0), f"Null {i} mean is not close to 0"
+        assert np.isclose(std, 1), f"Null {i} std is not close to 1"
+
+def test_resample_mean(solver, test_data):
+    """With resample='mean', nulls should have mean equal to original data mean"""
+    nulls = solver.eigenstrap(test_data, n_nulls=10, resample="mean", seed=0)
     
-    assert nulls.shape == (len(test_data), 3)
-    assert not np.any(np.isnan(nulls))
+    data_mean = np.mean(test_data)
+    
+    for i in range(nulls.shape[1]):
+        null_mean = np.mean(nulls[:, i])
+        assert np.isclose(null_mean, data_mean), f"Null {i} mean is not close to data mean"
+
+def test_resample_range(solver, test_data):
+    """With resample='range', nulls should have same min and max as original data"""
+    nulls = solver.eigenstrap(test_data, n_nulls=10, resample="range", seed=0)
+    
+    data_min = np.min(test_data)
+    data_max = np.max(test_data)
+    
+    for i in range(nulls.shape[1]):
+        null_min = np.min(nulls[:, i])
+        null_max = np.max(nulls[:, i])
+        assert np.isclose(null_min, data_min), f"Null {i} min is not close to data min"
+        assert np.isclose(null_max, data_max), f"Null {i} max is not close to data max"
 
 def test_randomize_option(solver, test_data):
     """Test randomize parameter works without errors"""
@@ -106,4 +126,16 @@ def test_residual_methods(solver, test_data):
         nulls = solver.eigenstrap(test_data, n_nulls=10, residual=method, seed=0)
         assert nulls.shape == (len(test_data), 10)
         assert not np.any(np.isnan(nulls))
+
+def test_non_square_modes(test_data):
+    """Should handle non-square n_modes by truncating last eigengroup with warning"""
+    # Use 95 modes (not a perfect square)
+    mesh, medmask = fetch_surf(density='4k')
+    non_square_solver = EigenSolver(mesh, mask=medmask).solve(n_modes=95, seed=0)
+    
+    # Should complete with a warning about truncating last eigengroup
+    with pytest.warns(UserWarning, match="not a perfect square.*Last eigengroup.*will be excluded"):
+        nulls = non_square_solver.eigenstrap(test_data, n_nulls=3, seed=0)
+    
+    assert nulls.shape == (len(test_data), 3)
         

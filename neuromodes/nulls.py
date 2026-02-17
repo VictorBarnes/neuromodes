@@ -23,7 +23,7 @@ def eigenstrap(
     n_nulls: int = 1000,
     method: str = 'project',
     mass: Union[ArrayLike, None] = None,
-    resample: bool = True,
+    resample: Union[str, None] = None,
     randomize: bool = False,
     residual: Union[str, None] = None,
     n_jobs: int = -1,
@@ -45,13 +45,12 @@ def eigenstrap(
         masked surface, `data` must already be masked (see Notes).
     emodes : array-like of shape (n_verts, n_modes)
         The eigenmodes array of shape (n_verts, n_modes). If working on a masked surface,
-        `emodes` must already be masked (see Notes). The first column is assumed to be the 
-        constant mode and will be removed from the computation. Note that this function 
-        rotates modes within eigengroups. If `n_modes` is not a perfect square (i.e. 
+        `emodes` must already be masked (see Notes). This function rotates modes 
+        within eigengroups. If the number of eigenmodes is not a perfect square (i.e. 
         number of modes doesn't allow for complete eigengroups), then the last incomplete 
         eigengroup will be excluded.
     evals : array-like
-        The eigenvalues array of shape (n_modes,).
+        The eigenvalues array of shape (n_modes,). 
     n_nulls : int, optional
         Number of null maps to generate. Default is 1000.
     method : str, optional
@@ -62,8 +61,10 @@ def eigenstrap(
         `'project'`. If working on a masked surface, `mass` must already be masked (see Notes). 
         Default is None.
     resample : bool, optional
-        Whether to resample null values from the empirical map to preserve the
-        empirical distribution. Default is True.
+        How to resample values from original data. Options are 'match' to match the sorted 
+        distribution of the original data, 'zscore' to z-score and rescale to original mean
+        and std, 'mean' to preserve the mean, and 'range' to preserve the minimum and 
+        maximum. Default is None for no resampling.
     randomize : bool, optional
         Whether to shuffle decomposition coefficients within eigengroups. This increases
         randomization but reduces spatial autocorrelation similarity to empirical data. 
@@ -94,12 +95,19 @@ def eigenstrap(
         If `evals` length doesn't match number of columns in `emodes`.
     ValueError
         If `residual` is not one of None, 'add', or 'permute'.
+    ValueError
+        If `resample` is not one of None, 'match', 'zscore', 'mean', or 'range'.
 
     Notes
     -----
     This function does not apply any vertex masking. If working on a masked surface (e.g., 
     excluding the medial wall), the user must pass `data`, `emodes`, and `mass` (if used) 
     already restricted to the desired masked vertices.
+
+    This function uses the constant mode (first column of `emodes`) and correpsonding 
+    eigenvalue to generates mean-preserving nulls. The constant mode is not rotated 
+    and the corresponding eigenvalue is set to 1 to avoid division by zero when 
+    normalizing the modes.
 
     Seeding is handled in two stages to ensure reproducibility when parallelising. First 
     `seed` is used to initialize a master random number generator (RNG) that generates an 
@@ -128,9 +136,13 @@ def eigenstrap(
     if residual is not None and residual not in ('add', 'permute'):
         raise ValueError(f"Invalid residual method '{residual}'; must be 'add', 'permute', or None.")
     
+    if resample is not None and resample not in ('match', 'zscore', 'mean', 'range'):
+        raise ValueError(f"Invalid resampling method '{resample}'; must be 'match', 'zscore', 'mean', "
+                         f"'range', or None.")
+    
     # Compute decomposition coefficients and residuals
     coeffs = decompose(data, emodes, method=method, mass=mass, check_ortho=check_ortho).squeeze()
-    residuals = data - emodes @ coeffs
+    residual_data = data - emodes @ coeffs if residual is not None else None
     
     # Simplified approach for non-eigenstrapping mode
     rng = np.random.RandomState(seed)
@@ -152,7 +164,7 @@ def eigenstrap(
             evals=evals,
             groups=groups,
             coeffs=coeffs,
-            residual_data=residuals,
+            residual_data=residual_data,
             resample=resample,
             randomize=randomize,
             residual=residual,
@@ -171,8 +183,8 @@ def _eigenstrap_single(
     evals: NDArray,
     groups: list[NDArray],
     coeffs: NDArray,
-    residual_data: NDArray,
-    resample: bool,
+    residual_data: Union[NDArray, None],
+    resample: Union[str, None],
     randomize: bool,
     residual: Union[str, None],
     seed: Union[int, None],
@@ -192,11 +204,11 @@ def _eigenstrap_single(
     groups : list of array-like
         Eigengroup indices.
     coeffs : array-like
-        Decomposition coefficients of shape (n_modes-1,) excluding the constant mode.
+        Decomposition coefficients of shape (n_modes,).
     residual_data : array-like
         Residuals from reconstruction of shape (n_verts,).
     resample : bool
-        Whether to resample values from original data.
+        How to resample values from original data.
     randomize : bool
         Whether to shuffle coefficients within eigengroups.
     residual : str
@@ -238,21 +250,33 @@ def _eigenstrap_single(
     null_map = rotated_emodes @ null_coeffs
     
     # Handle residuals
-    if residual == 'add':
-        null_map += residual_data
-    elif residual == 'permute':
-        null_map += rng.permutation(residual_data)
-    
+    if residual is not None:
+        if residual == 'add':
+            null_map += residual_data
+        elif residual == 'permute':
+            null_map += rng.permutation(residual_data)
+        else:
+            raise ValueError(f"Invalid residual method '{residual}'; must be 'add' or "
+                             f"'permute'.")
+
     # Resample values from original data
-    if resample:
-        sorted_data = np.sort(data)
-        sorted_indices = np.argsort(null_map)
-        null_map[sorted_indices] = sorted_data
-    else:
-        # Force match the minimum and maximum to original data range
-        scale_factor = (np.max(data) - np.min(data)) / (np.max(null_map) - np.min(null_map))
-        offset = np.min(data) - scale_factor * np.min(null_map)
-        null_map = null_map * scale_factor + offset
+    if resample is not None:
+        if resample == 'match':
+            sorted_data = np.sort(data)
+            sorted_indices = np.argsort(null_map)
+            null_map[sorted_indices] = sorted_data
+        elif resample == 'zscore':
+            null_map = (null_map - np.mean(null_map)) / np.std(null_map)
+        elif resample == 'mean':
+            null_map = (null_map - np.mean(null_map)) + np.mean(data)
+        elif resample == 'range':
+            # Force match the minimum and maximum to original data range
+            scale_factor = (np.max(data) - np.min(data)) / (np.max(null_map) - np.min(null_map))
+            offset = np.min(data) - scale_factor * np.min(null_map)
+            null_map = null_map * scale_factor + offset
+        else:
+            raise ValueError(f"Invalid resampling method '{resample}'; must be 'match', "
+                             f"'zscore', 'mean', or 'range'.")
     
     return null_map
 
