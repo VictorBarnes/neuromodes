@@ -16,8 +16,8 @@ def model_connectome(
     k: int = 108
 ) -> NDArray:
     """
-    Generate a vertex-wise structural connectivity matrix using the Green's function approach
-    described in Normand et al., 2025.
+    Generate a vertex-wise structural connectivity matrix using the Geometric Eigenmode 
+    Model [1].
 
     Parameters
     ----------
@@ -51,6 +51,11 @@ def model_connectome(
     -----
     If comparing this model to empirical connectomes, consider thresholding the returned matrix to
     match the density of the empirical data.
+
+    References
+    ----------
+    ..  [1] Normand, F., et al. (2025). Geometric constraints on the architecture of mammalian
+        cortical connectomes. BioRxiv. https://doi.org/10.1101/2025.09.17.676944
     """
     # Format / validate arguments
     emodes = np.asarray_chkfinite(emodes)
