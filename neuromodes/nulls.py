@@ -245,7 +245,7 @@ def _eigenstrap_single(
     #   n_modes = group.size
     #   sqrt_evals = np.sqrt(evals[group]) if n_modes != 1 else np.array([1])
     #   rotation = special_ortho_group.rvs(dim=n_modes, random_state=rng) if n_modes != 1 else np.array([[1]])
-    #   cufrrent_tform = np.diag(1 / sqrt_evals) @ rotation @ np.diag(sqrt_evals)
+    #   current_tform = np.diag(1 / sqrt_evals) @ rotation @ np.diag(sqrt_evals)
     # << cat all the tforms into a large sparse matrix >>
     # rotated_emodes[:, group] = emodes[:, group] @ tform
 
