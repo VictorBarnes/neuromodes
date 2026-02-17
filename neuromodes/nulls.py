@@ -129,18 +129,15 @@ def eigenstrap(
         raise ValueError(f"Invalid residual method '{residual}'; must be 'add', 'permute', or None.")
     
     # Compute decomposition coefficients and residuals
-    coeffs = decompose(data, emodes[:, 1:], method=method, mass=mass, check_ortho=check_ortho)
-    coeffs = coeffs.squeeze()
-    
-    reconstructed = emodes[:, 1:] @ coeffs
-    residuals = data - reconstructed
+    coeffs = decompose(data, emodes, method=method, mass=mass, check_ortho=check_ortho).squeeze()
+    residuals = data - emodes @ coeffs
     
     # Simplified approach for non-eigenstrapping mode
     rng = np.random.RandomState(seed)
     null_seeds = rng.randint(np.iinfo(np.int32).max, size=n_nulls)
 
     # Identify eigengroups for the modes that will be rotated
-    groups = get_eigengroup_inds(n_modes)[1:]    # Exclude constant mode group
+    groups = get_eigengroup_inds(n_modes)
     # If `n_modes` is not a perfect square then exclude the last group
     if int(np.sqrt(n_modes))**2 != n_modes:
         warnings.warn(f"Number of modes ({n_modes}) is not a perfect square. Last "
@@ -219,6 +216,7 @@ def _eigenstrap_single(
     rotated_emodes = np.zeros_like(emodes)
     
     # Rotate each eigengroup
+    evals[0] = 1 # Set this to avoid infs/nans in first eigenmode -- doesn't affect anything else
     for group_idx in groups:
         group_modes = emodes[:, group_idx]
         group_evals = evals[group_idx]
@@ -227,14 +225,14 @@ def _eigenstrap_single(
         normalised_modes = group_modes / np.sqrt(group_evals)
         rotated_modes = _rotate_emodes(normalised_modes, random_state=rng)
         rotated_emodes[:, group_idx] = rotated_modes * np.sqrt(group_evals)
-    rotated_emodes = rotated_emodes[:, 1:]  # Exclude constant mode from reconstruction
+        # TODO: profile group-wise multiplication vs. generating a large sparse blockdiagonal matrix 
+        # and then multiplying/reconstructing all at once (perhaps including the coefficients too)
     
     # Optionally shuffle coefficients within eigengroups
     null_coeffs = coeffs.copy()
     if randomize:
         for group_idx in groups:
-            adjusted_idx = np.array(group_idx) - 1  # Adjust for excluded constant mode
-            null_coeffs[adjusted_idx] = rng.permutation(null_coeffs[adjusted_idx])
+            null_coeffs[group_idx] = rng.permutation(null_coeffs[group_idx])
     
     # Reconstruct null
     null_map = rotated_emodes @ null_coeffs
@@ -284,7 +282,10 @@ def _rotate_emodes(
     n_modes = emodes.shape[1]
 
     # Generate a random rotation matrix from the special orthogonal group SO(n_modes)
-    rotation_matrix = special_ortho_group.rvs(dim=n_modes, random_state=random_state)
+    if n_modes == 1:
+        rotation_matrix = np.array([[1]]) # degenerate case where SO(1) := [1]
+    else:
+        rotation_matrix = special_ortho_group.rvs(dim=n_modes, random_state=random_state)
     
     return emodes @ rotation_matrix
 
