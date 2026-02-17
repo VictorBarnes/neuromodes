@@ -61,9 +61,9 @@ def eigenstrap(
         `'project'`. If working on a masked surface, `mass` must already be masked (see Notes). 
         Default is None.
     resample : bool, optional
-        How to resample values from original data. Options are 'match' to match the sorted 
-        distribution of the original data, 'zscore' to z-score and rescale to original mean
-        and std, 'mean' to preserve the mean, and 'range' to preserve the minimum and 
+        How to resample values from original data. Options are 'exact' to match the sorted 
+        distribution of the original data, 'affine' to match the original mean and standard
+        deviation, 'mean' to match the mean, and 'range' to match the minimum and 
         maximum. Default is None for no resampling.
     randomize : bool, optional
         Whether to shuffle decomposition coefficients within eigengroups. This increases
@@ -96,7 +96,7 @@ def eigenstrap(
     ValueError
         If `residual` is not one of None, 'add', or 'permute'.
     ValueError
-        If `resample` is not one of None, 'match', 'zscore', 'mean', or 'range'.
+        If `resample` is not one of None, 'exact', 'affine', 'mean', or 'range'.
 
     Notes
     -----
@@ -136,8 +136,8 @@ def eigenstrap(
     if residual is not None and residual not in ('add', 'permute'):
         raise ValueError(f"Invalid residual method '{residual}'; must be 'add', 'permute', or None.")
     
-    if resample is not None and resample not in ('match', 'zscore', 'mean', 'range'):
-        raise ValueError(f"Invalid resampling method '{resample}'; must be 'match', 'zscore', 'mean', "
+    if resample is not None and resample not in ('exact', 'affine', 'mean', 'range'):
+        raise ValueError(f"Invalid resampling method '{resample}'; must be 'exact', 'affine', 'mean', "
                          f"'range', or None.")
     
     # Compute decomposition coefficients and residuals
@@ -255,6 +255,10 @@ def _eigenstrap_single(
     
     # Handle residuals
     if residual is not None:
+        if residual_data is None: 
+            raise ValueError(f"residual_data must be supplied when residual ('{residual}') is not "
+                             f"None.")
+        
         if residual == 'add':
             null_map += residual_data
         elif residual == 'permute':
@@ -265,22 +269,21 @@ def _eigenstrap_single(
 
     # Resample values from original data
     if resample is not None:
-        if resample == 'match':
+        if resample == 'range':
+            # Force match the minimum and maximum to original data range
+            scale_factor = (np.max(data) - np.min(data)) / (np.max(null_map) - np.min(null_map))
+            null_map = (null_map - np.min(null_map)) * scale_factor + np.min(data)
+        elif resample == 'mean':
+            null_map = (null_map - np.mean(null_map)) + np.mean(data)
+        elif resample == 'affine':
+            null_map = (null_map - np.mean(null_map)) / np.std(null_map) * np.std(data) + np.mean(data)
+        elif resample == 'exact':
             sorted_data = np.sort(data)
             sorted_indices = np.argsort(null_map)
             null_map[sorted_indices] = sorted_data
-        elif resample == 'zscore':
-            null_map = (null_map - np.mean(null_map)) / np.std(null_map)
-        elif resample == 'mean':
-            null_map = (null_map - np.mean(null_map)) + np.mean(data)
-        elif resample == 'range':
-            # Force match the minimum and maximum to original data range
-            scale_factor = (np.max(data) - np.min(data)) / (np.max(null_map) - np.min(null_map))
-            offset = np.min(data) - scale_factor * np.min(null_map)
-            null_map = null_map * scale_factor + offset
         else:
-            raise ValueError(f"Invalid resampling method '{resample}'; must be 'match', "
-                             f"'zscore', 'mean', or 'range'.")
+            raise ValueError(f"Invalid resampling method '{resample}'; must be 'exact', "
+                             f"'affine', 'mean', or 'range'.")
     
     return null_map
 
