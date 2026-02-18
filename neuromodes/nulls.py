@@ -9,6 +9,7 @@ from typing import Union, TYPE_CHECKING
 from warnings import warn
 from joblib import Parallel, delayed
 import numpy as np
+from scipy.sparse import block_diag
 from scipy.stats import special_ortho_group
 from neuromodes.basis import decompose
 from neuromodes.eigen import get_eigengroup_inds
@@ -306,8 +307,8 @@ def _rotate_emodes(
 
 def _eigenstrap_single_block(
     data: NDArray,
-    emodes: NDArray,
-    evals: NDArray,
+    norm_emodes: NDArray,
+    sqrt_evals: NDArray,
     groups: list[NDArray],
     coeffs: NDArray,
     residual_data: Union[NDArray, None],
@@ -316,22 +317,8 @@ def _eigenstrap_single_block(
     residual: Union[str, None],
     seed: Union[int, None],
 ):
-    from scipy.sparse import block_diag
     # Initialize RNG for this null using the provided seed to ensure reproducibility
     rng = np.random.RandomState(seed)
-    
-    # Rotate all eigengroups at once using a large block-diagonal rotation matrix
-    rotation_matrices = []
-    for mode_inds in groups[1:]:
-        rotation_matrices.append(special_ortho_group.rvs(dim=len(mode_inds), random_state=rng))
-    rotation_matrix = block_diag(rotation_matrices, format='csc')
-    
-    # Apply rotation matrix to all modes except the first (constant mode)
-    rotated_emodes = emodes.copy()
-    rotated_emodes[:, 1:] = emodes[:, 1:] @ rotation_matrix
-    
-    # Transform from spheroid back to ellipsoid
-    rotated_emodes[:, 1:] *= np.sqrt(evals[1:])
 
     # Optionally shuffle coefficients within eigengroups
     if randomize:
@@ -339,7 +326,27 @@ def _eigenstrap_single_block(
         for mode_inds in groups:
             coeffs[mode_inds] = rng.permutation(coeffs[mode_inds])
 
-    null_map = rotated_emodes @ coeffs
+    blocks = [special_ortho_group.rvs(dim=len(mode_inds), random_state=rng)
+              * sqrt_evals[mode_inds][np.newaxis, :]
+              * coeffs[mode_inds][np.newaxis, :]
+              for mode_inds in groups[1:]]
+    blocks.insert(0, coeffs[[[0]]])  # Keep constant mode to preserve mean
+    
+    block_rotation = block_diag(blocks, format='csc')
+    null_map = (norm_emodes @ block_rotation).sum(axis=1)
+
+    # # Rotate all eigengroups at once using a large block-diagonal rotation matrix
+    # rotation_matrices = [[1]]  # Keep constant mode to preserve mean
+    # for mode_inds in groups[1:]:
+    #     rotation_matrices.append(special_ortho_group.rvs(dim=len(mode_inds), random_state=rng))
+
+    # block_rotation = block_diag(rotation_matrices, format='csc')
+    
+    # # Apply rotation matrices and transform from spheroid back to ellipsoid
+    # rotated_emodes = (norm_emodes @ block_rotation) * sqrt_evals
+    
+    # # Reconstruct
+    # null_map = rotated_emodes @ coeffs
 
     # Handle residuals
     if residual == 'add':
@@ -416,15 +423,16 @@ def eigenstrap_block(
         groups = groups[:-1]
 
     # Transform each eigengroup from ellipsoid to spheroid
-    norm_emodes = emodes.copy()
-    norm_emodes[:, 1:] /= np.sqrt(evals[1:])  # Don't transform constant mode to preserve mean
+    sqrt_evals = np.sqrt(evals)
+    sqrt_evals[0] = 1  # Set constant mode eigenvalue to 1 to avoid division by zero when normalizing
+    norm_emodes = emodes / sqrt_evals
     
     # Generate nulls in parallel
     nulls = Parallel(n_jobs=n_jobs)(
         delayed(_eigenstrap_single_block)(
             data=data,
-            emodes=norm_emodes,
-            evals=evals,
+            norm_emodes=norm_emodes,
+            sqrt_evals=sqrt_evals,
             groups=groups,
             coeffs=coeffs,
             residual_data=residual_data,
