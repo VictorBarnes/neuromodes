@@ -410,7 +410,8 @@ class EigenSolver(Solver):
         for details:
         https://neuromodes.readthedocs.io/en/latest/generated/neuromodes.nulls.eigenstrap.html
 
-        Note that `emodes`, `evals`, and `mass` are passed automatically by the `EigenSolver` instance.
+        Note that `emodes`, `evals`, `mass`, and `check_ortho` are passed automatically by the
+        `EigenSolver` instance.
         """
         from neuromodes.nulls import eigenstrap
 
@@ -418,8 +419,8 @@ class EigenSolver(Solver):
 
         return eigenstrap(
             data=data,
-            emodes=self.emodes,  # exclude non-constant mode
-            evals=self.evals,   # exclude non-constant mode
+            emodes=self.emodes,
+            evals=self.evals,
             mass=self.mass,
             check_ortho=False,
             **kwargs

@@ -4,17 +4,17 @@ Spatial null models via eigenmode rotation.
 This module provides functions for generating null brain maps that preserve spatial
 autocorrelation structure through random rotation of geometric eigenmodes.
 """
-
-import warnings
-import numpy as np
-from numpy.typing import NDArray, ArrayLike
-from scipy.stats import special_ortho_group
+from __future__ import annotations
+from typing import Union, TYPE_CHECKING
+from warnings import warn
 from joblib import Parallel, delayed
-from typing import Union
-
+import numpy as np
+from scipy.stats import special_ortho_group
 from neuromodes.basis import decompose
 from neuromodes.eigen import get_eigengroup_inds
 
+if TYPE_CHECKING:
+    from numpy.typing import ArrayLike, NDArray
 
 def eigenstrap(
     data: ArrayLike,
@@ -31,7 +31,7 @@ def eigenstrap(
     check_ortho: bool = True,
 ) -> NDArray:
     """
-    Generate surface-based null maps via eigenstrapping [1].
+    Generate null maps via eigenstrapping [1].
     
     This function generates spatial null models that preserve the spatial autocorrelation
     structure of brain maps through random rotation of geometric eigenmodes. The method
@@ -121,24 +121,24 @@ def eigenstrap(
         spatial autocorrelation through random rotation of geometric eigenmodes. 
         Imaging Neuroscience. https://doi.org/10.1162/IMAG.a.71
     """
-    # Validate inputs
+    # Format / validate arguments
     emodes = np.asarray(emodes)  # chkfinite in decompose
     evals = np.asarray_chkfinite(evals) 
-    data = np.asarray_chkfinite(data)
+    data = np.asarray(data)
 
     if emodes.ndim != 2 or emodes.shape[0] < emodes.shape[1]:
         raise ValueError("`emodes` must have shape (n_verts, n_modes), where n_verts ≥ n_modes.")
-    _, n_modes = emodes.shape
+    n_modes = emodes.shape[1]
     if evals.shape != (n_modes,):
         raise ValueError("`evals` must have shape (n_modes,), matching the number of columns in "
                          f"`emodes` ({n_modes}).")
     
-    if residual is not None and residual not in ('add', 'permute'):
+    if residual not in (None, 'add', 'permute'):
         raise ValueError(f"Invalid residual method '{residual}'; must be 'add', 'permute', or None.")
     
-    if resample is not None and resample not in ('match', 'zscore', 'mean', 'range'):
-        raise ValueError(f"Invalid resampling method '{resample}'; must be 'match', 'zscore', 'mean', "
-                         f"'range', or None.")
+    if resample not in (None, 'match', 'zscore', 'mean', 'range'):
+        raise ValueError(f"Invalid resampling method '{resample}'; must be 'match', 'zscore', "
+                         "'mean', 'range', or None.")
     
     # Compute decomposition coefficients and residuals
     coeffs = decompose(data, emodes, method=method, mass=mass, check_ortho=check_ortho).squeeze()
@@ -152,15 +152,19 @@ def eigenstrap(
     groups = get_eigengroup_inds(n_modes)
     # If `n_modes` is not a perfect square then exclude the last group
     if int(np.sqrt(n_modes))**2 != n_modes:
-        warnings.warn(f"Number of modes ({n_modes}) is not a perfect square. Last "
-                      f"eigengroup containing {len(groups[-1])} modes will be excluded.")
+        warn(f"Number of modes ({n_modes}) is not a perfect square. Last eigengroup containing "
+                      f"{len(groups[-1])} modes will be excluded.")
         groups = groups[:-1]
+
+    # Transform each eigengroup from ellipsoid to spheroid
+    norm_emodes = emodes.copy()
+    norm_emodes[:, 1:] /= np.sqrt(evals[1:])  # Don't transform constant mode to preserve mean
     
     # Generate nulls in parallel
     nulls = Parallel(n_jobs=n_jobs)(
         delayed(_eigenstrap_single)(
             data=data,
-            emodes=emodes,
+            emodes=norm_emodes,
             evals=evals,
             groups=groups,
             coeffs=coeffs,
@@ -168,14 +172,12 @@ def eigenstrap(
             resample=resample,
             randomize=randomize,
             residual=residual,
-            seed=seed_i
+            seed=seed
         )
-        for seed_i in null_seeds
+        for seed in null_seeds
     )
-    
-    result = np.asarray(nulls).T
 
-    return result
+    return np.stack(nulls, axis=1)
 
 def _eigenstrap_single(
     data: NDArray,
@@ -226,61 +228,48 @@ def _eigenstrap_single(
     
     # Initialize rotated modes
     rotated_emodes = np.zeros_like(emodes)
+
+    # Keep constant mode to preserve mean
+    rotated_emodes[:, 0] = emodes[:, 0]
     
     # Rotate each eigengroup
-    for i, group_idx in enumerate(groups):
-        group_modes = emodes[:, group_idx]
-
-        # Set this to avoid infs/nans in first eigenmode -- doesn't affect anything else
-        if i == 0:
-            group_evals = np.array([1])
-        else:
-            group_evals = evals[group_idx]
-            
-        # Transform to spheroid, rotate, transform back to ellipsoid
-        normalised_modes = group_modes / np.sqrt(group_evals)
-        rotated_modes = _rotate_emodes(normalised_modes, random_state=rng)
-        rotated_emodes[:, group_idx] = rotated_modes * np.sqrt(group_evals)
+    for mode_inds in groups[1:]:        
+        rotated_emodes[:, mode_inds] = _rotate_emodes(emodes[:, mode_inds], random_state=rng)
         # TODO: profile group-wise multiplication vs. generating a large sparse blockdiagonal matrix 
         # and then multiplying/reconstructing all at once (perhaps including the coefficients too)
     
+    # Transform from spheroid back to ellipsoid
+    rotated_emodes[:, 1:] *= np.sqrt(evals[1:])
+
     # Optionally shuffle coefficients within eigengroups
-    null_coeffs = coeffs.copy()
     if randomize:
+        coeffs = coeffs.copy()
         for group_idx in groups:
-            null_coeffs[group_idx] = rng.permutation(null_coeffs[group_idx])
+            coeffs[group_idx] = rng.permutation(coeffs[group_idx])
     
     # Reconstruct null
-    null_map = rotated_emodes @ null_coeffs
+    null_map = rotated_emodes @ coeffs
     
     # Handle residuals
-    if residual is not None:
-        if residual == 'add':
-            null_map += residual_data
-        elif residual == 'permute':
-            null_map += rng.permutation(residual_data)
-        else:
-            raise ValueError(f"Invalid residual method '{residual}'; must be 'add' or "
-                             f"'permute'.")
+    if residual == 'add':
+        null_map += residual_data
+    elif residual == 'permute':
+        null_map += rng.permutation(residual_data)
 
     # Resample values from original data
-    if resample is not None:
-        if resample == 'match':
-            sorted_data = np.sort(data)
-            sorted_indices = np.argsort(null_map)
-            null_map[sorted_indices] = sorted_data
-        elif resample == 'zscore':
-            null_map = (null_map - np.mean(null_map)) / np.std(null_map)
-        elif resample == 'mean':
-            null_map = (null_map - np.mean(null_map)) + np.mean(data)
-        elif resample == 'range':
-            # Force match the minimum and maximum to original data range
-            scale_factor = (np.max(data) - np.min(data)) / (np.max(null_map) - np.min(null_map))
-            offset = np.min(data) - scale_factor * np.min(null_map)
-            null_map = null_map * scale_factor + offset
-        else:
-            raise ValueError(f"Invalid resampling method '{resample}'; must be 'match', "
-                             f"'zscore', 'mean', or 'range'.")
+    if resample == 'match':
+        sorted_data = np.sort(data)
+        sorted_indices = np.argsort(null_map)
+        null_map[sorted_indices] = sorted_data
+    elif resample == 'zscore':
+        null_map = (null_map - null_map.mean()) / null_map.std() * data.std() + data.mean()
+    elif resample == 'mean':
+        null_map = (null_map - null_map.mean()) + data.mean()
+    elif resample == 'range':
+        # Force match the minimum and maximum to original data range
+        scale_factor = (data.max() - data.min()) / (null_map.max() - null_map.min())
+        offset = data.min() - scale_factor * null_map.min()
+        null_map = null_map * scale_factor + offset
     
     return null_map
 
@@ -310,10 +299,141 @@ def _rotate_emodes(
     n_modes = emodes.shape[1]
 
     # Generate a random rotation matrix from the special orthogonal group SO(n_modes)
-    if n_modes == 1:
-        rotation_matrix = np.array([[1]]) # degenerate case where SO(1) := [1]
-    else:
-        rotation_matrix = special_ortho_group.rvs(dim=n_modes, random_state=random_state)
+    rotation_matrix = special_ortho_group.rvs(dim=n_modes, random_state=random_state)
     
+    # Rotate modes
     return emodes @ rotation_matrix
 
+def _eigenstrap_single_block(
+    data: NDArray,
+    emodes: NDArray,
+    evals: NDArray,
+    groups: list[NDArray],
+    coeffs: NDArray,
+    residual_data: Union[NDArray, None],
+    resample: Union[str, None],
+    randomize: bool,
+    residual: Union[str, None],
+    seed: Union[int, None],
+):
+    from scipy.sparse import block_diag
+    # Initialize RNG for this null using the provided seed to ensure reproducibility
+    rng = np.random.RandomState(seed)
+    
+    # Rotate all eigengroups at once using a large block-diagonal rotation matrix
+    rotation_matrices = []
+    for mode_inds in groups[1:]:
+        rotation_matrices.append(special_ortho_group.rvs(dim=len(mode_inds), random_state=rng))
+    rotation_matrix = block_diag(rotation_matrices, format='csc')
+    
+    # Apply rotation matrix to all modes except the first (constant mode)
+    rotated_emodes = emodes.copy()
+    rotated_emodes[:, 1:] = emodes[:, 1:] @ rotation_matrix
+    
+    # Transform from spheroid back to ellipsoid
+    rotated_emodes[:, 1:] *= np.sqrt(evals[1:])
+
+    # Optionally shuffle coefficients within eigengroups
+    if randomize:
+        coeffs = coeffs.copy()
+        for mode_inds in groups:
+            coeffs[mode_inds] = rng.permutation(coeffs[mode_inds])
+
+    null_map = rotated_emodes @ coeffs
+
+    # Handle residuals
+    if residual == 'add':
+        null_map += residual_data
+    elif residual == 'permute':
+        null_map += rng.permutation(residual_data)
+
+    # Resample values from original data
+    if resample == 'match':
+        sorted_data = np.sort(data)
+        sorted_indices = np.argsort(null_map)
+        null_map[sorted_indices] = sorted_data
+    elif resample == 'zscore':
+        null_map = (null_map - null_map.mean()) / null_map.std() * data.std() + data.mean()
+    elif resample == 'mean':
+        null_map = (null_map - null_map.mean()) + data.mean()
+    elif resample == 'range':
+        # Force match the minimum and maximum to original data range
+        scale_factor = (data.max() - data.min()) / (null_map.max() - null_map.min())
+        offset = data.min() - scale_factor * null_map.min()
+        null_map = null_map * scale_factor + offset
+
+    # Reconstruct null
+    return null_map
+
+def eigenstrap_block(
+    data: ArrayLike,
+    emodes: ArrayLike,
+    evals: ArrayLike,
+    n_nulls: int = 1000,
+    method: str = 'project',
+    mass: Union[ArrayLike, None] = None,
+    resample: Union[str, None] = None,
+    randomize: bool = False,
+    residual: Union[str, None] = None,
+    n_jobs: int = -1,
+    seed: Union[int, None] = None,
+    check_ortho: bool = True,
+) -> NDArray:
+
+    # Format / validate arguments
+    emodes = np.asarray(emodes)  # chkfinite in decompose
+    evals = np.asarray_chkfinite(evals) 
+    data = np.asarray(data)
+
+    if emodes.ndim != 2 or emodes.shape[0] < emodes.shape[1]:
+        raise ValueError("`emodes` must have shape (n_verts, n_modes), where n_verts ≥ n_modes.")
+    n_modes = emodes.shape[1]
+    if evals.shape != (n_modes,):
+        raise ValueError("`evals` must have shape (n_modes,), matching the number of columns in "
+                         f"`emodes` ({n_modes}).")
+    
+    if residual not in (None, 'add', 'permute'):
+        raise ValueError(f"Invalid residual method '{residual}'; must be 'add', 'permute', or None.")
+    
+    if resample not in (None, 'match', 'zscore', 'mean', 'range'):
+        raise ValueError(f"Invalid resampling method '{resample}'; must be 'match', 'zscore', "
+                         "'mean', 'range', or None.")
+    
+    # Compute decomposition coefficients and residuals
+    coeffs = decompose(data, emodes, method=method, mass=mass, check_ortho=check_ortho).squeeze()
+    residual_data = data - emodes @ coeffs if residual is not None else None
+    
+    # Simplified approach for non-eigenstrapping mode
+    rng = np.random.RandomState(seed)
+    null_seeds = rng.randint(np.iinfo(np.int32).max, size=n_nulls)
+
+    # Identify eigengroups for the modes that will be rotated
+    groups = get_eigengroup_inds(n_modes)
+    # If `n_modes` is not a perfect square then exclude the last group
+    if int(np.sqrt(n_modes))**2 != n_modes:
+        warn(f"Number of modes ({n_modes}) is not a perfect square. Last eigengroup containing "
+                      f"{len(groups[-1])} modes will be excluded.")
+        groups = groups[:-1]
+
+    # Transform each eigengroup from ellipsoid to spheroid
+    norm_emodes = emodes.copy()
+    norm_emodes[:, 1:] /= np.sqrt(evals[1:])  # Don't transform constant mode to preserve mean
+    
+    # Generate nulls in parallel
+    nulls = Parallel(n_jobs=n_jobs)(
+        delayed(_eigenstrap_single_block)(
+            data=data,
+            emodes=norm_emodes,
+            evals=evals,
+            groups=groups,
+            coeffs=coeffs,
+            residual_data=residual_data,
+            resample=resample,
+            randomize=randomize,
+            residual=residual,
+            seed=seed
+        )
+        for seed in null_seeds
+    )
+
+    return np.stack(nulls, axis=1)
