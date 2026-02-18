@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 from neuromodes.eigen import EigenSolver
-from neuromodes.io import fetch_surf, fetch_map
+from neuromodes.io import fetch_surf
 from neuromodes.nulls import eigenstrap
 
 @pytest.fixture
@@ -82,14 +82,14 @@ def test_resample_match(solver, test_data):
             f"Null {i} doesn't preserve data distribution"
 
 def test_resample_zscore(solver, test_data):
-    """With resample='zscore', nulls should have mean ~0 and std ~1"""
+    """With resample='zscore', nulls should have mean and std that match the data"""
     nulls = solver.eigenstrap(test_data, n_nulls=10, resample="zscore", seed=0)
     
     for i in range(nulls.shape[1]):
         mean = np.mean(nulls[:, i])
         std = np.std(nulls[:, i])
-        assert np.isclose(mean, 0), f"Null {i} mean is not close to 0"
-        assert np.isclose(std, 1), f"Null {i} std is not close to 1"
+        assert np.isclose(mean, test_data.mean()), f"Null {i} mean is not close to data mean"
+        assert np.isclose(std, test_data.std()), f"Null {i} std is not close to data std"
 
 def test_resample_mean(solver, test_data):
     """With resample='mean', nulls should have mean equal to original data mean"""

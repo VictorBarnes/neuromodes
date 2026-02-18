@@ -9,7 +9,6 @@ from typing import Union, TYPE_CHECKING
 from warnings import warn
 from joblib import Parallel, delayed
 import numpy as np
-from scipy.sparse import block_diag
 from scipy.stats import special_ortho_group
 from neuromodes.basis import decompose
 from neuromodes.eigen import get_eigengroup_inds
@@ -17,7 +16,7 @@ from neuromodes.eigen import get_eigengroup_inds
 if TYPE_CHECKING:
     from numpy.typing import ArrayLike, NDArray
 
-def eigenstrap(
+def eigenstrap_old(
     data: ArrayLike,
     emodes: ArrayLike,
     evals: ArrayLike,
@@ -305,74 +304,42 @@ def _rotate_emodes(
     # Rotate modes
     return emodes @ rotation_matrix
 
-def _eigenstrap_single_block(
-    data: NDArray,
+def _eigenstrap_single_new(
     norm_emodes: NDArray,
     sqrt_evals: NDArray,
     groups: list[NDArray],
     coeffs: NDArray,
-    residual_data: Union[NDArray, None],
-    resample: Union[str, None],
     randomize: bool,
-    residual: Union[str, None],
     seed: Union[int, None],
 ):
     # Initialize RNG for this null using the provided seed to ensure reproducibility
     rng = np.random.RandomState(seed)
 
+    # Initialize rotated modes with constant mode to preserve mean
+    rotated_emodes = np.empty_like(norm_emodes)
+    rotated_emodes[:, 0] = norm_emodes[:, 0]
+    
+    # Rotate each eigengroup
+    for mode_inds in groups[1:]:
+        rotation_matrix = special_ortho_group.rvs(dim=len(mode_inds), random_state=rng)
+        rotated_emodes[:, mode_inds] = norm_emodes[:, mode_inds] @ rotation_matrix
+
+    # Transform from spheroid back to ellipsoid
+    rotated_emodes *= sqrt_evals
+
     # Optionally shuffle coefficients within eigengroups
     if randomize:
         coeffs = coeffs.copy()
-        for mode_inds in groups:
-            coeffs[mode_inds] = rng.permutation(coeffs[mode_inds])
-
-    blocks = [special_ortho_group.rvs(dim=len(mode_inds), random_state=rng)
-              * sqrt_evals[mode_inds][np.newaxis, :]
-              * coeffs[mode_inds][np.newaxis, :]
-              for mode_inds in groups[1:]]
-    blocks.insert(0, coeffs[[[0]]])  # Keep constant mode to preserve mean
+        for group_idx in groups:
+            coeffs[group_idx] = rng.permutation(coeffs[group_idx])
     
-    block_rotation = block_diag(blocks, format='csc')
-    null_map = (norm_emodes @ block_rotation).sum(axis=1)
-
-    # # Rotate all eigengroups at once using a large block-diagonal rotation matrix
-    # rotation_matrices = [[1]]  # Keep constant mode to preserve mean
-    # for mode_inds in groups[1:]:
-    #     rotation_matrices.append(special_ortho_group.rvs(dim=len(mode_inds), random_state=rng))
-
-    # block_rotation = block_diag(rotation_matrices, format='csc')
-    
-    # # Apply rotation matrices and transform from spheroid back to ellipsoid
-    # rotated_emodes = (norm_emodes @ block_rotation) * sqrt_evals
-    
-    # # Reconstruct
-    # null_map = rotated_emodes @ coeffs
-
-    # Handle residuals
-    if residual == 'add':
-        null_map += residual_data
-    elif residual == 'permute':
-        null_map += rng.permutation(residual_data)
-
-    # Resample values from original data
-    if resample == 'match':
-        sorted_data = np.sort(data)
-        sorted_indices = np.argsort(null_map)
-        null_map[sorted_indices] = sorted_data
-    elif resample == 'zscore':
-        null_map = (null_map - null_map.mean()) / null_map.std() * data.std() + data.mean()
-    elif resample == 'mean':
-        null_map = (null_map - null_map.mean()) + data.mean()
-    elif resample == 'range':
-        # Force match the minimum and maximum to original data range
-        scale_factor = (data.max() - data.min()) / (null_map.max() - null_map.min())
-        offset = data.min() - scale_factor * null_map.min()
-        null_map = null_map * scale_factor + offset
+    # Reconstruct null
+    null_map = rotated_emodes @ coeffs
 
     # Reconstruct null
     return null_map
 
-def eigenstrap_block(
+def eigenstrap(
     data: ArrayLike,
     emodes: ArrayLike,
     evals: ArrayLike,
@@ -408,7 +375,7 @@ def eigenstrap_block(
     
     # Compute decomposition coefficients and residuals
     coeffs = decompose(data, emodes, method=method, mass=mass, check_ortho=check_ortho).squeeze()
-    residual_data = data - emodes @ coeffs if residual is not None else None
+    residual_data = (data - emodes @ coeffs)[:, np.newaxis] if residual is not None else None
     
     # Simplified approach for non-eigenstrapping mode
     rng = np.random.RandomState(seed)
@@ -429,19 +396,40 @@ def eigenstrap_block(
     
     # Generate nulls in parallel
     nulls = Parallel(n_jobs=n_jobs)(
-        delayed(_eigenstrap_single_block)(
-            data=data,
+        delayed(_eigenstrap_single_new)(
             norm_emodes=norm_emodes,
             sqrt_evals=sqrt_evals,
             groups=groups,
             coeffs=coeffs,
-            residual_data=residual_data,
-            resample=resample,
             randomize=randomize,
-            residual=residual,
             seed=seed
         )
         for seed in null_seeds
     )
+    nulls = np.stack(nulls, axis=1)
 
-    return np.stack(nulls, axis=1)
+    # Handle residuals
+    if residual == 'add':
+        nulls += residual_data
+    elif residual == 'permute':
+        nulls += rng.permutation(residual_data)
+
+    # Resample values from original data
+    if resample == 'match':
+        sorted_data = np.sort(data)[:, np.newaxis]
+        sorted_indices = np.argsort(nulls, axis=0)
+        nulls = np.take_along_axis(sorted_data, sorted_indices, axis=0)
+    elif resample == 'zscore':
+        nulls_z = (nulls - nulls.mean(axis=0)) / nulls.std(axis=0)
+        nulls = nulls_z * data.std(axis=0) + data.mean(axis=0)
+    elif resample == 'mean':
+        nulls = (nulls - nulls.mean(axis=0)) + data.mean(axis=0)
+    elif resample == 'range':
+        # Force match the minimum and maximum to original data range
+        data_mins = data.min(axis=0)
+        null_mins = nulls.min(axis=0)
+        scale_factor = (data.max(axis=0) - data.min(axis=0)) / (nulls.max(axis=0) - null_mins)
+        offset = data_mins - scale_factor * null_mins
+        nulls = nulls * scale_factor + offset
+
+    return nulls
