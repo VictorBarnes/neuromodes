@@ -66,9 +66,9 @@ def test_shape_mismatch_emodes_evals(solver, test_data):
     with pytest.raises(ValueError, match="must have shape"):
         eigenstrap(test_data, solver.emodes, wrong_evals, mass=solver.mass)
 
-def test_resample_match(solver, test_data):
+def test_resample_exact(solver, test_data):
     """With resample=True, nulls should have same values as original data"""
-    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, resample="match", seed=seed)
+    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, resample="exact", seed=seed)
     
     # Check that each null has the exact same values as original data (just reordered)
     for i in range(nulls.shape[1]):
@@ -79,7 +79,7 @@ def test_resample_match(solver, test_data):
 
 def test_resample_zscore(solver, test_data):
     """With resample='zscore', nulls should have mean and std that match the data"""
-    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, resample="zscore", seed=seed)
+    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, resample="affine", seed=seed)
     
     for i in range(nulls.shape[1]):
         mean = np.mean(nulls[:, i])
