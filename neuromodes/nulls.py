@@ -148,7 +148,7 @@ def eigenstrap(
     coeffs = decompose(data, emodes, method=method, mass=mass, check_ortho=check_ortho).squeeze()
     residual_data = data - emodes @ coeffs if residual is not None else None
     
-    # Simplified approach for non-eigenstrapping mode
+    # Get individual seeds to be used for individual null generations
     rng = np.random.RandomState(seed)
     null_seeds = rng.randint(np.iinfo(np.int32).max, size=n_nulls)
 
@@ -227,42 +227,27 @@ def _eigenstrap_single(
     """
     # Initialize RNG for this null using the provided seed to ensure reproducibility
     rng = np.random.RandomState(seed)
-    
-    # Initialize rotated modes
-    rotated_emodes = np.zeros_like(emodes)
-    
-    # Rotate each eigengroup
-    for group in groups:
-        n_modes = group.size
 
-        if n_modes == 1: # No rotation in groups with exactly one mode (e.g. first group)
-            rotated_emodes[:, group] = emodes[:, group]
-        else: # Transform to spheroid, rotate, transform back to ellipsoid
-            sqrt_evals = np.sqrt(evals[group])
-            rotation = special_ortho_group.rvs(dim=n_modes, random_state=rng)
-            rotated_emodes[:, group] = ((emodes[:, group] / sqrt_evals) @ rotation) * sqrt_evals
+    # Square root the eigenvalues and return as list (one array for each group)
+    get_sqrt_evals = lambda evals: np.sqrt(evals) if evals.size != 1 else np.array([1])
+    sqrt_evals = [get_sqrt_evals(evals[group]) for group in groups]
 
-    # TODO: profile group-wise multiplication vs. generating a large sparse blockdiagonal matrix 
-    # and then multiplying/reconstructing all at once (perhaps including the coefficients too)
-    # Something along the lines of: 
-    # for group in groups: 
-    #   n_modes = group.size
-    #   sqrt_evals = np.sqrt(evals[group]) if n_modes != 1 else np.array([1])
-    #   rotation = special_ortho_group.rvs(dim=n_modes, random_state=rng) if n_modes != 1 else np.array([[1]])
-    #   current_tform = np.diag(1 / sqrt_evals) @ rotation @ np.diag(sqrt_evals)
-    # << cat all the tforms into a large sparse matrix >>
-    # rotated_emodes[:, group] = emodes[:, group] @ tform
-
+    # Get rotation matrices for each group (need special case for groups with exactly one mode)
+    get_rotation_matrix = lambda sz: special_ortho_group.rvs(dim=sz, random_state=rng) if sz != 1 else np.array([[1]])
+    rots = [get_rotation_matrix(group.size) for group in groups]
     
     # Optionally shuffle coefficients within eigengroups
-    null_coeffs = coeffs.copy()
-    if randomize:
-        for group in groups:
-            null_coeffs[group] = rng.permutation(null_coeffs[group])
+    get_coeff_perm = lambda coeffs: rng.permutation(coeffs) if randomize else coeffs
+    null_coeffs = [get_coeff_perm(coeffs[group]) for group in groups]
+
+    # Generate transform vectors by combining the above matrices at this point
+    tforms = [np.diag(1/sqrt_evals[i]) @ rots[i] @ np.diag(sqrt_evals[i]) @ null_coeffs[i] for i in np.arange(len(groups))]
     
-    # Reconstruct null
-    null_map = rotated_emodes @ null_coeffs
-    
+    # Reconstruct nulls
+    # - making sure we use only the eigenmodes up to the group number previously determined
+    # - not necessarily all the modes, especially if that is not a square number
+    null_map = emodes[:,np.concatenate(groups)] @ np.concatenate(tforms)
+
     # Handle residuals
     if residual is not None:
         if residual_data is None: 
