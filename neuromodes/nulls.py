@@ -323,29 +323,21 @@ def _eigenstrap_single(
     # Initialize RNG for this null using the provided seed to ensure reproducibility
     rng = np.random.RandomState(seed)
 
-    # Initialize rotated modes with constant mode to preserve mean
-    rotated_emodes = np.empty_like(norm_emodes)
-    rotated_emodes[:, 0] = norm_emodes[:, 0]
+    # Get rotation matrices for each group (need special case for groups with exactly one mode)
+    rots = [special_ortho_group.rvs(dim=len(group), random_state=rng) for group in groups[1:]]
+    rots.insert(0, np.array([[1]]))  # Don't rotate constant mode to preserve mean
     
-    # Rotate each eigengroup
-    for mode_inds in groups[1:]:
-        rotation_matrix = special_ortho_group.rvs(dim=len(mode_inds), random_state=rng)
-        rotated_emodes[:, mode_inds] = norm_emodes[:, mode_inds] @ rotation_matrix
-
-    # Transform from spheroid back to ellipsoid
-    rotated_emodes *= sqrt_evals
-
     # Optionally shuffle coefficients within eigengroups
     if randomize:
-        coeffs = coeffs.copy()
-        for group_idx in groups:
-            coeffs[group_idx] = rng.permutation(coeffs[group_idx])
-    
-    # Reconstruct null
-    null_map = rotated_emodes @ coeffs
+        for group in groups:
+            coeffs[group] = rng.permutation(coeffs[group])
+
+    # Generate transform vectors by combining the above matrices at this point
+    # TODO: precompute right two matrices in parent function, if randomize can be done
+    tforms = [rots[i] @ np.diag(sqrt_evals[group]) @ coeffs[group] for i, group in enumerate(groups)]
 
     # Reconstruct null
-    return null_map
+    return norm_emodes[:,np.concatenate(groups)] @ np.concatenate(tforms)
 
 def eigenstrap(
     data: ArrayLike,
@@ -412,8 +404,7 @@ def eigenstrap(
         )
         for seed in null_seeds
     )
-    nulls = cast(list[NDArray], nulls)  # placate Pyright
-    nulls = np.stack(nulls, axis=1)
+    nulls = np.stack(nulls, axis=1)  # Pyright HATES this one trick
 
     # Handle residuals
     if residual is not None:
