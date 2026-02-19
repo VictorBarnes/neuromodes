@@ -14,6 +14,7 @@ from neuromodes.basis import decompose
 from neuromodes.eigen import get_eigengroup_inds
 
 if TYPE_CHECKING:
+    from numpy import floating, integer
     from numpy.typing import ArrayLike, NDArray
 
 def eigenstrap_old(
@@ -305,13 +306,13 @@ def _rotate_emodes(
     return emodes @ rotation_matrix
 
 def _eigenstrap_single_new(
-    norm_emodes: NDArray,
-    sqrt_evals: NDArray,
-    groups: list[NDArray],
-    coeffs: NDArray,
+    norm_emodes: NDArray[floating],
+    sqrt_evals: NDArray[floating],
+    groups: list[NDArray[integer]],
+    coeffs: NDArray[floating],
     randomize: bool,
     seed: Union[int, None],
-):
+) -> NDArray[floating]:
     # Initialize RNG for this null using the provided seed to ensure reproducibility
     rng = np.random.RandomState(seed)
 
@@ -344,58 +345,56 @@ def eigenstrap(
     emodes: ArrayLike,
     evals: ArrayLike,
     n_nulls: int = 1000,
-    method: str = 'project',
-    mass: Union[ArrayLike, None] = None,
     resample: Union[str, None] = None,
     randomize: bool = False,
     residual: Union[str, None] = None,
+    decomp_method: str = 'project',
+    mass: Union[ArrayLike, None] = None,
     n_jobs: int = -1,
+    verbose: int = 0,
     seed: Union[int, None] = None,
     check_ortho: bool = True,
-) -> NDArray:
-
+) -> NDArray[floating]:
     # Format / validate arguments
     emodes = np.asarray(emodes)  # chkfinite in decompose
     evals = np.asarray_chkfinite(evals) 
     data = np.asarray(data)
-
-    if emodes.ndim != 2 or emodes.shape[0] < emodes.shape[1]:
-        raise ValueError("`emodes` must have shape (n_verts, n_modes), where n_verts ≥ n_modes.")
-    n_modes = emodes.shape[1]
-    if evals.shape != (n_modes,):
-        raise ValueError("`evals` must have shape (n_modes,), matching the number of columns in "
-                         f"`emodes` ({n_modes}).")
-    
+    if data.ndim == 1:
+        data = data[:, np.newaxis]  # Ensure data is 2D for consistent processing
     if residual not in (None, 'add', 'permute'):
-        raise ValueError(f"Invalid residual method '{residual}'; must be 'add', 'permute', or None.")
-    
+        raise ValueError(f"Invalid residual method '{residual}'; must be 'add', 'permute', or "
+                         "None.")
     if resample not in (None, 'match', 'zscore', 'mean', 'range'):
         raise ValueError(f"Invalid resampling method '{resample}'; must be 'match', 'zscore', "
                          "'mean', 'range', or None.")
     
-    # Compute decomposition coefficients and residuals
-    coeffs = decompose(data, emodes, method=method, mass=mass, check_ortho=check_ortho).squeeze()
-    residual_data = (data - emodes @ coeffs)[:, np.newaxis] if residual is not None else None
-    
-    # Simplified approach for non-eigenstrapping mode
-    rng = np.random.RandomState(seed)
-    null_seeds = rng.randint(np.iinfo(np.int32).max, size=n_nulls)
+    # Eigendecompose maps
+    coeffs = decompose(data, emodes, method=decomp_method, mass=mass, check_ortho=check_ortho)
+
+    n_modes = emodes.shape[1]
+    if evals.shape != (n_modes,):
+        raise ValueError("`evals` must have shape (n_modes,), matching the number of columns in "
+                         f"`emodes` ({n_modes}).")
 
     # Identify eigengroups for the modes that will be rotated
     groups = get_eigengroup_inds(n_modes)
     # If `n_modes` is not a perfect square then exclude the last group
     if int(np.sqrt(n_modes))**2 != n_modes:
-        warn(f"Number of modes ({n_modes}) is not a perfect square. Last eigengroup containing "
-                      f"{len(groups[-1])} modes will be excluded.")
+        warn("`emodes` contains an incomplete eigengroup (i.e, number of columns (modes) is not a "
+             f"perfect square). These last {len(groups[-1])} modes will be excluded.")
         groups = groups[:-1]
 
     # Transform each eigengroup from ellipsoid to spheroid
     sqrt_evals = np.sqrt(evals)
-    sqrt_evals[0] = 1  # Set constant mode eigenvalue to 1 to avoid division by zero when normalizing
+    sqrt_evals[0] = 1  # Avoids division by zero when normalizing
     norm_emodes = emodes / sqrt_evals
+
+    # Initialise RNG, with seed for each null
+    rng = np.random.RandomState(seed)
+    null_seeds = rng.randint(np.iinfo(np.int32).max, size=n_nulls)
     
     # Generate nulls in parallel
-    nulls = Parallel(n_jobs=n_jobs)(
+    nulls = Parallel(n_jobs=n_jobs, verbose=verbose)(
         delayed(_eigenstrap_single_new)(
             norm_emodes=norm_emodes,
             sqrt_evals=sqrt_evals,
@@ -406,17 +405,19 @@ def eigenstrap(
         )
         for seed in null_seeds
     )
-    nulls = np.stack(nulls, axis=1)
+    nulls: NDArray = np.stack(nulls, axis=1)
 
     # Handle residuals
-    if residual == 'add':
-        nulls += residual_data
-    elif residual == 'permute':
-        nulls += rng.permutation(residual_data)
+    if residual is not None:
+        residual_data = (data - emodes @ coeffs)[:, np.newaxis, :]
+        if residual == 'add':
+            nulls += residual_data
+        elif residual == 'permute':
+            nulls += rng.permutation(residual_data)
 
     # Resample values from original data
     if resample == 'match':
-        sorted_data = np.sort(data)[:, np.newaxis]
+        sorted_data = np.sort(data, axis=0)[:, np.newaxis, :]
         sorted_indices = np.argsort(nulls, axis=0)
         nulls = np.take_along_axis(sorted_data, sorted_indices, axis=0)
     elif resample == 'zscore':
@@ -432,4 +433,4 @@ def eigenstrap(
         offset = data_mins - scale_factor * null_mins
         nulls = nulls * scale_factor + offset
 
-    return nulls
+    return nulls.squeeze()
