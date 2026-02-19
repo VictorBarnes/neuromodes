@@ -160,9 +160,30 @@ def eigenstrap(
         evals = evals[:last_mode].copy()
         coeffs = coeffs[:last_mode, :]
 
-    # Transform each eigengroup from an ellipsoid to spheroid, precompute inverse-transformed coeffs
-    norm_emodes, inv_coeffs = _spheroid_transform(emodes, evals, coeffs, groups, randomize,
-                                                  null_seeds)
+    if residual is not None:
+        residual_data = (data - emodes @ coeffs)[:, np.newaxis, :]
+
+    # Transform modes in each eigengroup (exept the first) from an ellipsoid to a spheroid
+    sqrt_evals = np.sqrt(evals)
+    sqrt_evals[0] = 1  # No transform for constant mode (preserves mean and avoids division by zero)
+    norm_emodes = emodes / sqrt_evals
+
+    sqrt_evals = sqrt_evals[:, np.newaxis]
+    
+    if randomize:
+        # Shuffle coefficients within eigengroups for each null
+        coeffs = np.stack([
+            np.concatenate([
+                np.random.default_rng(seed).permutation(coeffs[group, :], axis=0)
+                for group in groups
+            ], axis=0)
+            for seed in null_seeds
+        ], axis=2)
+
+        sqrt_evals = sqrt_evals[:, :, np.newaxis]
+
+    # Precompute inverse-transformed coefficients (spheroid back to ellipsoid)
+    inv_coeffs = sqrt_evals * coeffs
 
     # Generate nulls in parallel
     nulls = Parallel(n_jobs=n_jobs, verbose=verbose)(
@@ -177,12 +198,10 @@ def eigenstrap(
     nulls = np.stack(nulls, axis=1)  # Pyright HATES this one trick
 
     # Handle residuals
-    if residual is not None:
-        residual_data = (data - emodes @ coeffs)[:, np.newaxis, :]
-        if residual == 'add':
-            nulls += residual_data
-        elif residual == 'permute':
-            nulls += rng.permutation(residual_data)
+    if residual == 'add':
+        nulls += residual_data
+    elif residual == 'permute':
+        nulls += rng.permutation(residual_data)
 
     # Resample values from original data
     if resample == 'exact':
@@ -248,68 +267,3 @@ def _eigenstrap_single(
 
     # Generate null
     return norm_emodes @ tforms
-
-def _spheroid_transform(
-    emodes: NDArray[floating],
-    evals: NDArray[floating],
-    coeffs: NDArray[floating],
-    groups: list[NDArray[integer]],
-    randomize: bool,
-    null_seeds: Union[int, None]
-) -> tuple[NDArray[floating], NDArray[floating]]:
-    """
-    Transform each eigengroup from an ellipsoid to spheroid by normalizing modes by the square root
-    of their eigenvalues, then precompute the inverse-transformed coefficients for each null.
-
-    Parameters
-    ----------
-    emodes : array-like of shape (n_verts, n_modes)
-        The eigenmodes array of shape (n_verts, n_modes).
-    evals : array-like of shape (n_modes,)
-        The eigenvalues array of shape (n_modes,).
-    coeffs : array-like of shape (n_modes, n_maps)
-        The decomposition coefficients of shape (n_modes, n_maps).
-    groups : list of arrays
-        List of arrays, where each array contains the column indices of `emodes` that belong to
-        the same eigengroup (i.e., [[0], [1,2,3], [4,5,6,7,8], ..., [..., n_modes-1]]).
-    randomize : bool
-        Whether to shuffle decomposition coefficients within eigengroups. This increases
-        randomization but reduces spatial autocorrelation similarity to empirical data.
-    null_seeds : array-like of shape (n_nulls,)
-        Array of random seeds for each null to determine the shuffling of coefficients within
-        eigengroups when `randomize` is True.
-
-    Returns
-    -------
-    norm_emodes : ndarray of shape (n_verts, n_modes)
-        The normalized eigenmodes (spheroid) of shape (n_verts, n_modes).
-    inv_coeffs : ndarray of shape (n_modes, n_maps) or (n_modes, n_maps, n_nulls)
-        Inverse-transformed eigendecomposition coefficients array. If `randomize` is False, this is
-        the same for all nulls and has shape (n_modes, n_maps). If `randomize` is True, this is
-        different for each null and has shape (n_modes, n_maps, n_nulls).
-    """
-    # Transform modes in each eigengroup (exept the first) from an ellipsoid to a spheroid
-    sqrt_evals = np.sqrt(evals)
-    sqrt_evals[0] = 1  # No transform for constant mode
-    norm_emodes = emodes / sqrt_evals
-
-    # Precompute inverse-transformed coefficients
-    if randomize:
-        inv_coeffs = np.stack([
-            np.concatenate([
-                # Transform back to ellipsoid
-                np.diag(sqrt_evals[group])
-
-                # Shuffle coefficients within eigengroup for this null
-                @ np.random.default_rng(seed).permutation(coeffs[group, :], axis=0)
-                for group in groups
-                ], axis=0)
-                for seed in null_seeds
-                ], axis=2)
-    else:
-        inv_coeffs = np.concatenate([
-            # Transform back to ellipsoid (same for all nulls since no shuffling)
-            np.diag(sqrt_evals[group]) @ coeffs[group, :]
-            for group in groups], axis=0)
-    
-    return norm_emodes, inv_coeffs
