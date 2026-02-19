@@ -195,10 +195,10 @@ def simulate_waves(
         else:
             gen_input = _gen_noise
         
-        ext_input = gen_input((n_verts, nt), seed)
+        ext_input = gen_input((n_verts, nt), seed) # type: ignore
 
     # Eigendecompose external input to get modal coefficients over time
-    input_coeffs = decompose(ext_input, emodes, method=decomp_method,
+    input_coeffs = decompose(np.asarray(ext_input), emodes, method=decomp_method,
                              mass=mass, check_ortho=check_ortho)
 
     # Compute activity timeseries for each mode

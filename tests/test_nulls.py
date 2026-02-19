@@ -70,9 +70,9 @@ def test_shape_mismatch_emodes_evals(solver, test_data):
     with pytest.raises(ValueError, match="must have shape"):
         eigenstrap(test_data, solver.emodes, wrong_evals, mass=solver.mass)
 
-def test_resample_match(solver, test_data):
+def test_resample_exact(solver, test_data):
     """With resample=True, nulls should have same values as original data"""
-    nulls = solver.eigenstrap(test_data, n_nulls=10, resample="match", seed=0)
+    nulls = solver.eigenstrap(test_data, n_nulls=10, resample="exact", seed=0)
     
     # Check that each null has the exact same values as original data (just reordered)
     for i in range(nulls.shape[1]):
@@ -81,15 +81,15 @@ def test_resample_match(solver, test_data):
         assert np.allclose(null_sorted, data_sorted), \
             f"Null {i} doesn't preserve data distribution"
 
-def test_resample_zscore(solver, test_data):
-    """With resample='zscore', nulls should have mean ~0 and std ~1"""
-    nulls = solver.eigenstrap(test_data, n_nulls=10, resample="zscore", seed=0)
+def test_resample_affine(solver, test_data):
+    """With resample='affine', nulls should have original mean and std"""
+    nulls = solver.eigenstrap(test_data, n_nulls=10, resample="affine", seed=0)
     
     for i in range(nulls.shape[1]):
         mean = np.mean(nulls[:, i])
         std = np.std(nulls[:, i])
-        assert np.isclose(mean, 0), f"Null {i} mean is not close to 0"
-        assert np.isclose(std, 1), f"Null {i} std is not close to 1"
+        assert np.isclose(mean, np.mean(test_data)), f"Null {i} mean is not close to original"
+        assert np.isclose(std, np.std(test_data)), f"Null {i} std is not close to original"
 
 def test_resample_mean(solver, test_data):
     """With resample='mean', nulls should have mean equal to original data mean"""

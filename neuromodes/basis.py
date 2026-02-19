@@ -324,6 +324,6 @@ def calc_vec_fc(
         The Fisher-z-transformed vectorized functional connectivity array of shape (n_edges,), where
         n_edges = n_verts*(n_verts-1)/2.
     """
-    fc = np.corrcoef(timeseries)
+    fc = np.corrcoef(np.asarray(timeseries))
     vec_fc = fc[np.triu_indices_from(fc, k=1)]
     return np.arctanh(vec_fc)
