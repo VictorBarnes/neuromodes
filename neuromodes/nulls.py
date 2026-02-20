@@ -151,10 +151,9 @@ def eigenstrap(
 
     sqrt_evals = sqrt_evals[:, np.newaxis]
 
-    # Initialise RNG, with seed for each null
-    random_state = np.random.default_rng(seed)
-    
     if randomize:
+        # Initialise RNG, with seed for each null
+        random_state = np.random.default_rng(seed)
         perm_seeds = random_state.integers(np.iinfo(np.int32).max, size=n_nulls)
 
         # Permute coefficients within eigengroups for each null
@@ -172,14 +171,18 @@ def eigenstrap(
     # Precompute inverse-transformed coefficients (spheroid -> ellipsoid for each eigengroup)
     inv_coeffs = sqrt_evals * coeffs
 
-    # Compute random rotation matrices for each eigengroup across all nulls
+    # Generate rotation matrices such that the randomisation is independent of n_nulls/n_maps 
+    null_rngs = [np.random.default_rng(s) for s in np.random.SeedSequence(seed).spawn(n_nulls)]
+
     rotations = [
-        special_ortho_group.rvs(
-            dim=len(group), 
-            size=n_nulls, 
-            random_state=random_state
-        ) 
-        if len(group) != 1 
+        np.stack([
+            special_ortho_group.rvs(
+                dim=len(group),
+                random_state=rng
+            )
+            for rng in null_rngs
+        ], axis=0)
+        if len(group) != 1
         else np.ones([n_nulls,1,1])
         for group in groups
     ]
@@ -202,6 +205,8 @@ def eigenstrap(
         if residual == 'add':
             nulls += residual_data
         elif residual == 'permute':
+            # Initialise RNG, with seed for each null
+            random_state = np.random.default_rng(seed)
             nulls += random_state.permutation(residual_data)
 
     # Resample values from original data
