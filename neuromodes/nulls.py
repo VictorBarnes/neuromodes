@@ -132,10 +132,6 @@ def eigenstrap(
         raise ValueError(f"Invalid resampling method '{resample}'; must be 'exact', 'affine', "
                          "'mean', 'range', or None.")
     
-    # Initialise RNG, with seed for each null
-    rng = np.random.default_rng(seed)
-    null_seeds = rng.integers(np.iinfo(np.int32).max, size=n_nulls)
-    
     # Eigendecompose maps
     coeffs = decompose(data, emodes, method=decomp_method, mass=mass, check_ortho=check_ortho)
 
@@ -165,15 +161,20 @@ def eigenstrap(
     norm_emodes = emodes / sqrt_evals
 
     sqrt_evals = sqrt_evals[:, np.newaxis]
+
+    # Initialise RNG, with seed for each null
+    random_state = np.random.default_rng(seed)
     
     if randomize:
-        # Shuffle coefficients within eigengroups for each null
+        perm_seeds = random_state.integers(np.iinfo(np.int32).max, size=n_nulls)
+
+        # Permute coefficients within eigengroups for each null
         coeffs = np.stack([
             np.concatenate([
                 np.random.default_rng(seed).permutation(coeffs[group, :], axis=0)
                 for group in groups
             ], axis=0)
-            for seed in null_seeds
+            for seed in perm_seeds
         # Place each null's coeffs along a third axis
         ], axis=2)
 
@@ -182,17 +183,31 @@ def eigenstrap(
     # Precompute inverse-transformed coefficients (spheroid -> ellipsoid for each eigengroup)
     inv_coeffs = sqrt_evals * coeffs
 
-    # Generate nulls in parallel
-    nulls = Parallel(n_jobs=n_jobs, verbose=verbose)(
-        delayed(_eigenstrap_single)(
-            norm_emodes=norm_emodes,
-            groups=groups,
-            inv_coeffs=inv_coeffs[:, :, i] if randomize else inv_coeffs,
-            seed=seed
-        )
-        for i, seed in enumerate(null_seeds)
-    )
-    nulls = np.stack(nulls, axis=1)  # Pyright HATES this one trick
+    # Compute random rotation matrices
+    rots = [special_ortho_group.rvs(dim=len(group), size=n_nulls, random_state=random_state)
+            for group in groups[1:]]  # No rotation for first eigengroup (constant mode)
+
+    # Construct matrix encoding all operations to apply to the transformed modes
+    tforms = np.concatenate(
+        # No rotation for first eigengroup (constant mode)
+        [inv_coeffs[0, :][np.newaxis, :]] +
+
+        # Multiply each group's random rotation matrix by its inverse-transformed coefficients
+        [rot @ inv_coeffs[group, :] for rot, group in zip(rots, groups[1:])],
+         axis=0
+         )
+
+    # # Generate nulls in parallel
+    # nulls = Parallel(n_jobs=n_jobs, verbose=verbose)(
+    #     delayed(_eigenstrap_single)(
+    #         norm_emodes=norm_emodes,
+    #         groups=groups,
+    #         inv_coeffs=inv_coeffs[:, :, i] if randomize else inv_coeffs,
+    #         seed=seed
+    #     )
+    #     for i, seed in enumerate(null_seeds)
+    # )
+    # nulls = np.stack(nulls, axis=1)  # Pyright HATES this one trick
 
     # Handle residuals
     if residual == 'add':
