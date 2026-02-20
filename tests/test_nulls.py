@@ -77,9 +77,9 @@ def test_psd_preservation():
     
 def test_reproducibility(solver, test_data, nulls):
     """Nulls with same seed should be identical"""
-    nulls2 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=seed)
+    nulls2 = solver.eigenstrap(test_data, n_nulls=n_nulls+1, seed=seed)
     
-    assert np.allclose(nulls, nulls2, atol=1e-10), \
+    assert np.allclose(nulls, nulls2[:,:-1], atol=1e-10), \
         "Null spaces with the same seed should be identical"
 
 def test_finite(nulls):
