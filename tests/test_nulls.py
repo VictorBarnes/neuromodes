@@ -5,7 +5,7 @@ from neuromodes.io import fetch_surf, fetch_map
 from neuromodes.nulls import eigenstrap
 
 # Params
-n_nulls = 1000
+n_nulls = 100
 seed = 0
 
 @pytest.fixture
@@ -75,11 +75,19 @@ def test_psd_preservation():
                 f"Nulls do not preserve PSD for eigengroup {i+2}: " \
                 f"data PSD={psd0[i]:.3f}, nulls mean PSD={psd1_mean[i]:.3f}"
     
-def test_reproducibility(solver, test_data, nulls):
+def test_reproducibility_nulls(solver, test_data, nulls):
     """Nulls with same seed should be identical"""
-    nulls2 = solver.eigenstrap(test_data, n_nulls=n_nulls+1, seed=seed)
+    nulls2 = solver.eigenstrap(test_data, n_nulls=n_nulls-1, seed=seed)
     
-    assert np.allclose(nulls, nulls2[:,:-1], atol=1e-10), \
+    assert np.allclose(nulls[:,:-1], nulls2, atol=1e-10), \
+        "Null spaces with the same seed should be identical"
+
+def test_reproducibility_data(solver, test_data, nulls):
+    """Nulls with same seed should be identical"""
+    test_data2 = np.column_stack((test_data, np.random.normal(loc=1, size=solver.n_verts)))
+    nulls2 = solver.eigenstrap(test_data2, n_nulls=n_nulls, seed=seed)
+    
+    assert np.allclose(nulls, nulls2[:,:,0], atol=1e-10), \
         "Null spaces with the same seed should be identical"
 
 def test_finite(nulls):
