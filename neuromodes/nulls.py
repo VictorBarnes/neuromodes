@@ -43,62 +43,58 @@ def eigenstrap(
     Parameters
     ----------
     data : array-like
-        Empirical brain map of shape (n_verts,) to generate nulls from. If working on a 
-        masked surface, `data` must already be masked (see Notes).
+        Empirical brain map(s) of shape (n_verts,) or (n_verts, n_maps) to generate nulls from.
+        If working on a masked surface, `data` must already be masked (see Notes).
     emodes : array-like of shape (n_verts, n_modes)
-        The eigenmodes array of shape (n_verts, n_modes). If working on a masked surface,
-        `emodes` must already be masked (see Notes). This function rotates modes 
-        within eigengroups. If the number of eigenmodes is not a perfect square (i.e. 
-        number of modes doesn't allow for complete eigengroups), then the last incomplete 
-        eigengroup will be excluded.
+        The eigenmodes array of shape (n_verts, n_modes). This function rotates modes within
+        eigengroups. If the number of eigenmodes is not a perfect square (i.e., number of modes
+        doesn't allow for complete eigengroups), then the last incomplete eigengroup will be
+        excluded.
     evals : array-like
         The eigenvalues array of shape (n_modes,). 
     n_nulls : int, optional
-        Number of null maps to generate. Default is 1000.
+        Number of null maps to generate per input map. Default is 1000.
     method : str, optional
-        The method used for the decomposition, either `'project'` to project data into a
+        The method used for eigendecomposition, either `'project'` to project data into a
         mass-orthonormal space or `'regress'` for least-squares fitting. Default is `'project'`.
     mass : array-like, optional
-        The mass matrix of shape (n_verts, n_verts) used for the decomposition when method is
-        `'project'`. If working on a masked surface, `mass` must already be masked (see Notes). 
-        Default is None.
+        The mass matrix of shape (n_verts, n_verts) used for the decomposition when `decomp_method`
+        is `'project'`. Default is `None`.
     resample : bool, optional
-        How to resample values from original data. Options are 'exact' to match the sorted 
-        distribution of the original data, 'affine' to match the original mean and standard
-        deviation, 'mean' to match the mean, and 'range' to match the minimum and 
-        maximum. Default is None for no resampling.
+        How to resample values from original data. Options are `'exact'` to match the sorted 
+        distribution of the original data, `'affine'` to match the original mean and standard
+        deviation, `'mean'` to match the mean, and `'range'` to match the minimum and 
+        maximum. Default is `None` for no resampling.
     randomize : bool, optional
         Whether to shuffle decomposition coefficients within eigengroups. This increases
         randomization but reduces spatial autocorrelation similarity to empirical data. 
-        Default is False.
+        Default is `False`.
     residual : str, optional
-        How to handle reconstruction residuals. Either None to exclude residuals, `'add'` 
-        to add original residuals, or `'permute'` to adds shuffled residuals. Default is 
-        None.
+        How to handle reconstruction residuals after generating null maps. Either `None` to exclude
+        residuals, `'add'` to add original residuals, or `'permute'` to adds shuffled residuals.
+        Default is `None`.
     n_jobs : int, optional
-        Number of parallel workers. -1 uses all available cores. Default is -1.
+        Number of parallel workers. `-1` uses all available cores. Default is `-1`.
     seed : int, optional
         Random seed for reproducibility. If provided, generates deterministic nulls (see 
-        Notes). Default is None.
+        Notes). Default is `None`.
     check_ortho : bool, optional
         Whether to check if `emodes` are mass-orthonormal before using the `'project'` method
         in `neuromodes.basis.decompose`. Default is `True`.
     
     Returns
     -------
-    ndarray of shape (n_verts, n_nulls)
+    ndarray of shape (n_verts, n_nulls) or (n_verts, n_nulls, n_maps)
         Generated null maps.
     
     Raises
     ------
     ValueError
-        If `emodes` is not 2D or has more columns than rows.
-    ValueError
         If `evals` length doesn't match number of columns in `emodes`.
     ValueError
-        If `residual` is not one of None, 'add', or 'permute'.
+        If `residual` is not one of `None`, `'add'`, or `'permute'`.
     ValueError
-        If `resample` is not one of None, 'exact', 'affine', 'mean', or 'range'.
+        If `resample` is not one of `None`, `'exact'`, `'affine'`, `'mean'`, or `'range'`.
 
     Notes
     -----
@@ -163,7 +159,7 @@ def eigenstrap(
     if residual is not None:
         residual_data = (data - emodes @ coeffs)[:, np.newaxis, :]
 
-    # Transform modes in each eigengroup (exept the first) from an ellipsoid to a spheroid
+    # Precompute transformed modes (ellipsoid -> spheroid for each eigengroup)
     sqrt_evals = np.sqrt(evals)
     sqrt_evals[0] = 1  # No transform for constant mode (preserves mean and avoids division by zero)
     norm_emodes = emodes / sqrt_evals
@@ -178,11 +174,12 @@ def eigenstrap(
                 for group in groups
             ], axis=0)
             for seed in null_seeds
+        # Place each null's coeffs along a third axis
         ], axis=2)
 
         sqrt_evals = sqrt_evals[:, :, np.newaxis]
 
-    # Precompute inverse-transformed coefficients (spheroid back to ellipsoid)
+    # Precompute inverse-transformed coefficients (spheroid -> ellipsoid for each eigengroup)
     inv_coeffs = sqrt_evals * coeffs
 
     # Generate nulls in parallel
@@ -231,12 +228,14 @@ def _eigenstrap_single(
 ) -> NDArray[floating]:
     """
     Generate a single null for each input map by applying random rotations to each eigengroup and
-    reconstructing the map using the eigendecomposition coefficients.
+    reconstructing the map using the eigendecomposition coefficients. For computational efficiency,
+    each eigengroup's ellipsoid-to-spheroid transformation and its inverse are already incorporated
+    into `norm_emodes` and `inv_coeffs`, respectively.
 
     Parameters
     ----------
     norm_emodes : array-like of shape (n_verts, n_modes)
-        The normalized eigenmodes (spheroid) of shape (n_verts, n_modes).
+        The group-normalized eigenmodes of shape (n_verts, n_modes).
     groups : list of arrays
         List of arrays, where each array contains the column indices of `norm_emodes` that belong to
         the same eigengroup (i.e., [[0], [1,2,3], [4,5,6,7,8], ..., [..., n_modes-1]]).
@@ -260,7 +259,7 @@ def _eigenstrap_single(
     # Add identity (no) rotation for the first group (constant mode)
     rots.insert(0, np.array([[1]]))
 
-    # Construct transforms for simultaneous rotations, inverse transformations, and reconstruction
+    # Construct matrix encoding rotations, inverse transformations, and coefficients for all groups
     tforms = np.concatenate([
         rots[i] @ inv_coeffs[group, :]
         for i, group in enumerate(groups)], axis=0)
