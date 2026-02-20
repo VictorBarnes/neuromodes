@@ -2,7 +2,7 @@ from pathlib import Path
 from lapy import TriaMesh
 import numpy as np
 import pytest
-from neuromodes.eigen import EigenSolver, is_orthonormal_basis, scale_hetero
+from neuromodes.eigen import EigenSolver, is_orthonormal_basis, scale_hetero, get_eigengroup_inds
 from neuromodes.io import fetch_surf, fetch_map, mask_surf
 
 @pytest.fixture
@@ -268,4 +268,15 @@ def test_invalid_scale_hetero(surf_medmask_hetero):
     with pytest.raises(ValueError, match="Invalid scaling 'plantasia'"):
         scale_hetero(hetero, scaling='plantasia')
 
-    
+def test_get_eigengroup_inds(solver):
+    # Test that function returns correct groups for 8 modes
+    groups = get_eigengroup_inds(8)
+    expected_groups = [np.array([0]), np.array([1, 2, 3]), np.array([4, 5, 6, 7])]
+    for g, expected in zip(groups, expected_groups):
+        assert np.array_equal(g, expected), f'Expected group {expected}, got {g}.'
+
+    # Check on solver
+    groups = get_eigengroup_inds(solver.n_modes)
+    last_mode = groups[-1][-1] + 1
+    assert solver.emodes[:, :last_mode].shape == solver.emodes.shape, \
+        'Last eigengroup indices do not match number of modes.'
