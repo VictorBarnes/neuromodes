@@ -183,37 +183,28 @@ def eigenstrap(
     # Precompute inverse-transformed coefficients (spheroid -> ellipsoid for each eigengroup)
     inv_coeffs = sqrt_evals * coeffs
 
-    # Compute random rotation matrices
-    rots = [special_ortho_group.rvs(dim=len(group), size=n_nulls, random_state=random_state)
-            for group in groups[1:]]  # No rotation for first eigengroup (constant mode)
+    # Compute all random rotation matrices
+    all_rots = [special_ortho_group.rvs(dim=len(group), size=n_nulls, random_state=random_state)
+                # Store in list of length n_groups - 1 (no rotation for constant mode)
+                for group in groups[1:]]
 
-    # Construct matrix encoding all operations to apply to the transformed modes
-    tforms = np.concatenate(
-        # No rotation for first eigengroup (constant mode)
-        [inv_coeffs[0, :][np.newaxis, :]] +
-
-        # Multiply each group's random rotation matrix by its inverse-transformed coefficients
-        [rot @ inv_coeffs[group, :] for rot, group in zip(rots, groups[1:])],
-         axis=0
-         )
-
-    # # Generate nulls in parallel
-    # nulls = Parallel(n_jobs=n_jobs, verbose=verbose)(
-    #     delayed(_eigenstrap_single)(
-    #         norm_emodes=norm_emodes,
-    #         groups=groups,
-    #         inv_coeffs=inv_coeffs[:, :, i] if randomize else inv_coeffs,
-    #         seed=seed
-    #     )
-    #     for i, seed in enumerate(null_seeds)
-    # )
-    # nulls = np.stack(nulls, axis=1)  # Pyright HATES this one trick
+    # Generate nulls in parallel
+    nulls = Parallel(n_jobs=n_jobs, verbose=verbose)(
+        delayed(_eigenstrap_single)(
+            norm_emodes=norm_emodes,
+            groups=groups,
+            inv_coeffs=inv_coeffs[:, :, i] if randomize else inv_coeffs,
+            rots=[rot[i, :, :] for rot in all_rots]
+        )
+        for i in range(n_nulls)
+    )
+    nulls = np.stack(nulls, axis=1)  # Pyright HATES this one trick
 
     # Handle residuals
     if residual == 'add':
         nulls += residual_data
     elif residual == 'permute':
-        nulls += rng.permutation(residual_data)
+        nulls += random_state.permutation(residual_data)
 
     # Resample values from original data
     if resample == 'exact':
@@ -239,7 +230,7 @@ def _eigenstrap_single(
     norm_emodes: NDArray[floating],
     groups: list[NDArray[integer]],
     inv_coeffs: NDArray[floating],
-    seed: Union[int, None],
+    rots: list[NDArray[floating]],
 ) -> NDArray[floating]:
     """
     Generate a single null for each input map by applying random rotations to each eigengroup and
@@ -249,33 +240,29 @@ def _eigenstrap_single(
 
     Parameters
     ----------
-    norm_emodes : array-like of shape (n_verts, n_modes)
+    norm_emodes : ndarray of shape (n_verts, n_modes)
         The group-normalized eigenmodes of shape (n_verts, n_modes).
-    groups : list of arrays
+    groups : list of ndarrays of integers
         List of arrays, where each array contains the column indices of `norm_emodes` that belong to
         the same eigengroup (i.e., [[0], [1,2,3], [4,5,6,7,8], ..., [..., n_modes-1]]).
-    inv_coeffs : array-like of shape (n_modes, n_maps)
+    inv_coeffs : ndarray of shape (n_modes, n_maps)
         The inverse-transformed decomposition coefficients of shape (n_modes, n_maps). If
         `randomize` is False, this is the same for all nulls.
-    seed : int or None
-        Random seed for reproducibility. If None, generates non-deterministic nulls.
+    rots : list of ndarrays of shape (len(group), len(group))
+        The random rotation matrix to apply to each eigengroup (except the first).
 
     Returns
     -------
     ndarray of shape (n_verts, n_maps)
         The generated null map(s) of shape (n_verts, n_maps).
     """
-    # Initialize RNG
-    random_state = np.random.default_rng(seed)
-
     # Construct matrix encoding all operations to apply to the transformed modes
     tforms = np.concatenate(
         # No rotation for first eigengroup (constant mode)
         [inv_coeffs[0, :][np.newaxis, :]] +
 
         # Multiply each group's random rotation matrix by its inverse-transformed coefficients
-        [special_ortho_group.rvs(dim=len(group), random_state=random_state) @ inv_coeffs[group, :]
-         for group in groups[1:]],
+        [rot @ inv_coeffs[group, :] for rot, group in zip(rots, groups[1:])],
          axis=0
          )
 
