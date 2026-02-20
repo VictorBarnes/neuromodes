@@ -7,7 +7,6 @@ autocorrelation structure through random rotation of geometric eigenmodes.
 from __future__ import annotations
 from typing import Union, TYPE_CHECKING
 from warnings import warn
-from joblib import Parallel, delayed
 import numpy as np
 from scipy.stats import special_ortho_group
 from neuromodes.basis import decompose
@@ -27,8 +26,6 @@ def eigenstrap(
     residual: Union[str, None] = None,
     decomp_method: str = 'project',
     mass: Union[ArrayLike, None] = None,
-    n_jobs: int = -1,
-    verbose: int = 0,
     seed: Union[int, None] = None,
     check_ortho: bool = True,
 ) -> NDArray[floating]:
@@ -54,12 +51,6 @@ def eigenstrap(
         The eigenvalues array of shape (n_modes,). 
     n_nulls : int, optional
         Number of null maps to generate per input map. Default is 1000.
-    method : str, optional
-        The method used for eigendecomposition, either `'project'` to project data into a
-        mass-orthonormal space or `'regress'` for least-squares fitting. Default is `'project'`.
-    mass : array-like, optional
-        The mass matrix of shape (n_verts, n_verts) used for the decomposition when `decomp_method`
-        is `'project'`. Default is `None`.
     resample : bool, optional
         How to resample values from original data. Options are `'exact'` to match the sorted 
         distribution of the original data, `'affine'` to match the original mean and standard
@@ -73,8 +64,12 @@ def eigenstrap(
         How to handle reconstruction residuals after generating null maps. Either `None` to exclude
         residuals, `'add'` to add original residuals, or `'permute'` to adds shuffled residuals.
         Default is `None`.
-    n_jobs : int, optional
-        Number of parallel workers. `-1` uses all available cores. Default is `-1`.
+    decomp_method : str, optional
+        The method used for eigendecomposition, either `'project'` to project data into a
+        mass-orthonormal space or `'regress'` for least-squares fitting. Default is `'project'`.
+    mass : array-like, optional
+        The mass matrix of shape (n_verts, n_verts) used for the decomposition when `decomp_method`
+        is `'project'`. Default is `None`.
     seed : int, optional
         Random seed for reproducibility. If provided, generates deterministic nulls (see 
         Notes). Default is `None`.
@@ -183,22 +178,22 @@ def eigenstrap(
     # Precompute inverse-transformed coefficients (spheroid -> ellipsoid for each eigengroup)
     inv_coeffs = sqrt_evals * coeffs
 
-    # Compute all random rotation matrices
-    all_rots = [special_ortho_group.rvs(dim=len(group), size=n_nulls, random_state=random_state)
+    # Compute random rotation matrices for each eigengroup across all nulls
+    rotations = [special_ortho_group.rvs(dim=len(group), size=n_nulls, random_state=random_state)
                 # Store in list of length n_groups - 1 (no rotation for constant mode)
                 for group in groups[1:]]
 
-    # Generate nulls in parallel
-    nulls = Parallel(n_jobs=n_jobs, verbose=verbose)(
-        delayed(_eigenstrap_single)(
+    # Generate nulls
+    nulls = np.stack([
+        _eigenstrap_single(
             norm_emodes=norm_emodes,
             groups=groups,
             inv_coeffs=inv_coeffs[:, :, i] if randomize else inv_coeffs,
-            rots=[rot[i, :, :] for rot in all_rots]
-        )
-        for i in range(n_nulls)
-    )
-    nulls = np.stack(nulls, axis=1)  # Pyright HATES this one trick
+            rotations=rotations,
+            null_idx=i
+            )
+            for i in range(n_nulls)
+            ], axis=1)
 
     # Handle residuals
     if residual == 'add':
@@ -230,7 +225,8 @@ def _eigenstrap_single(
     norm_emodes: NDArray[floating],
     groups: list[NDArray[integer]],
     inv_coeffs: NDArray[floating],
-    rots: list[NDArray[floating]],
+    rotations: list[NDArray[floating]],
+    null_idx: int
 ) -> NDArray[floating]:
     """
     Generate a single null for each input map by applying random rotations to each eigengroup and
@@ -248,8 +244,11 @@ def _eigenstrap_single(
     inv_coeffs : ndarray of shape (n_modes, n_maps)
         The inverse-transformed decomposition coefficients of shape (n_modes, n_maps). If
         `randomize` is False, this is the same for all nulls.
-    rots : list of ndarrays of shape (len(group), len(group))
-        The random rotation matrix to apply to each eigengroup (except the first).
+    rotations : list of ndarrays of shape (n_nulls, len(group), len(group))
+        The random rotation matrices to apply to each eigengroup (except the first).
+    null_idx : int
+        The index of the null being generated, used to select the corresponding rotation matrices
+        from `rotations` list.
 
     Returns
     -------
@@ -262,7 +261,7 @@ def _eigenstrap_single(
         [inv_coeffs[0, :][np.newaxis, :]] +
 
         # Multiply each group's random rotation matrix by its inverse-transformed coefficients
-        [rot @ inv_coeffs[group, :] for rot, group in zip(rots, groups[1:])],
+        [rotations[i][null_idx, :, :] @ inv_coeffs[group, :] for i, group in enumerate(groups[1:])],
          axis=0
          )
 
