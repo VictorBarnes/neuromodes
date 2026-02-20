@@ -250,19 +250,19 @@ def _eigenstrap_single(
     ndarray of shape (n_verts, n_maps)
         The generated null map(s) of shape (n_verts, n_maps).
     """
-    # Initialize RNG for this null using the provided seed to ensure reproducibility
-    rng = np.random.default_rng(seed)
+    # Initialize RNG
+    random_state = np.random.default_rng(seed)
 
-    # Get rotation matrices for each group
-    rots = [special_ortho_group.rvs(dim=len(group), random_state=rng) for group in groups[1:]]
+    # Construct matrix encoding all operations to apply to the transformed modes
+    tforms = np.concatenate(
+        # No rotation for first eigengroup (constant mode)
+        [inv_coeffs[0, :][np.newaxis, :]] +
 
-    # Add identity (no) rotation for the first group (constant mode)
-    rots.insert(0, np.array([[1]]))
-
-    # Construct matrix encoding rotations, inverse transformations, and coefficients for all groups
-    tforms = np.concatenate([
-        rots[i] @ inv_coeffs[group, :]
-        for i, group in enumerate(groups)], axis=0)
+        # Multiply each group's random rotation matrix by its inverse-transformed coefficients
+        [special_ortho_group.rvs(dim=len(group), random_state=random_state) @ inv_coeffs[group, :]
+         for group in groups[1:]],
+         axis=0
+         )
 
     # Generate null
     return norm_emodes @ tforms
