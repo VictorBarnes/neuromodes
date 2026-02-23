@@ -178,7 +178,7 @@ def test_non_square_modes(test_data):
     non_square_solver = EigenSolver(mesh, mask=medmask).solve(n_modes=8, seed=seed)
     
     # Should complete with a warning about truncating last eigengroup
-    with pytest.warns(UserWarning, match="These last 4 modes will be excluded."):
+    with pytest.warns(UserWarning, match="Last 4 modes will be excluded."):
         nulls = non_square_solver.eigenstrap(test_data, n_nulls=n_nulls, seed=seed, residual='add')
     
     assert nulls.shape == (non_square_solver.n_verts, n_nulls)

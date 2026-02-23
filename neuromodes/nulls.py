@@ -19,9 +19,9 @@ if TYPE_CHECKING:
 def eigenstrap(
     data: ArrayLike,
     emodes: ArrayLike,
-    evals: ArrayLike,
-    n_modes: Union[int, None] = None, 
+    evals: ArrayLike, 
     n_nulls: int = 1000,
+    n_groups: Union[int, None] = None,
     resample: Union[str, None] = None,
     randomize: bool = False,
     residual: Union[str, None] = None,
@@ -52,6 +52,9 @@ def eigenstrap(
         The eigenvalues array of shape (n_modes,). 
     n_nulls : int, optional
         Number of null maps to generate per input map. Default is 1000.
+    n_groups : int or None, optional
+        Number of eigengroups to use for generating nulls. If `None`, uses all complete eigengroups
+        contained in `emodes` (⌊√(n_modes)⌋). Default is `None`.
     resample : bool, optional
         How to resample values from original data. Options are `'exact'` to match the sorted 
         distribution of the original data, `'affine'` to match the original mean and standard
@@ -118,31 +121,44 @@ def eigenstrap(
     # Format / validate arguments
     emodes = np.asarray(emodes)  # chkfinite in decompose
     evals = np.asarray_chkfinite(evals) 
-    data = np.asarray(data)
+    data = np.asarray(data)  # chkfinite in decompose
     if data.ndim == 1:
         data = data[:, np.newaxis]
+    if emodes.ndim != 2 or emodes.shape[0] < emodes.shape[1]:
+        raise ValueError("`emodes` must have shape (n_verts, n_modes), where n_verts ≥ n_modes.")
+    n_modes = emodes.shape[1]
+    if evals.shape != (n_modes,):
+        raise ValueError(f"`evals` must have shape (n_modes,) = {(n_modes,)}, matching the number "
+                         "of columns in `emodes`.")
+    if n_groups is not None and n_groups**2 > emodes.shape[1]:
+        raise ValueError(f"`n_groups`={n_groups} implies n_modes={n_groups**2}, which exceeds the "
+                         f"number of columns in `emodes` ({emodes.shape[1]}).")
     if residual not in (None, 'add', 'permute'):
         raise ValueError(f"Invalid residual method '{residual}'; must be 'add', 'permute', or "
                          "None.")
     if resample not in (None, 'exact', 'affine', 'mean', 'range'):
         raise ValueError(f"Invalid resampling method '{resample}'; must be 'exact', 'affine', "
-                         "'mean', 'range', or None.")    
+                         "'mean', 'range', or None.")
 
-    if n_modes is None:
-        n_modes = emodes.shape[1] # decompose (below) also checks data shape
-    n_groups = int(np.sqrt(n_modes))
-    if n_groups**2 != n_modes:
-        warn("`emodes` contains an incomplete eigengroup (i.e, number of modes is not a "
-             f"perfect square). These last {n_modes - n_groups**2} modes will be excluded.")
-        n_modes = n_groups**2
+    # Determine eigengroups
+    if n_groups is None:
+        n_groups = int(np.sqrt(n_modes))  # floor of root
+        if n_groups**2 != n_modes:
+            warn("`emodes` contains an incomplete eigengroup (i.e, number of modes is not a "
+                 f"perfect square). Last {n_modes - n_groups**2} modes will be excluded.")
+    n_modes = n_groups**2
     groups = get_eigengroup_inds(n_modes)
-    emodes = emodes[:, :n_modes].copy()
-    if evals.shape < (n_modes,):
-        raise ValueError("`evals` must have shape (>=n_modes,), matching `n_modes` ({n_modes}).")
-    evals = evals[:n_modes].copy()
-    
+
+    # Truncate arrays if necessary
+    if n_modes < emodes.shape[1]:
+        emodes = emodes[:, :n_modes].copy()
+        evals = evals[:n_modes].copy()
+
     # Eigendecompose maps
     coeffs = decompose(data, emodes, method=decomp_method, mass=mass, check_ortho=check_ortho)
+
+    if residual is not None:
+        residual_data = data - emodes @ coeffs
 
     # Precompute transformed modes (ellipsoid -> spheroid for each eigengroup)
     sqrt_evals = np.sqrt(evals)
@@ -151,19 +167,19 @@ def eigenstrap(
 
     sqrt_evals = sqrt_evals[:, np.newaxis]
 
-    if randomize:
-        # Initialise RNG, with seed for each null
-        random_state = np.random.default_rng(seed)
-        perm_seeds = random_state.integers(np.iinfo(np.int32).max, size=n_nulls)
+    # Initialise RNG, with seed for each null
+    rng = np.random.default_rng(seed)
+    null_seeds = rng.integers(np.iinfo(np.int32).max, size=n_nulls)
 
+    if randomize:
         # Permute coefficients within eigengroups for each null
         coeffs = np.stack([
             np.concatenate([
                 np.random.default_rng(seed).permutation(coeffs[group, :], axis=0)
                 for group in groups
             ], axis=0)
-            for seed in perm_seeds
-        # Place each null's coeffs along a third axis
+            for seed in null_seeds
+        # Place each null's permuted coeffs along a third axis
         ], axis=2)
 
         sqrt_evals = sqrt_evals[:, :, np.newaxis]
@@ -171,58 +187,42 @@ def eigenstrap(
     # Precompute inverse-transformed coefficients (spheroid -> ellipsoid for each eigengroup)
     inv_coeffs = sqrt_evals * coeffs
 
-    # Generate rotation matrices such that the randomisation is independent of n_nulls/n_maps 
-    null_rngs = [np.random.default_rng(s) for s in np.random.SeedSequence(seed).spawn(n_nulls)]
-
-    rotations = [
-        np.stack([
-            special_ortho_group.rvs(
-                dim=len(group),
-                random_state=rng
-            )
-            for rng in null_rngs
-        ], axis=0)
-        if len(group) != 1
-        else np.ones([n_nulls,1,1])
-        for group in groups
-    ]
-
     # Generate nulls
     nulls = np.stack([
         _eigenstrap_single(
             norm_emodes=norm_emodes,
             groups=groups,
             inv_coeffs=inv_coeffs[:, :, i] if randomize else inv_coeffs,
-            rotations=rotations,
-            null_idx=i
+            seed=null_seeds[i]
             )
             for i in range(n_nulls)
             ], axis=1)
 
-    # Handle residuals
-    if residual is not None:
-        residual_data = (data - emodes @ coeffs)[:, np.newaxis, :]
-        if residual == 'add':
-            nulls += residual_data
-        elif residual == 'permute':
-            # Initialise RNG, with seed for each null
-            random_state = np.random.default_rng(seed)
-            nulls += random_state.permutation(residual_data)
+    # Optionally add residuals of reconstruction
+    if residual == 'add':
+        nulls += residual_data[:, np.newaxis, :]
+    elif residual == 'permute':
+        for i, seed in enumerate(null_seeds):
+            nulls[:, i] += np.random.default_rng(seed).permutation(residual_data, axis=0)
 
-    # Resample values from original data
+    # Optionally resample values to match stats of original data
     if resample == 'exact':
         sorted_data = np.sort(data, axis=0)[:, np.newaxis, :]
         sorted_indices = np.argsort(nulls, axis=0)
         nulls = np.take_along_axis(sorted_data, sorted_indices, axis=0)
     elif resample == 'mean':
-        nulls = (nulls - nulls.mean(axis=0)) + data.mean(axis=0)
+        nulls -= nulls.mean(axis=0)
+        nulls += data.mean(axis=0)
     elif resample == 'affine':
-        nullz = (nulls - nulls.mean(axis=0)) / nulls.std(axis=0)
-        nulls = nullz * data.std(axis=0) + data.mean(axis=0)
+        nulls -= nulls.mean(axis=0)
+        nulls /= nulls.std(axis=0)
+        nulls *= data.std(axis=0)
+        nulls += data.mean(axis=0)
     elif resample == 'range':
-        # Force match the minimum and maximum to original data range
-        scale_factor = (data.max(axis=0) - data.min(axis=0)) / (nulls.max(axis=0) - nulls.min(axis=0))
-        nulls = (nulls - nulls.min(axis=0)) * scale_factor + data.min(axis=0)
+        nulls -= nulls.min(axis=0)
+        nulls /= nulls.max(axis=0)
+        nulls *= data.max(axis=0) - data.min(axis=0)
+        nulls += data.min(axis=0)
 
     if data.shape[1] == 1: # number of maps
         nulls = nulls.squeeze(axis=2)
@@ -231,10 +231,9 @@ def eigenstrap(
 
 def _eigenstrap_single(
     norm_emodes: NDArray[floating],
-    groups: list[NDArray[integer]],
     inv_coeffs: NDArray[floating],
-    rotations: list[NDArray[floating]],
-    null_idx: int
+    groups: list[NDArray[integer]],
+    seed: int
 ) -> NDArray[floating]:
     """
     Generate a single null for each input map by applying random rotations to each eigengroup and
@@ -245,28 +244,31 @@ def _eigenstrap_single(
     Parameters
     ----------
     norm_emodes : ndarray of shape (n_verts, n_modes)
-        The group-normalized eigenmodes of shape (n_verts, n_modes).
-    groups : list of ndarrays of integers
-        List of arrays, where each array contains the column indices of `norm_emodes` that belong to
-        the same eigengroup (i.e., [[0], [1,2,3], [4,5,6,7,8], ..., [..., n_modes-1]]).
+        The transformed/normalized eigenmodes array of shape (n_verts, n_modes).
     inv_coeffs : ndarray of shape (n_modes, n_maps)
         The inverse-transformed decomposition coefficients of shape (n_modes, n_maps). If
         `randomize` is False, this is the same for all nulls.
-    rotations : list of ndarrays of shape (n_nulls, len(group), len(group))
-        The random rotation matrices to apply to each eigengroup (except the first).
-    null_idx : int
-        The index of the null being generated, used to select the corresponding rotation matrices
-        from `rotations` list.
+    groups : list of ndarrays of integers
+        List of arrays, where each array contains the column indices of `norm_emodes` that belong to
+        the same eigengroup (i.e., [[0], [1,2,3], [4,5,6,7,8], ..., [..., n_modes-1]]).
+    seed : int
+        Random seed for reproducibility of the random rotation applied to this null.
 
     Returns
     -------
     ndarray of shape (n_verts, n_maps)
         The generated null map(s) of shape (n_verts, n_maps).
     """
+    random_state = np.random.default_rng(seed)
+
     # Construct matrix encoding all operations to apply to the transformed modes
     tforms = np.concatenate(
-        # Multiply each group's random rotation matrix by its inverse-transformed coefficients
-        [rotations[i][null_idx, :, :] @ inv_coeffs[group, :] for i, group in enumerate(groups)],
+        # No rotation for first eigengroup (first mode; constant), only coefficients
+        [inv_coeffs[0, :][np.newaxis, :]] +
+
+        # Combine each subsequent group's random rotation with its inverse-transformed coefficients
+        [special_ortho_group.rvs(dim=len(group), random_state=random_state) @ inv_coeffs[group, :]
+         for group in groups[1:]],
          axis=0
          )
 
