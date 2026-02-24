@@ -124,15 +124,12 @@ def eigenstrap(
     data = np.asarray(data)  # chkfinite in decompose
     if data.ndim == 1:
         data = data[:, np.newaxis]
-    if emodes.ndim != 2 or emodes.shape[0] < emodes.shape[1]:
+    n_cols = emodes.shape[1]
+    if emodes.ndim != 2 or emodes.shape[0] < n_cols:
         raise ValueError("`emodes` must have shape (n_verts, n_modes), where n_verts ≥ n_modes.")
-    n_modes = emodes.shape[1]
-    if evals.shape != (n_modes,):
-        raise ValueError(f"`evals` must have shape (n_modes,) = {(n_modes,)}, matching the number "
+    if evals.shape != (n_cols,):
+        raise ValueError(f"`evals` must have shape (n_modes,) = {(n_cols,)}, matching the number "
                          "of columns in `emodes`.")
-    if n_groups is not None and n_groups**2 > emodes.shape[1]:
-        raise ValueError(f"`n_groups`={n_groups} implies n_modes={n_groups**2}, which exceeds the "
-                         f"number of columns in `emodes` ({emodes.shape[1]}).")
     if residual not in (None, 'add', 'permute'):
         raise ValueError(f"Invalid residual method '{residual}'; must be 'add', 'permute', or "
                          "None.")
@@ -142,17 +139,17 @@ def eigenstrap(
 
     # Determine eigengroups
     if n_groups is None:
-        n_groups = int(np.sqrt(n_modes))  # floor of root
-        if n_groups**2 != n_modes:
+        n_groups = int(np.sqrt(n_cols))  # floor of root
+        if n_groups**2 != n_cols:
             warn("`emodes` contains an incomplete eigengroup (i.e, number of modes is not a "
-                 f"perfect square). Last {n_modes - n_groups**2} modes will be excluded.")
+                 f"perfect square). Last {n_cols - n_groups**2} modes will be excluded.")
+    elif n_groups**2 > n_cols:
+        raise ValueError(f"`n_groups`={n_groups} implies n_modes={n_groups**2}, which exceeds the "
+                         f"number of columns in `emodes` ({n_cols}).")
     n_modes = n_groups**2
     groups = get_eigengroup_inds(n_modes)
-
-    # Truncate arrays if necessary
-    if n_modes < emodes.shape[1]:
-        emodes = emodes[:, :n_modes].copy()
-        evals = evals[:n_modes].copy()
+    emodes = emodes[:, :n_modes].copy()
+    evals = evals[:n_modes].copy()
 
     # Eigendecompose maps
     coeffs = decompose(data, emodes, method=decomp_method, mass=mass, check_ortho=check_ortho)
