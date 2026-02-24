@@ -48,32 +48,25 @@ def test_mean_preservation(test_data, nulls):
             f"Null {i} mean {null_mean} is not close to data mean {data_mean}"
         
 def test_psd_preservation():
-    """Nulls should approximately preserve eigengroup power spectral density of original data"""
-    # Need real data for this test since random data won't have meaningful PSD structure
-    # TODO: add 4k myelinmap to avoid 32k solving, then use 4k myelinmap in all tests for realism
-    surf, medmask = fetch_surf()
-    myelinmap = fetch_map('myelinmap')[medmask]
+    """Nulls should preserve eigengroup power spectral density of map on sphere"""
+    mesh, _ = fetch_surf(density='4k', hemi='L', surf_type='sphere')
+    mesh.vertices = mesh.vertices / 100.0  # Scale vertices to unit sphere
+    solver = EigenSolver(mesh).solve(n_modes=100)
+    
+    # Synthetic data for testing
+    v = mesh.vertices
+    map = np.sin(v[:, 0]*np.pi) + np.sin(v[:, 1]*2*np.pi) + np.cos(v[:, 2]*3*np.pi)
+    nulls = solver.eigenstrap(map, n_nulls=n_nulls)
 
-    solver = EigenSolver(surf, mask=medmask).solve(n_modes=6**2, seed=seed)
-    nulls = solver.eigenstrap(myelinmap, n_nulls=n_nulls, seed=seed)
+    psd0_mode = solver.decompose(map)**2
+    psd1_mode = solver.decompose(nulls)**2
 
-    groups = get_eigengroup_inds(solver.n_modes)
+    group_indices = np.floor(np.sqrt(np.arange(solver.n_modes))).astype(int)
+    psd0_group = np.bincount(group_indices, weights=psd0_mode.ravel())
+    psd1_group = np.array([np.bincount(group_indices, weights=psd1_mode[:, i].ravel())
+                    for i in range(n_nulls)])
 
-    n_groups = len(groups)
-    group_indices = np.concatenate([np.full(len(group), i) for i, group in enumerate(groups)])
-
-    beta0 = solver.decompose(myelinmap)
-    psd0 = np.bincount(group_indices, weights=beta0.ravel()**2)[1:]  # Exclude constant mode
-
-    beta1 = solver.decompose(nulls)
-    psd1 = np.array([np.bincount(group_indices, weights=beta1[:, i].ravel()**2)
-                    for i in range(n_nulls)])[:, 1:]  # Exclude constant mode
-    psd1_mean = psd1.mean(axis=0)
-
-    for i in range(n_groups - 1):
-        assert np.allclose(psd1_mean[i], psd0[i], rtol=0.2), \
-                f"Nulls do not preserve PSD for eigengroup {i+2}: " \
-                f"data PSD={psd0[i]:.3f}, nulls mean PSD={psd1_mean[i]:.3f}"
+    assert np.allclose(psd0_group, psd1_group, atol=0.01)
     
 def test_reproducibility_nulls(solver, test_data, nulls):
     """Nulls with same seed should be identical"""
