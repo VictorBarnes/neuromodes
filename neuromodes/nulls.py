@@ -154,7 +154,7 @@ def eigenstrap(
     # Eigendecompose maps
     coeffs = decompose(data, emodes, method=decomp_method, mass=mass, check_ortho=check_ortho)
 
-    if residual is not None:
+    if residual is not None: # Compute residuals before coeffs are potentially randomized
         residual_data = data - emodes @ coeffs
 
     # Precompute transformed modes (ellipsoid -> spheroid for each eigengroup)
@@ -196,10 +196,10 @@ def eigenstrap(
 
     # Optionally add residuals of reconstruction
     if residual == 'add':
-        nulls += residual_data[:, np.newaxis, :]
+        nulls += residual_data[:, np.newaxis, :] # pyright: ignore[reportPossiblyUnboundVariable]
     elif residual == 'permute':
         for i, seed in enumerate(null_seeds):
-            nulls[:, i] += np.random.default_rng(seed).permutation(residual_data, axis=0)
+            nulls[:, i] += np.random.default_rng(seed).permutation(residual_data, axis=0) # pyright: ignore[reportPossiblyUnboundVariable]
 
     # Optionally resample values to match stats of original data
     if resample == 'exact':
