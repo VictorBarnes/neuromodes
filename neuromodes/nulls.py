@@ -160,14 +160,13 @@ def eigenstrap(
     # Precompute transformed modes (ellipsoid -> spheroid for each eigengroup)
     sqrt_evals = np.sqrt(evals)
     sqrt_evals[0] = 1  # No transform for constant mode (preserves mean and avoids division by zero)
-    norm_emodes = emodes / sqrt_evals
-
-    sqrt_evals = sqrt_evals[:, np.newaxis]
+    norm_emodes = emodes / sqrt_evals # sqrt_evals behaves like a row vector
 
     # Initialise RNG, with seed for each null
     rng = np.random.default_rng(seed)
     null_seeds = rng.integers(np.iinfo(np.int32).max, size=n_nulls)
 
+    # Turn coeffs into a 3D array of shape (n_modes, n_maps, n_nulls)
     if randomize:
         # Permute coefficients within eigengroups for each null
         coeffs = np.stack([
@@ -178,18 +177,18 @@ def eigenstrap(
             for seed in null_seeds
         # Place each null's permuted coeffs along a third axis
         ], axis=2)
-
-        sqrt_evals = sqrt_evals[:, :, np.newaxis]
+    else: 
+        coeffs = np.broadcast_to(coeffs[:, :, None], (n_modes, data.shape[1], n_nulls))
 
     # Precompute inverse-transformed coefficients (spheroid -> ellipsoid for each eigengroup)
-    inv_coeffs = sqrt_evals * coeffs
+    inv_coeffs = sqrt_evals[:, np.newaxis, np.newaxis] * coeffs # sqrt_evals behaves like a 3D column vector 
 
     # Generate nulls
     nulls = np.stack([
         _eigenstrap_single(
             norm_emodes=norm_emodes,
             groups=groups,
-            inv_coeffs=inv_coeffs[:, :, i] if randomize else inv_coeffs,
+            inv_coeffs=inv_coeffs[:, :, i],
             seed=null_seeds[i]
             )
             for i in range(n_nulls)
