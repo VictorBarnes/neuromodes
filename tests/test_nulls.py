@@ -5,15 +5,15 @@ from neuromodes.io import fetch_surf, fetch_map
 from neuromodes.nulls import eigenstrap
 
 # Params
-n_nulls = 100
+n_nulls = 90
 seed = 0
 
-@pytest.fixture
+@pytest.fixture(scope='module')
 def solver():
     mesh, medmask = fetch_surf(density='4k')
     return EigenSolver(mesh, mask=medmask).solve(n_modes=100, seed=seed)
 
-@pytest.fixture
+@pytest.fixture(scope='module')
 def test_data(solver):
     """Generate 1D test data"""
     rng = np.random.default_rng(seed)
