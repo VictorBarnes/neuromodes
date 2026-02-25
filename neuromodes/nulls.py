@@ -13,7 +13,8 @@ from neuromodes.basis import decompose
 from neuromodes.eigen import get_eigengroup_inds
 
 if TYPE_CHECKING:
-    from numpy import floating, integer
+    from scipy.sparse import spmatrix
+    from numpy import floating
     from numpy.typing import ArrayLike, NDArray
 
 def eigenstrap(
@@ -26,7 +27,7 @@ def eigenstrap(
     randomize: bool = False,
     residual: Union[str, None] = None,
     decomp_method: str = 'project',
-    mass: Union[ArrayLike, None] = None,
+    mass: Union[spmatrix, ArrayLike, None] = None,
     seed: Union[int, None] = None,
     check_ortho: bool = True,
 ) -> NDArray[floating]:
@@ -124,6 +125,7 @@ def eigenstrap(
     data = np.asarray(data)  # chkfinite in decompose
     if data.ndim == 1:
         data = data[:, np.newaxis]
+    n_maps = data.shape[1]
     n_cols = emodes.shape[1]
     if emodes.ndim != 2 or emodes.shape[0] < n_cols:
         raise ValueError("`emodes` must have shape (n_verts, n_modes), where n_verts ≥ n_modes.")
@@ -151,7 +153,7 @@ def eigenstrap(
     emodes = emodes[:, :n_modes].copy()
     evals = evals[:n_modes].copy()
 
-    # Eigendecompose maps
+    # Eigendecompose maps (coeffs is n_modes x n_maps)
     coeffs = decompose(data, emodes, method=decomp_method, mass=mass, check_ortho=check_ortho)
 
     if residual is not None: # Compute residuals before coeffs are potentially randomized
@@ -207,20 +209,20 @@ def eigenstrap(
         sorted_indices = np.argsort(nulls, axis=0)
         nulls = np.take_along_axis(sorted_data, sorted_indices, axis=0)
     elif resample == 'mean':
-        nulls -= nulls.mean(axis=0)
+        nulls -= nulls.mean(axis=0, keepdims=True)
         nulls += data.mean(axis=0)
     elif resample == 'affine':
-        nulls -= nulls.mean(axis=0)
-        nulls /= nulls.std(axis=0)
+        nulls -= nulls.mean(axis=0, keepdims=True)
+        nulls /= nulls.std(axis=0, keepdims=True)
         nulls *= data.std(axis=0)
         nulls += data.mean(axis=0)
     elif resample == 'range':
-        nulls -= nulls.min(axis=0)
-        nulls /= nulls.max(axis=0)
+        nulls -= nulls.min(axis=0, keepdims=True)
+        nulls /= nulls.max(axis=0, keepdims=True)
         nulls *= data.max(axis=0) - data.min(axis=0)
         nulls += data.min(axis=0)
 
-    if data.shape[1] == 1: # number of maps
+    if n_maps == 1: # number of maps
         nulls = nulls.squeeze(axis=2)
 
     return nulls
