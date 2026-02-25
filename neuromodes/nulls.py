@@ -14,7 +14,7 @@ from neuromodes.eigen import get_eigengroup_inds
 
 if TYPE_CHECKING:
     from scipy.sparse import spmatrix
-    from numpy import floating
+    from numpy import floating, integer
     from numpy.typing import ArrayLike, NDArray
 
 def eigenstrap(
@@ -185,8 +185,8 @@ def eigenstrap(
     # Precompute inverse-transformed coefficients (spheroid -> ellipsoid for each eigengroup)
     inv_coeffs = sqrt_evals[:, np.newaxis, np.newaxis] * coeffs # sqrt_evals behaves like a 3D column vector 
 
-    # Generate nulls
-    nulls = np.stack([
+    # Generate nulls (tforms will have shape (n_modes, n_maps, n_nulls))
+    tforms = np.stack([
         _eigenstrap_single(
             norm_emodes=norm_emodes,
             groups=groups,
@@ -195,6 +195,9 @@ def eigenstrap(
             )
             for i in range(n_nulls)
             ], axis=1)
+    
+    nulls = np.einsum('ab,bcd->acd', norm_emodes, tforms) # einsum applies all transformations to all modes at once
+    # nulls = norm_emodes @ tforms # matrix multiplication applies all transformations to all modes at once
 
     # Optionally add residuals of reconstruction
     if residual == 'add':
@@ -271,4 +274,4 @@ def _eigenstrap_single(
          )
 
     # Generate null
-    return norm_emodes @ tforms
+    return tforms
