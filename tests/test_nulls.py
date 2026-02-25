@@ -74,20 +74,20 @@ def test_psd_preservation():
         assert np.allclose(psd1_mean[i], psd0[i], rtol=0.2), \
                 f"Nulls do not preserve PSD for eigengroup {i+2}: " \
                 f"data PSD={psd0[i]:.3f}, nulls mean PSD={psd1_mean[i]:.3f}"
-    
-def test_reproducibility_nulls(solver, test_data, nulls):
-    """Nulls with same seed should be identical"""
-    nulls2 = solver.eigenstrap(test_data, n_nulls=n_nulls-1, seed=seed)
-    
-    assert np.allclose(nulls[:,:-1], nulls2, atol=1e-10), \
-        "Null spaces with the same seed should be identical"
 
 def test_reproducibility_data(solver, test_data, nulls):
-    """Nulls with same seed should be identical"""
+    """Nulls with same seed but different n_maps should be identical"""
     test_data2 = np.column_stack((test_data, np.random.normal(loc=1, size=solver.n_verts)))
     nulls2 = solver.eigenstrap(test_data2, n_nulls=n_nulls, seed=seed)
     
     assert np.allclose(nulls, nulls2[:,:,0], atol=1e-10), \
+        "Null spaces with the same seed should be identical"
+    
+def test_reproducibility_nulls(solver, test_data, nulls):
+    """Nulls with same seed but different n_nulls should still be identical"""
+    nulls2 = solver.eigenstrap(test_data, n_nulls=n_nulls-1, seed=seed)
+    
+    assert np.allclose(nulls[:,:-1], nulls2, atol=1e-10), \
         "Null spaces with the same seed should be identical"
 
 def test_finite(nulls):
