@@ -187,9 +187,8 @@ def eigenstrap(
         seeds=null_seeds
     )
     
-    nulls = np.einsum('ab,bcd->acd', norm_emodes, tforms) # einsum applies all transformations to all modes at once
-    # nulls = np.moveaxis(nulls, 1, 2)
-    # nulls = norm_emodes @ tforms # matrix multiplication applies all transformations to all modes at once
+    # tensordot appears faster than einsum
+    nulls = np.tensordot(norm_emodes, tforms, axes=(1, 0)) # (n_verts, n_nulls, n_maps)
 
     # Optionally add residuals of reconstruction
     if residual == 'add':
@@ -287,9 +286,7 @@ def _eigenstrap_multiple(inv_coeffs, groups, seeds) -> NDArray[floating]:
         dets = np.linalg.det(Q)
         Q[:, :, 0] *= np.sign(dets)[:, np.newaxis]
 
-        # Use batched matmul (@) instead of np.einsum for faster transformation
-        inv_g = np.moveaxis(inv_coeffs[group], [0,1,2], [1,0,2]) # (n_nulls, K, n_maps)
-        res = Q @ inv_g                              # (n_nulls, K, n_maps)
-        tforms[group, :, :] = np.moveaxis(res, [0,1,2], [1,0,2])    # back to (n_modes, n_nulls, n_maps)
+        # Batched matmul (equiv of @) appears faster than einsum or tensordot
+        tforms[group,:,:] = np.matmul(Q, inv_coeffs[group, :, :], axes=[(1, 2), (0, 2), (0, 2)])
 
     return tforms
