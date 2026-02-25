@@ -39,13 +39,11 @@ def test_internull_corrs(nulls):
         f"Mean internull correlation should be close to zero, got {mean_corr:.3f}"
     
 def test_mean_preservation(test_data, nulls):
-    """Nulls should approximately preserve mean of original data"""
+    """Nulls should approximately preserve mean of original data even without using resample='mean'"""
     data_mean = np.mean(test_data)
     null_means = np.mean(nulls, axis=0)
-    
-    for i, null_mean in enumerate(null_means):
-        assert np.abs(null_mean - data_mean) < 0.02, \
-            f"Null {i} mean {null_mean} is not close to data mean {data_mean}"
+    assert np.allclose(null_means, data_mean, atol=0.02), \
+        f"Null means are not close to data mean {data_mean}"
         
 def test_psd_preservation():
     """Nulls should preserve eigengroup power spectral density of map on sphere"""
@@ -254,3 +252,18 @@ def test_residual_methods_2d(solver, test_data_2d):
         assert nulls.shape == (solver.n_verts, n_nulls, test_data_2d.shape[1])
         assert np.isfinite(nulls).all(), \
             f"Nulls contain non-finite values for residual method '{method}'"
+        
+def test_all_parameters_eigenstrap(solver, test_data): 
+    """Test that all parameters together work without errors"""
+    nulls = solver.eigenstrap(
+        test_data, 
+        n_nulls=n_nulls, 
+        n_groups=int(np.sqrt(n_nulls))-1,
+        resample='affine', 
+        randomize=True, 
+        residual='permute', 
+        decomp_method='project',
+        seed=seed
+    )
+    assert nulls.shape == (solver.n_verts, n_nulls)
+    assert np.isfinite(nulls).all(), "Nulls contain non-finite values"
