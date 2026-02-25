@@ -168,33 +168,19 @@ def eigenstrap(
     rng = np.random.default_rng(seed)
     null_seeds = rng.integers(np.iinfo(np.int32).max, size=n_nulls)
 
-    # Turn coeffs into a 3D array of shape (n_modes, n_maps, n_nulls)
+    # Turn coeffs into a 3D array of shape (n_modes, n_nulls, n_maps)
     if randomize:
-        # Permute coefficients within eigengroups for each null
-        coeffs = np.stack([
-            np.concatenate([
-                np.random.default_rng(seed).permutation(coeffs[group, :], axis=0)
-                for group in groups
-            ], axis=0)
-            for seed in null_seeds
-        # Place each null's permuted coeffs along a third axis
-        ], axis=2)
+        null_coeffs = np.empty((n_modes, n_nulls, n_maps))
+        for i, s in enumerate(null_seeds):
+            for group in groups:
+                null_coeffs[group, i, :] = np.random.default_rng(s).permutation(coeffs[group, :], axis=0)
     else: 
-        coeffs = np.broadcast_to(coeffs[:, :, None], (n_modes, data.shape[1], n_nulls))
+        null_coeffs = np.broadcast_to(coeffs[:, None, :], (n_modes, n_nulls, n_maps))
 
     # Precompute inverse-transformed coefficients (spheroid -> ellipsoid for each eigengroup)
-    inv_coeffs = sqrt_evals[:, np.newaxis, np.newaxis] * coeffs # sqrt_evals behaves like a 3D column vector 
+    inv_coeffs = sqrt_evals[:, np.newaxis, np.newaxis] * null_coeffs # sqrt_evals behaves like a 3D column vector 
 
-    # Generate nulls (tforms will have shape (n_modes, n_maps, n_nulls))
-    # tforms = np.stack([
-    #     _eigenstrap_single(
-    #         groups=groups,
-    #         inv_coeffs=inv_coeffs[:, :, i],
-    #         seed=null_seeds[i]
-    #         )
-    #         for i in range(n_nulls)
-    #         ], axis=1)
-    
+    # Generate nulls using tforms of shape (n_modes, n_nulls, n_maps)
     tforms = _eigenstrap_multiple(
         groups=groups,
         inv_coeffs=inv_coeffs,
@@ -202,7 +188,7 @@ def eigenstrap(
     )
     
     nulls = np.einsum('ab,bcd->acd', norm_emodes, tforms) # einsum applies all transformations to all modes at once
-    nulls = np.moveaxis(nulls, 1, 2)
+    # nulls = np.moveaxis(nulls, 1, 2)
     # nulls = norm_emodes @ tforms # matrix multiplication applies all transformations to all modes at once
 
     # Optionally add residuals of reconstruction
@@ -231,7 +217,7 @@ def eigenstrap(
         nulls *= data.max(axis=0) - data.min(axis=0)
         nulls += data.min(axis=0)
 
-    if n_maps == 1: # number of maps
+    if n_maps == 1:
         nulls = nulls.squeeze(axis=2)
 
     return nulls
@@ -282,7 +268,7 @@ def _eigenstrap_single(
     return tforms
 
 def _eigenstrap_multiple(inv_coeffs, groups, seeds) -> NDArray[floating]: 
-    tforms = np.empty_like(inv_coeffs)
+    tforms = np.empty_like(inv_coeffs) # shape (n_modes, n_nulls, n_maps)
     rngs = [np.random.default_rng(s) for s in seeds] # one seed for each null
     # TODO probably need to change this as the rot mats for each group are not independent
 
@@ -302,8 +288,8 @@ def _eigenstrap_multiple(inv_coeffs, groups, seeds) -> NDArray[floating]:
         Q[:, :, 0] *= np.sign(dets)[:, np.newaxis]
 
         # Use batched matmul (@) instead of np.einsum for faster transformation
-        inv_g = np.moveaxis(inv_coeffs[group], [0,1,2], [1,2,0]) # (n_nulls, K, n_maps)
+        inv_g = np.moveaxis(inv_coeffs[group], [0,1,2], [1,0,2]) # (n_nulls, K, n_maps)
         res = Q @ inv_g                              # (n_nulls, K, n_maps)
-        tforms[group, :, :] = np.moveaxis(res, [0,1,2], [2,0,1])    # back to (n_modes, n_maps, n_nulls)
+        tforms[group, :, :] = np.moveaxis(res, [0,1,2], [1,0,2])    # back to (n_modes, n_nulls, n_maps)
 
     return tforms
