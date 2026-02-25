@@ -186,17 +186,23 @@ def eigenstrap(
     inv_coeffs = sqrt_evals[:, np.newaxis, np.newaxis] * coeffs # sqrt_evals behaves like a 3D column vector 
 
     # Generate nulls (tforms will have shape (n_modes, n_maps, n_nulls))
-    tforms = np.stack([
-        _eigenstrap_single(
-            norm_emodes=norm_emodes,
-            groups=groups,
-            inv_coeffs=inv_coeffs[:, :, i],
-            seed=null_seeds[i]
-            )
-            for i in range(n_nulls)
-            ], axis=1)
+    # tforms = np.stack([
+    #     _eigenstrap_single(
+    #         groups=groups,
+    #         inv_coeffs=inv_coeffs[:, :, i],
+    #         seed=null_seeds[i]
+    #         )
+    #         for i in range(n_nulls)
+    #         ], axis=1)
+    
+    tforms = _eigenstrap_multiple(
+        groups=groups,
+        inv_coeffs=inv_coeffs,
+        seeds=null_seeds
+    )
     
     nulls = np.einsum('ab,bcd->acd', norm_emodes, tforms) # einsum applies all transformations to all modes at once
+    nulls = np.moveaxis(nulls, 1, 2)
     # nulls = norm_emodes @ tforms # matrix multiplication applies all transformations to all modes at once
 
     # Optionally add residuals of reconstruction
@@ -231,7 +237,6 @@ def eigenstrap(
     return nulls
 
 def _eigenstrap_single(
-    norm_emodes: NDArray[floating],
     inv_coeffs: NDArray[floating],
     groups: list[NDArray[integer]],
     seed: int
@@ -274,4 +279,31 @@ def _eigenstrap_single(
          )
 
     # Generate null
+    return tforms
+
+def _eigenstrap_multiple(inv_coeffs, groups, seeds) -> NDArray[floating]: 
+    tforms = np.empty_like(inv_coeffs)
+    rngs = [np.random.default_rng(s) for s in seeds] # one seed for each null
+    # TODO probably need to change this as the rot mats for each group are not independent
+
+    for group in groups:
+        K = len(group)
+        if K == 1: # No rotation for first eigengroup (first mode; constant), only coefficients
+            tforms[group, :, :] = inv_coeffs[group, :]
+            continue
+
+        # Strictly maintain seeding reproducibility defined by docstring
+        X = np.stack([rng.standard_normal((K, K)) for rng in rngs], axis=0)
+        
+        Q, R = np.linalg.qr(X)
+        r = np.sign(np.diagonal(R, axis1=1, axis2=2))
+        Q = Q * r[:, np.newaxis, :]
+        dets = np.linalg.det(Q)
+        Q[:, :, 0] *= np.sign(dets)[:, np.newaxis]
+
+        # Use batched matmul (@) instead of np.einsum for faster transformation
+        inv_g = np.moveaxis(inv_coeffs[group], [0,1,2], [1,2,0]) # (n_nulls, K, n_maps)
+        res = Q @ inv_g                              # (n_nulls, K, n_maps)
+        tforms[group, :, :] = np.moveaxis(res, [0,1,2], [2,0,1])    # back to (n_modes, n_maps, n_nulls)
+
     return tforms
