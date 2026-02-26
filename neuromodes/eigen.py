@@ -8,7 +8,9 @@ from pathlib import Path
 from typing import Union, Tuple, TYPE_CHECKING
 from warnings import warn
 from lapy import Solver, TriaMesh
+from lapy.diffgeo import tria_compute_gradient
 import numpy as np
+from scipy.stats import zscore
 from scipy.sparse import spmatrix
 from scipy.sparse.linalg import LinearOperator, eigsh, splu
 from trimesh import Trimesh
@@ -39,7 +41,8 @@ class EigenSolver(Solver):
         Whether to normalize the surface mesh to have unit surface area and centroid at the
         origin (modifies the vertices). Default is `False`.
     hetero : array-like, optional
-        A heterogeneity map to scale the Laplace-Beltrami operator. Default is `None`.
+        Heterogeneity map to incorporate regional heterogeneity into the Laplace-Beltrami 
+        operator. Default is `None`.
     alpha : float, optional
         Scaling parameter for the heterogeneity map. If a heterogenity map is specified, the
         default is `1.0`. Otherwise, this value is ignored (and is set to `None`).
@@ -47,7 +50,15 @@ class EigenSolver(Solver):
         Scaling function to apply to the heterogeneity map. Must be `'sigmoid'` or
         `'exponential'`. If a heterogenity map is specified, the default is `'sigmoid'`.
         Otherwise, this value is ignored (and is set to `None`).
-
+    aniso : array-like, optional
+        Anisotropy map to incorporate regional anisotropy into the Laplace-Beltrami 
+        operator. Default is `None`.
+    beta: float, optional
+        Anisotropy ratio parameter controlling directional bias of diffusion. When beta=0, 
+        diffusion is isotropic. Positive beta enhances diffusion parallel to the gradient of 
+        `aniso` while reducing it perpendicular to the gradient. Negative beta does the 
+        opposite: enhances diffusion perpendicular to the gradient while reducing it parallel. 
+        
     Raises
     ------
     ValueError
@@ -75,7 +86,9 @@ class EigenSolver(Solver):
         normalize: bool = False,
         hetero: Union[ArrayLike, None] = None,
         alpha: Union[float, None] = None, # default to 1.0 if hetero given (and remains None)
-        scaling: Union[str, None] = None  # default to "sigmoid" if hetero given (and remains None)
+        scaling: Union[str, None] = None,  # default to "sigmoid" if hetero given (and remains None)
+        aniso: Union[ArrayLike, None] = None,
+        beta: Union[float, None] = None
     ):
         # Surface inputs and checks
         surf = read_surf(surf)
@@ -129,6 +142,32 @@ class EigenSolver(Solver):
                 scaling=self._scaling
             )
 
+        # Aniso inputs
+        if aniso is None:
+            if beta is not None:
+                warn("`beta` is ignored as `aniso` is None.")
+            self.aniso = None
+            self._beta = None
+        else:
+            aniso = np.asarray(aniso)
+            beta = 1.0 if beta is None else float(beta)
+
+            # Ensure aniso has correct length (masked or unmasked)
+            if mask is not None and aniso.shape == (len(mask),):
+                aniso = aniso[mask]
+            elif aniso.shape != (self.n_verts,):
+                err_str = f"the number of vertices in the surface mesh ({self.n_verts})"
+                if self.mask is not None:
+                    err_str += f" or the masked surface mesh (of size {self.mask.sum()})"
+                raise ValueError(
+                    f"`aniso` must be a 1D array with length matching {err_str}."
+                )
+            
+            aniso_check = np.asarray_chkfinite(aniso)   # check for NaNs and infs
+            self.aniso = (aniso_check - np.mean(aniso_check)) / np.std(aniso_check)
+            self._beta = beta
+
+
     def __str__(self) -> str:
         """String representation of the EigenSolver object."""
         str_out = f'EigenSolver\n-----------\nSurface mesh: {self.n_verts} vertices'
@@ -142,7 +181,8 @@ class EigenSolver(Solver):
 
     def compute_lbo(
         self, 
-        lump: bool = False
+        lump: bool = False,
+        smoothit: int = 10,
     ) -> EigenSolver:
         """
         This method computes the Laplace-Beltrami operator using finite element methods on a
@@ -153,19 +193,70 @@ class EigenSolver(Solver):
         ----------
         lump : bool, optional
             Whether to use lumped mass matrix for the Laplace-Beltrami operator. Default is `False`.
+        smoothit : int, optional
+            Number of smoothing iterations for curvature calculation. Default is 10.
 
         Returns
         -------
         EigenSolver
             The EigenSolver instance.
+
+        Notes
+        -----
+        When anisotropy is applied, the gradient components are cross-coupled with the tangent
+        basis directions due to the FEM formulation. Specifically, the gradient component in the 
+        u1 direction scales diffusion in the u2 direction, and vice versa. This corresponds to 
+        the tensor transformation R^T D R where R = [0,-1; 1,0], a standard rotation required 
+        by the finite element discretization. Positive beta enhances diffusion parallel to the 
+        gradient direction, while negative beta enhances it perpendicular to the gradient.
+        
+        The anisotropic diffusion tensor uses a symmetric exponential formulation which 
+        preserves the determinant (geometric mean = 1). This decouples the effects of 
+        hetero (overall diffusion magnitude) and beta (directional bias).
         """
-        u1, u2, _, _ = self.geometry.curvature_tria()
+        if self.hetero is None and self.aniso is None:
+            stiffness, mass = self._fem_tria(self.geometry, lump)
+        else:
+            if self.hetero is not None:
+                hetero_tri = self.geometry.map_vfunc_to_tfunc(self.hetero)
 
-        hetero_tri = self.geometry.map_vfunc_to_tfunc(self.hetero)
-        hetero_mat = np.tile(hetero_tri[:, np.newaxis], (1, 2))
+            u1, u2, _, _ = self.geometry.curvature_tria(smoothit=smoothit)
+            
+            if self.aniso is not None:
+                # Compute 3D gradient at each triangle
+                grad_3d = tria_compute_gradient(self.geometry, self.aniso)
+                
+                # Project gradient onto local (u1, u2) coordinates
+                grad_u1 = np.sum(grad_3d * u1, axis=1)  # component in u1 direction
+                grad_u2 = np.sum(grad_3d * u2, axis=1)  # component in u2 direction
+                
+                # Compute gradient magnitude and normalize to [0, 1] range
+                grad_mag = np.sqrt(grad_u1**2 + grad_u2**2)
+                grad_mag_norm = grad_mag / np.maximum(grad_mag.max(), 1e-10)
+                
+                # Compute unit gradient directions (avoid division by zero)
+                grad_u1_unit = grad_u1 / np.maximum(grad_mag, 1e-10)
+                grad_u2_unit = grad_u2 / np.maximum(grad_mag, 1e-10)
+                
+                # Symmetric exponential anisotropy: preserves determinant (aniso_u1 * aniso_u2 = 1)
+                # FEM cross-coupling: grad_u2 component scales u1 diffusion (R^T D R, R=[0,-1;1,0])
+                aniso_u1 = np.exp(self.beta * grad_mag_norm * (grad_u2_unit**2 - grad_u1_unit**2) / 2)
+                aniso_u2 = np.exp(self.beta * grad_mag_norm * (grad_u1_unit**2 - grad_u2_unit**2) / 2)
 
-        self.stiffness, self.mass = self._fem_tria_aniso(self.geometry, u1, u2,
-                                                         hetero_mat, lump)
+                # Scale by heterogeneity to control overall diffusion magnitude
+                aniso_mat = np.column_stack([
+                    hetero_tri * aniso_u1,  # when beta=0, this becomes hetero_tri * 1
+                    hetero_tri * aniso_u2   # when beta=0, this becomes hetero_tri * 1
+                ])
+            else:
+                # Isotropic case
+                aniso_mat = np.tile(hetero_tri[:, np.newaxis], (1, 2))
+
+            stiffness, mass = self._fem_tria_aniso(self.geometry, u1, u2, aniso_mat, lump)
+        
+        self.stiffness = stiffness
+        self.mass = mass
+
         return self
 
     def solve(
@@ -177,7 +268,8 @@ class EigenSolver(Solver):
         rtol: float = 1e-5,
         sigma: Union[float, None] = -0.01,
         seed: Union[int, ArrayLike, None] = None, 
-        lump: bool = False
+        lump: bool = False,
+        smoothit: int = 10
     ) -> EigenSolver:
         """
         Solves the generalized eigenvalue problem for the Laplace-Beltrami operator and compute
@@ -209,6 +301,8 @@ class EigenSolver(Solver):
             vector). Default is `None` (not reproducible).
         lump: bool = False
             Whether to use lumped mass matrix for the Laplace-Beltrami operator. Default is `False`.
+        smoothit: int = 10
+            Number of smoothing iterations for curvature calculation. Default is 10.
 
         Returns
         -------
@@ -229,7 +323,8 @@ class EigenSolver(Solver):
             raise ValueError("`n_modes` must be a positive integer.")
 
         # Compute the Laplace-Beltrami operator / set stiffness and mass matrices
-        self.compute_lbo(lump)
+        if not hasattr(self, 'stiffness') or not hasattr(self, 'mass'):
+            self.compute_lbo(lump, smoothit)
         
         # Set intitialization vector (if desired) for reproducibile eigenvectors 
         if seed is None or isinstance(seed, int):
