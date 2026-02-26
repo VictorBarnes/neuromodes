@@ -193,17 +193,25 @@ def eigenstrap(
             for group in groups:
                 null_coeffs[group, i, :] = np.random.default_rng(s).permutation(coeffs[group, :], axis=0)
     else: 
-        null_coeffs = np.broadcast_to(coeffs[:, None, :], (n_modes, n_nulls, n_maps))
+        null_coeffs = np.broadcast_to(coeffs[:, np.newaxis, :], (n_modes, n_nulls, n_maps))
 
     # Precompute inverse-transformed coefficients (spheroid -> ellipsoid for each eigengroup)
     inv_coeffs = sqrt_evals[:, np.newaxis, np.newaxis] * null_coeffs # sqrt_evals behaves like a 3D column vector 
 
     # Generate nulls using tforms of shape (n_modes, n_nulls, n_maps)
-    tforms = _eigenstrap_multiple(
-        groups=groups,
-        inv_coeffs=inv_coeffs,
-        seeds=null_seeds
-    )
+    # tforms = _eigenstrap_multiple(
+    #     groups=groups,
+    #     inv_coeffs=inv_coeffs,
+    #     seeds=null_seeds
+    # )
+    tforms = np.stack([
+        _eigenstrap_single(
+            inv_coeffs=inv_coeffs[:, i, :],
+            groups=groups,
+            seed=null_seeds[i]
+        )
+        for i in range(n_nulls)
+    ], axis=1)
     
     # tensordot appears faster than einsum
     nulls = np.tensordot(norm_emodes, tforms, axes=(1, 0)) # (n_verts, n_nulls, n_maps)
