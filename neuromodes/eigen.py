@@ -240,8 +240,8 @@ class EigenSolver(Solver):
                 
                 # Symmetric exponential anisotropy: preserves determinant (aniso_u1 * aniso_u2 = 1)
                 # FEM cross-coupling: grad_u2 component scales u1 diffusion (R^T D R, R=[0,-1;1,0])
-                aniso_u1 = np.exp(self.beta * grad_mag_norm * (grad_u2_unit**2 - grad_u1_unit**2) / 2)
-                aniso_u2 = np.exp(self.beta * grad_mag_norm * (grad_u1_unit**2 - grad_u2_unit**2) / 2)
+                aniso_u1 = np.exp(self._beta * grad_mag_norm * (grad_u2_unit**2 - grad_u1_unit**2) / 2)
+                aniso_u2 = np.exp(self._beta * grad_mag_norm * (grad_u1_unit**2 - grad_u2_unit**2) / 2)
 
                 # Scale by heterogeneity to control overall diffusion magnitude
                 aniso_mat = np.column_stack([
