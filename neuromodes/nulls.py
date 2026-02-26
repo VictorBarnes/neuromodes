@@ -13,6 +13,7 @@ from neuromodes.basis import decompose
 from neuromodes.eigen import get_eigengroup_inds
 
 if TYPE_CHECKING:
+    from scipy.sparse import spmatrix
     from numpy import floating, integer
     from numpy.typing import ArrayLike, NDArray
 
@@ -26,7 +27,7 @@ def eigenstrap(
     randomize: bool = False,
     residual: Union[str, None] = None,
     decomp_method: str = 'project',
-    mass: Union[ArrayLike, None] = None,
+    mass: Union[spmatrix, ArrayLike, None] = None,
     seed: Union[int, None] = None,
     check_ortho: bool = True,
 ) -> NDArray[floating]:
@@ -142,15 +143,13 @@ def eigenstrap(
     data = np.asarray(data)  # chkfinite in decompose
     if data.ndim == 1:
         data = data[:, np.newaxis]
-    if emodes.ndim != 2 or emodes.shape[0] < emodes.shape[1]:
+    n_maps = data.shape[1]
+    n_cols = emodes.shape[1]
+    if emodes.ndim != 2 or emodes.shape[0] < n_cols:
         raise ValueError("`emodes` must have shape (n_verts, n_modes), where n_verts ≥ n_modes.")
-    n_modes = emodes.shape[1]
-    if evals.shape != (n_modes,):
-        raise ValueError(f"`evals` must have shape (n_modes,) = {(n_modes,)}, matching the number "
+    if evals.shape != (n_cols,):
+        raise ValueError(f"`evals` must have shape (n_modes,) = {(n_cols,)}, matching the number "
                          "of columns in `emodes`.")
-    if n_groups is not None and n_groups**2 > emodes.shape[1]:
-        raise ValueError(f"`n_groups`={n_groups} implies n_modes={n_groups**2}, which exceeds the "
-                         f"number of columns in `emodes` ({emodes.shape[1]}).")
     if residual not in (None, 'add', 'permute'):
         raise ValueError(f"Invalid residual method '{residual}'; must be 'add', 'permute', or "
                          "None.")
@@ -160,68 +159,61 @@ def eigenstrap(
 
     # Determine eigengroups
     if n_groups is None:
-        n_groups = int(np.sqrt(n_modes))  # floor of root
-        if n_groups**2 != n_modes:
+        n_groups = int(np.sqrt(n_cols))  # floor of root
+        if n_groups**2 != n_cols:
             warn("`emodes` contains an incomplete eigengroup (i.e, number of modes is not a "
-                 f"perfect square). Last {n_modes - n_groups**2} modes will be excluded.")
+                 f"perfect square). Last {n_cols - n_groups**2} modes will be excluded.")
+    elif n_groups**2 > n_cols:
+        raise ValueError(f"`n_groups`={n_groups} implies n_modes={n_groups**2}, which exceeds the "
+                         f"number of columns in `emodes` ({n_cols}).")
     n_modes = n_groups**2
     groups = get_eigengroup_inds(n_modes)
+    emodes = emodes[:, :n_modes].copy()
+    evals = evals[:n_modes].copy()
 
-    # Truncate arrays if necessary
-    if n_modes < emodes.shape[1]:
-        emodes = emodes[:, :n_modes].copy()
-        evals = evals[:n_modes].copy()
-
-    # Eigendecompose maps
+    # Eigendecompose maps (coeffs is n_modes x n_maps)
     coeffs = decompose(data, emodes, method=decomp_method, mass=mass, check_ortho=check_ortho)
 
-    if residual is not None:
+    if residual is not None: # Compute residuals before coeffs are potentially randomized
         residual_data = data - emodes @ coeffs
 
     # Precompute transformed modes (ellipsoid -> spheroid for each eigengroup)
     sqrt_evals = np.sqrt(evals)
     sqrt_evals[0] = 1  # No transform for constant mode (preserves mean and avoids division by zero)
-    norm_emodes = emodes / sqrt_evals
-
-    sqrt_evals = sqrt_evals[:, np.newaxis]
+    norm_emodes = emodes / sqrt_evals # sqrt_evals behaves like a row vector
 
     # Initialise RNG, with seed for each null
     rng = np.random.default_rng(seed)
     null_seeds = rng.integers(np.iinfo(np.int32).max, size=n_nulls)
 
+    # Turn coeffs into a 3D array of shape (n_modes, n_nulls, n_maps)
     if randomize:
-        # Permute coefficients within eigengroups for each null
-        coeffs = np.stack([
-            np.concatenate([
-                np.random.default_rng(seed).permutation(coeffs[group, :], axis=0)
-                for group in groups
-            ], axis=0)
-            for seed in null_seeds
-        # Place each null's permuted coeffs along a third axis
-        ], axis=2)
-
-        sqrt_evals = sqrt_evals[:, :, np.newaxis]
+        null_coeffs = np.empty((n_modes, n_nulls, n_maps))
+        for i, s in enumerate(null_seeds):
+            for group in groups:
+                null_coeffs[group, i, :] = np.random.default_rng(s).permutation(coeffs[group, :], axis=0)
+    else: 
+        null_coeffs = np.broadcast_to(coeffs[:, None, :], (n_modes, n_nulls, n_maps))
 
     # Precompute inverse-transformed coefficients (spheroid -> ellipsoid for each eigengroup)
-    inv_coeffs = sqrt_evals * coeffs
+    inv_coeffs = sqrt_evals[:, np.newaxis, np.newaxis] * null_coeffs # sqrt_evals behaves like a 3D column vector 
 
-    # Generate nulls
-    nulls = np.stack([
-        _eigenstrap_single(
-            norm_emodes=norm_emodes,
-            groups=groups,
-            inv_coeffs=inv_coeffs[:, :, i] if randomize else inv_coeffs,
-            seed=null_seeds[i]
-            )
-            for i in range(n_nulls)
-            ], axis=1)
+    # Generate nulls using tforms of shape (n_modes, n_nulls, n_maps)
+    tforms = _eigenstrap_multiple(
+        groups=groups,
+        inv_coeffs=inv_coeffs,
+        seeds=null_seeds
+    )
+    
+    # tensordot appears faster than einsum
+    nulls = np.tensordot(norm_emodes, tforms, axes=(1, 0)) # (n_verts, n_nulls, n_maps)
 
     # Optionally add residuals of reconstruction
     if residual == 'add':
-        nulls += residual_data[:, np.newaxis, :]
+        nulls += residual_data[:, np.newaxis, :] # pyright: ignore[reportPossiblyUnboundVariable]
     elif residual == 'permute':
         for i, seed in enumerate(null_seeds):
-            nulls[:, i] += np.random.default_rng(seed).permutation(residual_data, axis=0)
+            nulls[:, i] += np.random.default_rng(seed).permutation(residual_data, axis=0) # pyright: ignore[reportPossiblyUnboundVariable]
 
     # Optionally resample values to match stats of original data
     if resample == 'exact':
@@ -229,26 +221,25 @@ def eigenstrap(
         ranks = np.argsort(np.argsort(nulls, axis=0), axis=0)
         nulls = np.take_along_axis(sorted_data, ranks, axis=0)
     elif resample == 'mean':
-        nulls -= nulls.mean(axis=0)
+        nulls -= nulls.mean(axis=0, keepdims=True)
         nulls += data.mean(axis=0)
     elif resample == 'affine':
-        nulls -= nulls.mean(axis=0)
-        nulls /= nulls.std(axis=0)
+        nulls -= nulls.mean(axis=0, keepdims=True)
+        nulls /= nulls.std(axis=0, keepdims=True)
         nulls *= data.std(axis=0)
         nulls += data.mean(axis=0)
     elif resample == 'range':
-        nulls -= nulls.min(axis=0)
-        nulls /= nulls.max(axis=0)
+        nulls -= nulls.min(axis=0, keepdims=True)
+        nulls /= nulls.max(axis=0, keepdims=True)
         nulls *= data.max(axis=0) - data.min(axis=0)
         nulls += data.min(axis=0)
 
-    if data.shape[1] == 1: # number of maps
+    if n_maps == 1:
         nulls = nulls.squeeze(axis=2)
 
     return nulls
 
 def _eigenstrap_single(
-    norm_emodes: NDArray[floating],
     inv_coeffs: NDArray[floating],
     groups: list[NDArray[integer]],
     seed: int
@@ -292,4 +283,29 @@ def _eigenstrap_single(
     )
 
     # Generate null
-    return norm_emodes @ tforms
+    return tforms
+
+def _eigenstrap_multiple(inv_coeffs, groups, seeds) -> NDArray[floating]: 
+    tforms = np.empty_like(inv_coeffs) # shape (n_modes, n_nulls, n_maps)
+    rngs = [np.random.default_rng(s) for s in seeds] # one seed for each null
+    # TODO probably need to change this as the rot mats for each group are not independent
+
+    for group in groups:
+        K = len(group)
+        if K == 1: # No rotation for first eigengroup (first mode; constant), only coefficients
+            tforms[group, :, :] = inv_coeffs[group, :]
+            continue
+
+        # Strictly maintain seeding reproducibility defined by docstring
+        X = np.stack([rng.standard_normal((K, K)) for rng in rngs], axis=0)
+        
+        Q, R = np.linalg.qr(X)
+        r = np.sign(np.diagonal(R, axis1=1, axis2=2))
+        Q = Q * r[:, np.newaxis, :]
+        dets = np.linalg.det(Q)
+        Q[:, :, 0] *= np.sign(dets)[:, np.newaxis]
+
+        # Batched matmul (equiv of @) appears faster than einsum or tensordot
+        tforms[group,:,:] = np.matmul(Q, inv_coeffs[group, :, :], axes=[(1, 2), (0, 2), (0, 2)])
+
+    return tforms
