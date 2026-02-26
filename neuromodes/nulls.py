@@ -106,10 +106,24 @@ def eigenstrap(
     is applied to all maps for each null. This means that null i for map A and null i for 
     map B use identical eigenmode rotations.
 
-    This function uses the constant mode (first column of `emodes`) and correpsonding 
-    eigenvalue to generate mean-preserving nulls. The constant mode is not rotated 
-    and the corresponding eigenvalue is set to 1 to avoid division by zero when 
-    normalizing the modes.
+    This function uses the constant mode (first column of `emodes`) and its correpsonding 
+    eigenvalue to generate mean-preserving nulls. The constant mode is neither rotated nor
+    transformed as no non-trivial rotations exist for this eigengroup consisting of a 
+    single mode (SO(1) = {1}). The corresponding eigenvalue is also set to 1 to avoid 
+    division by zero when normalizing the modes.
+
+    The choice of `n_groups` and `residual` will affect the spatial autocorrelation 
+    similarity between the nulls and empirical data. See [1] for a heuristic for choosing
+    `n_groups` and to see how the choice of `residual` affects the spatial autocorrelation
+    of the nulls. 
+
+    The choice of `resample` will affect the distribution of values in the nulls. Linear
+    transformations (`"mean"` and `"affine"`) preserve the shape of the distribution, while
+    non-linear transformations (`"range"` and `"exact"`) alter the shape of the distribution
+    to match the empirical distribution of the original data. The choice of `resample` should
+    be guided by the importance of matching the original distribution of values and ultimately
+    by whichever option produces the lowest false discovery rate (FDR). See [1] for an
+    example of how to compute the FDR.
 
     Seeding is handled in two stages. First `seed` is used to initialize a master random 
     number generator (RNG) that generates an independent integer seed for each null map. 

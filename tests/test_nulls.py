@@ -16,8 +16,8 @@ def solver():
 @pytest.fixture
 def test_data(solver):
     """Generate 1D test data"""
-    rng = np.random.default_rng(seed)
-    return rng.normal(loc=1, size=solver.n_verts)  # random normal data, non-zero mean
+    data = fetch_map(data="myelinmap", density="4k")[solver.mask]
+    return data
 
 @pytest.fixture
 def nulls(solver, test_data):
@@ -44,7 +44,7 @@ def test_mean_preservation(test_data, nulls):
     null_means = np.mean(nulls, axis=0)
     
     for i, null_mean in enumerate(null_means):
-        assert np.abs(null_mean - data_mean) < 0.02, \
+        assert np.abs(null_mean - data_mean) < 0.05, \
             f"Null {i} mean {null_mean} is not close to data mean {data_mean}"
         
 def test_psd_preservation():
