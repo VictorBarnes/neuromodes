@@ -32,15 +32,39 @@ def test_data(solver):
     rng = np.random.default_rng(seed)
     return rng.normal(loc=1, size=(solver.n_verts, max(n_maps)))  # random normal data, non-zero mean
 
-def test_one(solver, test_data):
-    """Run one test (profile with `pytest tests/test_nulls_speed.py::test_one --profile`)."""
-    n_null = max(n_nulls)
-    n_map = max(n_maps)
-    n_group = max(n_groups)
+def test_min(solver, test_data):
+    """Quick test to ensure everything works"""
+    n_null = min(n_nulls)
+    n_map = min(n_maps)
+    n_group = min(n_groups)
     tic = time.time()
     solver.eigenstrap(test_data[:,:n_map], n_nulls=n_null, n_groups=n_group, seed=seed)
     toc = time.time()
     print(f"Time to generate {n_null} nulls for {n_map} maps with {n_group} groups: {toc - tic:.5f} seconds.")
+
+@pytest.mark.parametrize("rotation_method", ['qr', 'scipy'])
+def test_supermax_nulls(solver, test_data, rotation_method):
+    """Run one test (profile with `pytest tests/test_nulls_speed.py::test_one --profile`)."""
+    n_null = 10 * max(n_nulls)
+    n_map = min(n_maps)
+    n_group = min(n_groups)
+
+    tic = time.time()
+    solver.eigenstrap(test_data[:,:n_map], n_nulls=n_null, n_groups=n_group, seed=seed, rotation_method=rotation_method)
+    toc = time.time()
+    print(f"Time to generate {n_null} nulls for {n_map} maps with {n_group} groups using {rotation_method}: {toc - tic:.5f} seconds.")
+
+@pytest.mark.parametrize("rotation_method", ['qr', 'scipy'])
+def test_supermax_maps(solver, test_data, rotation_method):
+    """Run one test (profile with `pytest tests/test_nulls_speed.py::test_one --profile`)."""
+    n_null = min(n_nulls)
+    n_map = 10 * max(n_maps)
+    n_group = min(n_groups)
+
+    tic = time.time()
+    solver.eigenstrap(test_data[:,:n_map], n_nulls=n_null, n_groups=n_group, seed=seed, rotation_method=rotation_method)
+    toc = time.time()
+    print(f"Time to generate {n_null} nulls for {n_map} maps with {n_group} groups using {rotation_method}: {toc - tic:.5f} seconds.")
 
 def test_all(solver, test_data):
     """Generate nulls for test data"""
@@ -79,4 +103,4 @@ def test_32k():
     print(f"Nulls generated for {n_maps} maps with {n_nulls} nulls: {time.time() - tic:.5f} seconds.")
 
 # TODO create a test that compares n_maps with n_nulls
-# ie for a given density and n_modes, what is the difference between 1 map/100 nulls and 100 maps/1 null
+# ie for a given density and n_modes, what is the difference between 1 map/k nulls and k maps/1 null

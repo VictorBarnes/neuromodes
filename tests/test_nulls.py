@@ -1,12 +1,12 @@
 import pytest
 import numpy as np
-from neuromodes.eigen import EigenSolver, get_eigengroup_inds
-from neuromodes.io import fetch_surf, fetch_map
+from neuromodes.eigen import EigenSolver
+from neuromodes.io import fetch_surf
 from neuromodes.nulls import eigenstrap
 
 # Params
-n_nulls = 90
-seed = 0
+n_nulls = 100
+seed = 365
 
 @pytest.fixture(scope='module')
 def solver():

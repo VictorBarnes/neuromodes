@@ -26,6 +26,7 @@ def eigenstrap(
     resample: Union[str, None] = None,
     randomize: bool = False,
     residual: Union[str, None] = None,
+    rotation_method: str = 'scipy',
     decomp_method: str = 'project',
     mass: Union[spmatrix, ArrayLike, None] = None,
     seed: Union[int, None] = None,
@@ -138,6 +139,14 @@ def eigenstrap(
     if resample not in (None, 'exact', 'affine', 'mean', 'range'):
         raise ValueError(f"Invalid resampling method '{resample}'; must be 'exact', 'affine', "
                          "'mean', 'range', or None.")
+    
+    if rotation_method == 'qr':
+        _rotate_coeffs = _rotate_coeffs_qr
+    elif rotation_method == 'scipy':
+        _rotate_coeffs = _rotate_coeffs_scipy
+    else: 
+        raise ValueError(f"Invalid rotation method '{rotation_method}'; must be 'qr' or 'scipy'.")
+
 
     # Determine eigengroups
     if n_groups is None:
@@ -175,13 +184,13 @@ def eigenstrap(
             for group in groups:
                 null_coeffs[group, i, :] = np.random.default_rng(s).permutation(coeffs[group, :], axis=0)
     else: 
-        null_coeffs = np.broadcast_to(coeffs[:, None, :], (n_modes, n_nulls, n_maps))
+        null_coeffs = np.broadcast_to(coeffs[:, np.newaxis, :], (n_modes, n_nulls, n_maps))
 
     # Precompute inverse-transformed coefficients (spheroid -> ellipsoid for each eigengroup)
     inv_coeffs = sqrt_evals[:, np.newaxis, np.newaxis] * null_coeffs # sqrt_evals behaves like a 3D column vector 
 
     # Generate nulls using tforms of shape (n_modes, n_nulls, n_maps)
-    tforms = _eigenstrap_multiple(
+    tforms = _rotate_coeffs(
         groups=groups,
         inv_coeffs=inv_coeffs,
         seeds=null_seeds
@@ -221,52 +230,31 @@ def eigenstrap(
 
     return nulls
 
-def _eigenstrap_single(
+def _rotate_coeffs_scipy(
     inv_coeffs: NDArray[floating],
     groups: list[NDArray[integer]],
-    seed: int
+    seeds: NDArray[integer]
 ) -> NDArray[floating]:
-    """
-    Generate a single null for each input map by applying random rotations to each eigengroup and
-    reconstructing the map using the eigendecomposition coefficients. For computational efficiency,
-    each eigengroup's ellipsoid-to-spheroid transformation and its inverse are already incorporated
-    into `norm_emodes` and `inv_coeffs`, respectively.
+    
+    tforms = np.empty_like(inv_coeffs) # shape (n_modes, n_nulls, n_maps)
 
-    Parameters
-    ----------
-    norm_emodes : ndarray of shape (n_verts, n_modes)
-        The transformed/normalized eigenmodes array of shape (n_verts, n_modes).
-    inv_coeffs : ndarray of shape (n_modes, n_maps)
-        The inverse-transformed decomposition coefficients of shape (n_modes, n_maps). If
-        `randomize` is False, this is the same for all nulls.
-    groups : list of ndarrays of integers
-        List of arrays, where each array contains the column indices of `norm_emodes` that belong to
-        the same eigengroup (i.e., [[0], [1,2,3], [4,5,6,7,8], ..., [..., n_modes-1]]).
-    seed : int
-        Random seed for reproducibility of the random rotation applied to this null.
+    for i in range(len(seeds)): 
+        random_state = np.random.default_rng(seeds[i])
+        for group in groups:
+            K = len(group)
 
-    Returns
-    -------
-    ndarray of shape (n_verts, n_maps)
-        The generated null map(s) of shape (n_verts, n_maps).
-    """
-    random_state = np.random.default_rng(seed)
+            # have to make sure random_state doesn't progress for the first group 
+            # to keep same as eigenstrapping (and `special_ortho_group.rvs(dim=1)` errors anyway)
+            if K == 1: 
+                tforms[group, i, :] = inv_coeffs[group, i, :]
+                continue
 
-    # Construct matrix encoding all operations to apply to the transformed modes
-    tforms = np.concatenate(
-        # No rotation for first eigengroup (first mode; constant), only coefficients
-        [inv_coeffs[0, :][np.newaxis, :]] +
+            s = special_ortho_group.rvs(dim=K, random_state=random_state)
+            tforms[group, i:i+1, :] = np.matmul(s, inv_coeffs[group,i:i+1,:], axes=[(0,1),(0,2),(0,2)])
 
-        # Combine each subsequent group's random rotation with its inverse-transformed coefficients
-        [special_ortho_group.rvs(dim=len(group), random_state=random_state) @ inv_coeffs[group, :]
-         for group in groups[1:]],
-         axis=0
-         )
-
-    # Generate null
     return tforms
 
-def _eigenstrap_multiple(inv_coeffs, groups, seeds) -> NDArray[floating]: 
+def _rotate_coeffs_qr(inv_coeffs, groups, seeds) -> NDArray[floating]: 
     tforms = np.empty_like(inv_coeffs) # shape (n_modes, n_nulls, n_maps)
     rngs = [np.random.default_rng(s) for s in seeds] # one seed for each null
     # TODO probably need to change this as the rot mats for each group are not independent
@@ -274,13 +262,14 @@ def _eigenstrap_multiple(inv_coeffs, groups, seeds) -> NDArray[floating]:
     for group in groups:
         K = len(group)
         if K == 1: # No rotation for first eigengroup (first mode; constant), only coefficients
-            tforms[group, :, :] = inv_coeffs[group, :]
+            tforms[group, :, :] = inv_coeffs[group, :, :]
             continue
 
+        # TODO consider moving rotation matrix generation to its own function 
         # Strictly maintain seeding reproducibility defined by docstring
         X = np.stack([rng.standard_normal((K, K)) for rng in rngs], axis=0)
         
-        Q, R = np.linalg.qr(X)
+        Q, R = np.linalg.qr(X) # Q has shape (n_nulls, K, K)
         r = np.sign(np.diagonal(R, axis1=1, axis2=2))
         Q = Q * r[:, np.newaxis, :]
         dets = np.linalg.det(Q)
