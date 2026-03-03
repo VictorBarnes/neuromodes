@@ -21,6 +21,7 @@ testing = [
 ]
 tutorials = [
     "ipykernel>=6.31.0",
+    "jupyter-bokeh>=4.0.5",
     "matplotlib>=3.9.4",
     "nsbutils @ git+https://github.com/NSBLab/nsbutils.git@dev",
 ]

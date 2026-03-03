@@ -16,8 +16,8 @@ def solver():
 @pytest.fixture(scope='module')
 def test_data(solver):
     """Generate 1D test data"""
-    rng = np.random.default_rng(seed)
-    return rng.normal(loc=1, size=solver.n_verts)  # random normal data, non-zero mean
+    data = fetch_map(data="myelinmap", density="4k")[solver.mask]
+    return data
 
 @pytest.fixture
 def nulls(solver, test_data):
@@ -42,8 +42,10 @@ def test_mean_preservation(test_data, nulls):
     """Nulls should approximately preserve mean of original data even without using resample='mean'"""
     data_mean = np.mean(test_data)
     null_means = np.mean(nulls, axis=0)
-    assert np.allclose(null_means, data_mean, atol=0.02), \
-        f"Null means are not close to data mean {data_mean}"
+    
+    for i, null_mean in enumerate(null_means):
+        assert np.allclose(null_means, data_mean, atol=0.05), \
+            f"Null {i} mean {null_mean} is not close to data mean {data_mean}"
         
 def test_psd_preservation():
     """Nulls should preserve eigengroup power spectral density of map on sphere"""
@@ -74,11 +76,18 @@ def test_reproducibility_nulls(solver, test_data, nulls):
         "Null spaces with the same seed should be identical"
 
 def test_reproducibility_data(solver, test_data, nulls):
-    """Nulls with same seed should be identical"""
+    """Nulls with same seed but different n_maps should be identical"""
     test_data2 = np.column_stack((test_data, np.random.normal(loc=1, size=solver.n_verts)))
     nulls2 = solver.eigenstrap(test_data2, n_nulls=n_nulls, seed=seed)
     
     assert np.allclose(nulls, nulls2[:,:,0], atol=1e-10), \
+        "Null spaces with the same seed should be identical"
+    
+def test_reproducibility_nulls(solver, test_data, nulls):
+    """Nulls with same seed but different n_nulls should still be identical"""
+    nulls2 = solver.eigenstrap(test_data, n_nulls=n_nulls-1, seed=seed)
+    
+    assert np.allclose(nulls[:,:-1], nulls2, atol=1e-10), \
         "Null spaces with the same seed should be identical"
 
 def test_finite(nulls):

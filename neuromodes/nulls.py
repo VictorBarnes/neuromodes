@@ -33,9 +33,9 @@ def eigenstrap(
     check_ortho: bool = True,
 ) -> NDArray[floating]:
     """
-    Generate null maps via eigenstrapping [1].
+    Generate spatial null maps via eigenstrapping [1].
     
-    This function generates spatial null models that preserve the spatial autocorrelation
+    This function generates spatial null maps that preserve the spatial autocorrelation
     structure of brain maps through random rotation of geometric eigenmodes. The method
     works by rotating eigenmodes within eigengroups (sets of modes with similar eigenvalues),
     then reconstructing null maps using the original decomposition coefficients.
@@ -44,7 +44,8 @@ def eigenstrap(
     ----------
     data : array-like
         Empirical brain map(s) of shape (n_verts,) or (n_verts, n_maps) to generate nulls from.
-        If working on a masked surface, `data` must already be masked (see Notes).
+        If n_maps > 1, the same set of randomized rotations is applied to all maps for each 
+        null (see Notes). 
     emodes : array-like of shape (n_verts, n_modes)
         The eigenmodes array of shape (n_verts, n_modes). This function rotates modes within
         eigengroups. If the number of eigenmodes is not a perfect square (i.e., number of modes
@@ -86,10 +87,14 @@ def eigenstrap(
     Returns
     -------
     ndarray of shape (n_verts, n_nulls) or (n_verts, n_nulls, n_maps)
-        Generated null maps.
+        Generated null maps of shape (n_verts, n_nulls) if n_maps = 1, or (n_verts, n_nulls, n_maps) 
+        if n_maps > 1.
     
     Raises
     ------
+    ValueError
+        If `n_groups` is greater than the number of eigengroups than can be formed from 
+        the number of modes in `emodes`.
     ValueError
         If `evals` length doesn't match number of columns in `emodes`.
     ValueError
@@ -99,20 +104,33 @@ def eigenstrap(
 
     Notes
     -----
-    This function does not apply any vertex masking. If working on a masked surface (e.g., 
-    excluding the medial wall), the user must pass `data`, `emodes`, and `mass` (if used) 
-    already restricted to the desired masked vertices.
+    When `data` contains multiple maps (n_maps > 1), the same set of randomized rotations 
+    is applied to all maps for each null. This means that null i for map A and null i for 
+    map B use identical eigenmode rotations.
 
-    This function uses the constant mode (first column of `emodes`) and correpsonding 
-    eigenvalue to generates mean-preserving nulls. The constant mode is not rotated 
-    and the corresponding eigenvalue is set to 1 to avoid division by zero when 
-    normalizing the modes.
+    This function uses the constant mode (first column of `emodes`) and its correpsonding 
+    eigenvalue to generate mean-preserving nulls. The constant mode is neither rotated nor
+    transformed as no non-trivial rotations exist for this eigengroup consisting of a 
+    single mode (SO(1) = {1}). The corresponding eigenvalue is also set to 1 to avoid 
+    division by zero when normalizing the modes.
 
-    Seeding is handled in two stages to ensure reproducibility when parallelising. First 
-    `seed` is used to initialize a master random number generator (RNG) that generates an 
-    independent integer seed for each null map. Then each null uses its allocated integer 
-    to generate its own RNG to use for all rotations/permutations of that null. This 
-    ensures that each null is independent of the number of parallel jobs used.
+    The choice of `n_groups` and `residual` will affect the spatial autocorrelation 
+    similarity between the nulls and empirical data. See [1] for a heuristic for choosing
+    `n_groups` and to see how the choice of `residual` affects the spatial autocorrelation
+    of the nulls. 
+
+    The choice of `resample` will affect the distribution of values in the nulls. Linear
+    transformations (`"mean"` and `"affine"`) preserve the shape of the distribution, while
+    non-linear transformations (`"range"` and `"exact"`) alter the shape of the distribution
+    to match the empirical distribution of the original data. The choice of `resample` should
+    be guided by the importance of matching the original distribution of values and ultimately
+    by whichever option produces the lowest false discovery rate (FDR). See [1] for an
+    example of how to compute the FDR.
+
+    Seeding is handled in two stages. First `seed` is used to initialize a master random 
+    number generator (RNG) that generates an independent integer seed for each null map. 
+    Then each null uses its allocated integer to generate its own RNG to use for all 
+    rotations/permutations of that null.
     
     References
     ----------
@@ -209,8 +227,8 @@ def eigenstrap(
     # Optionally resample values to match stats of original data
     if resample == 'exact':
         sorted_data = np.sort(data, axis=0)[:, np.newaxis, :]
-        sorted_indices = np.argsort(nulls, axis=0)
-        nulls = np.take_along_axis(sorted_data, sorted_indices, axis=0)
+        ranks = np.argsort(np.argsort(nulls, axis=0), axis=0)
+        nulls = np.take_along_axis(sorted_data, ranks, axis=0)
     elif resample == 'mean':
         nulls -= nulls.mean(axis=0, keepdims=True)
         nulls += data.mean(axis=0)
