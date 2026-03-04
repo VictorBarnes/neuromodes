@@ -70,7 +70,13 @@ def eigenstrap(
     residual : str, optional
         How to handle reconstruction residuals after generating null maps. Either `None` to exclude
         residuals, `'add'` to add original residuals, or `'permute'` to adds shuffled residuals.
-        Default is `None`.
+        Default is `None`. See Notes for details on which option to choose.
+    rotation_method : str, optional
+        The method used to generate random rotations for each eigengroup. Either `'qr'`
+        to generate random orthogonal matrices using QR decomposition of random normal matrices,
+        or `'scipy'` to sample random orthogonal matrices from SO(N) using 
+        `scipy.stats.special_ortho_group.rvs`. Default is `'scipy'`. See Notes for details 
+        on which option to choose.
     decomp_method : str, optional
         The method used for eigendecomposition, either `'project'` to project data into a
         mass-orthonormal space or `'regress'` for least-squares fitting. Default is `'project'`.
@@ -93,33 +99,37 @@ def eigenstrap(
     Raises
     ------
     ValueError
-        If `n_groups` is greater than the number of eigengroups than can be formed from 
-        the number of modes in `emodes`.
+        If `emodes` is not a 2D array or has n_verts ≥ n_modes.
     ValueError
         If `evals` length doesn't match number of columns in `emodes`.
     ValueError
         If `residual` is not one of `None`, `'add'`, or `'permute'`.
     ValueError
         If `resample` is not one of `None`, `'exact'`, `'affine'`, `'mean'`, or `'range'`.
+    ValueError
+        If `rotation_method` is not one of `'qr'` or `'scipy'`.
+    ValueError
+        If `n_groups` is greater than the number of eigengroups than can be formed from 
+        the number of modes in `emodes`.
 
     Notes
     -----
-    When `data` contains multiple maps (n_maps > 1), the same set of randomized rotations 
+    1. When `data` contains multiple maps (n_maps > 1), the same set of randomized rotations 
     is applied to all maps for each null. This means that null i for map A and null i for 
     map B use identical eigenmode rotations.
 
-    This function uses the constant mode (first column of `emodes`) and its correpsonding 
+    2. This function uses the constant mode (first column of `emodes`) and its correpsonding 
     eigenvalue to generate mean-preserving nulls. The constant mode is neither rotated nor
     transformed as no non-trivial rotations exist for this eigengroup consisting of a 
     single mode (SO(1) = {1}). The corresponding eigenvalue is also set to 1 to avoid 
     division by zero when normalizing the modes.
 
-    The choice of `n_groups` and `residual` will affect the spatial autocorrelation 
+    3. The choice of `n_groups` and `residual` will affect the spatial autocorrelation 
     similarity between the nulls and empirical data. See [1] for a heuristic for choosing
     `n_groups` and to see how the choice of `residual` affects the spatial autocorrelation
     of the nulls. 
 
-    The choice of `resample` will affect the distribution of values in the nulls. Linear
+    4. The choice of `resample` will affect the distribution of values in the nulls. Linear
     transformations (`"mean"` and `"affine"`) preserve the shape of the distribution, while
     non-linear transformations (`"range"` and `"exact"`) alter the shape of the distribution
     to match the empirical distribution of the original data. The choice of `resample` should
@@ -127,10 +137,20 @@ def eigenstrap(
     by whichever option produces the lowest false discovery rate (FDR). See [1] for an
     example of how to compute the FDR.
 
-    Seeding is handled in two stages. First `seed` is used to initialize a master random 
+    5. Seeding is handled in two stages. First `seed` is used to initialize a master random 
     number generator (RNG) that generates an independent integer seed for each null map. 
     Then each null uses its allocated integer to generate its own RNG to use for all 
     rotations/permutations of that null.
+
+    6. To match the default version of the original implementation of eigenstrapping in [1],
+    users must do the following:
+        - Ensure `data` has a mean of zero.
+        - Set the global seed before running this function (e.g., `np.random.seed(seed)`).
+        - Set `resample="exact"` #TODO default in original is our `range` but they are slightly different
+        - Set `decomp_method="regress"`
+        - Set `rotation_method="scipy"`
+        - Set `seed=None`
+    See `eigenstrapping_match_orig.ipynb` for an example of how this is done.
     
     References
     ----------
@@ -165,7 +185,6 @@ def eigenstrap(
     else: 
         raise ValueError(f"Invalid rotation method '{rotation_method}'; must be 'qr' or 'scipy'.")
 
-
     # Determine eigengroups
     if n_groups is None:
         n_groups = int(np.sqrt(n_cols))  # floor of root
@@ -192,8 +211,11 @@ def eigenstrap(
     norm_emodes = emodes / sqrt_evals # sqrt_evals behaves like a row vector
 
     # Initialise RNG, with seed for each null
-    rng = np.random.default_rng(seed)
-    null_seeds = rng.integers(np.iinfo(np.int32).max, size=n_nulls)
+    if seed is not None:
+        rng = np.random.default_rng(seed)
+        null_seeds = rng.integers(np.iinfo(np.int32).max, size=n_nulls)
+    else:
+        null_seeds = [None] * n_nulls   # to match original implementation
 
     # Turn coeffs into a 3D array of shape (n_modes, n_nulls, n_maps)
     if randomize:
@@ -253,11 +275,14 @@ def _rotate_coeffs_scipy(
     groups: list[NDArray[integer]],
     seeds: NDArray[integer]
 ) -> NDArray[floating]:
-    
+    #TODO: docstring
     tforms = np.empty_like(inv_coeffs) # shape (n_modes, n_nulls, n_maps)
 
     for i in range(len(seeds)): 
-        random_state = np.random.default_rng(seeds[i])
+        if seeds[i] is not None: 
+            random_state = np.random.default_rng(seeds[i])
+        else:
+            random_state = None     # to match original implementation
         for group in groups:
             K = len(group)
 
@@ -268,11 +293,18 @@ def _rotate_coeffs_scipy(
                 continue
 
             s = special_ortho_group.rvs(dim=K, random_state=random_state)
-            tforms[group, i:i+1, :] = np.matmul(s, inv_coeffs[group,i:i+1,:], axes=[(0,1),(0,2),(0,2)])
+            tforms[group, i:i+1, :] = np.matmul(
+                s, inv_coeffs[group,i:i+1,:], axes=[(0,1),(0,2),(0,2)]
+            )
 
     return tforms
 
-def _rotate_coeffs_qr(inv_coeffs, groups, seeds) -> NDArray[floating]: 
+def _rotate_coeffs_qr(
+        inv_coeffs: NDArray[floating],
+        groups: list[NDArray[integer]],
+        seeds: NDArray[integer]
+) -> NDArray[floating]:
+    #TODO: docstring
     tforms = np.empty_like(inv_coeffs) # shape (n_modes, n_nulls, n_maps)
     rngs = [np.random.default_rng(s) for s in seeds] # one seed for each null
     # TODO probably need to change this as the rot mats for each group are not independent

@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 from neuromodes.eigen import EigenSolver
-from neuromodes.io import fetch_surf
+from neuromodes.io import fetch_surf, fetch_map
 from neuromodes.nulls import eigenstrap
 
 # Params
@@ -276,3 +276,5 @@ def test_all_parameters_eigenstrap(solver, test_data):
     )
     assert nulls.shape == (solver.n_verts, n_nulls)
     assert np.isfinite(nulls).all(), "Nulls contain non-finite values"
+
+# TODO: test nulls match original implementation
