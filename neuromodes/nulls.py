@@ -275,7 +275,22 @@ def _rotate_coeffs_scipy(
     groups: list[NDArray[integer]],
     seeds: NDArray[integer]
 ) -> NDArray[floating]:
-    #TODO: docstring
+    """
+    Rotate coefficients using `scipy.stats.special_ortho_group.rvs` to sample random 
+    orthogonal matrices from SO(N).
+
+    Parameters
+    ----------
+    inv_coeffs : array of shape (n_modes, n_nulls, n_maps)
+        The inverse-transformed coefficients (spheroid -> ellipsoid) of shape (n_modes, n_nulls, n_maps) 
+        to rotate.
+    groups : list of arrays
+        A list of arrays, where each array contains the indices of modes belonging to the 
+        same eigengroup.
+    seeds : array of shape (n_nulls,)
+        An array of integer seeds of shape (n_nulls,) to use for reproducibility of the 
+        random rotations for each null map.
+    """
     tforms = np.empty_like(inv_coeffs) # shape (n_modes, n_nulls, n_maps)
 
     for i in range(len(seeds)): 
@@ -304,7 +319,22 @@ def _rotate_coeffs_qr(
         groups: list[NDArray[integer]],
         seeds: NDArray[integer]
 ) -> NDArray[floating]:
-    #TODO: docstring
+    """
+    Rotate coefficients using QR decomposition of random normal matrices to generate random
+    orthogonal matrices.
+    
+    Parameters
+    ----------
+    inv_coeffs : np.ndarray of shape (n_modes, n_nulls, n_maps)
+        The inverse-transformed coefficients (spheroid -> ellipsoid) of shape (n_modes, n_nulls, n_maps) 
+        to rotate.
+    groups : list of np.ndarrays
+        A list of arrays, where each array contains the indices of modes belonging to the 
+        same eigengroup.
+    seeds : np.ndarray (n_nulls,)
+        An array of integer seeds of shape (n_nulls,) to use for reproducibility of the 
+        random rotations for each null map.
+    """
     tforms = np.empty_like(inv_coeffs) # shape (n_modes, n_nulls, n_maps)
     rngs = [np.random.default_rng(s) for s in seeds] # one seed for each null
     # TODO probably need to change this as the rot mats for each group are not independent
