@@ -94,9 +94,9 @@ def test_reconstruct_mode_superposition(solver, gen_eigenmap):
 
     # Reconstruct using the first 5 modes, then the first 2 modes
     _, correlation_error_modesq, _ = reconstruct(eigenmaps, solver.emodes, mass=solver.mass, mode_counts=[5,2])
-    assert (correlation_error_modesq[0,:] == correlation_error[4,:]).all(), \
+    assert np.allclose(correlation_error_modesq[0,:], correlation_error[4,:]), \
         'Reconstruction scores do not match for 5 modes.'
-    assert (correlation_error_modesq[1,:] == correlation_error[1,:]).all(), \
+    assert np.allclose(correlation_error_modesq[1,:], correlation_error[1,:]), \
         'Reconstruction scores do not match for 2 modes.'
 
 def test_reconstruct_regress_method(solver, gen_eigenmap):
