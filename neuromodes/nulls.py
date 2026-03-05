@@ -146,11 +146,16 @@ def eigenstrap(
     users must do the following:
         - Ensure `data` has a mean of zero.
         - Set the global seed before running this function (e.g., `np.random.seed(seed)`).
-        - Set `resample="exact"` #TODO default in original is our `range` but they are slightly different
+        - Set `resample="range"`
         - Set `decomp_method="regress"`
         - Set `rotation_method="scipy"`
         - Set `seed=None`
-    See `eigenstrapping_match_orig.ipynb` for an example of how this is done.
+        - The original implementation `eigenstrapping.SurfaceEigenstrapping` must also be 
+        run with a particular congifugration. For an example of how to do this, see:
+        https://neuromodes.readthedocs.io/en/latest/validation/eigenstrapping_match_orig.html
+
+    7. The original implementation adds the residuals after resampling is done but we have
+    reversed the order of these steps in our implementation. 
     
     References
     ----------
