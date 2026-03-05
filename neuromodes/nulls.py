@@ -23,10 +23,10 @@ def eigenstrap(
     evals: ArrayLike, 
     n_nulls: int = 1000,
     n_groups: Union[int, None] = None,
-    resample: Union[str, None] = None,
+    rotation_method: str = 'qr',
     randomize: bool = False,
     residual: Union[str, None] = None,
-    rotation_method: str = 'qr',
+    resample: Union[str, None] = None,
     decomp_method: str = 'project',
     mass: Union[spmatrix, ArrayLike, None] = None,
     seed: Union[int, None] = None,
@@ -69,15 +69,15 @@ def eigenstrap(
         Whether to shuffle decomposition coefficients within eigengroups. This increases
         randomization but reduces spatial autocorrelation similarity to empirical data. Default is
         `False`.
+    residual : str, optional
+        How to handle reconstruction residuals after generating null maps. Either `None` to exclude
+        residuals, `'add'` to add original residuals, or `'permute'` to adds shuffled residuals.
+        Default is `None`. See Notes for details on which option to choose.
     resample : bool, optional
         How to resample values from original data. Options are `'exact'` to match the sorted
         distribution of the original data, `'affine'` to match the original mean and standard
         deviation, `'mean'` to match the mean, and `'range'` to match the minimum and maximum.
         Default is `None` for no resampling.
-    residual : str, optional
-        How to handle reconstruction residuals after generating null maps. Either `None` to exclude
-        residuals, `'add'` to add original residuals, or `'permute'` to adds shuffled residuals.
-        Default is `None`. See Notes for details on which option to choose.
     decomp_method : str, optional
         The method used for eigendecomposition, either `'project'` to project data into a
         mass-orthonormal space or `'regress'` for least-squares fitting. Default is `'project'`.
@@ -142,21 +142,27 @@ def eigenstrap(
     that null.
 
     6. To exactly match the default version of the original implementation of eigenstrapping in [1],
-    users must do the following: - Ensure `data` has a mean of zero. - Set the global seed before
-    running this function (e.g., `np.random.seed(seed)`). - Set `resample="range"` - Set
-    `decomp_method="regress"` - Set `rotation_method="scipy"` - Set `seed=None` Note that the
-    original implementation (`eigenstrapping.SurfaceEigenstrapping`) must also be run with a
-    particular congifugration to ensure reproducibility/compatibility: - Set the global seed before
-    running this function (e.g., `np.random.seed(seed)`). - Additionally, pass this seed into the
-    function call: `SurfaceEigenstrapping(..., seed=seed)` - Remember to remove the first
-    eigenmodes/eigenvalue from the call to SurfaceEigenstrapping For an example of how to do this,
-    see: https://neuromodes.readthedocs.io/en/latest/validation/eigenstrapping_match_orig.html
+    users must do the following: 
+        - Ensure `data` has a mean of zero. 
+        - Set the global seed before running this function (e.g., `np.random.seed(seed)`). 
+        - Set `resample="range"` '
+        - Set `decomp_method="regress"` 
+        - Set `rotation_method="scipy"` 
+        - Set `seed=None` 
+    Note that the original implementation (`eigenstrapping.SurfaceEigenstrapping`) must also be run
+    with a particular congifugration to ensure reproducibility/compatibility: 
+        - Set the global seed before running this function (e.g., `np.random.seed(seed)`). 
+        - Additionally, pass this seed into the function call: `SurfaceEigenstrapping(...,
+          seed=seed)` 
+        - Remember to remove the first eigenmodes/eigenvalue from the call to SurfaceEigenstrapping 
+    For an example of how to do this, see:
+    https://neuromodes.readthedocs.io/en/latest/validation/eigenstrapping_match_orig.html
 
     7. If both resampling and adding residuals is requested, the original implementation adds
        residuals after resampling. Here, the order of these steps is swapped (ie add residuals and
        then resample). This ensures that the resampling is carried out as requested (e.g., that the
-       surrogates and original actually have the same values). This difference is only
-       relevant if you are using both `resample` and `residual`. 
+       surrogates and original actually have the same values). This difference is only relevant if
+       you are using both `resample` and `residual`. 
     
     References
     ----------
@@ -221,7 +227,7 @@ def eigenstrap(
         rng = np.random.default_rng(seed)
         null_seeds = rng.integers(np.iinfo(np.int32).max, size=n_nulls)
     else:
-        null_seeds = [None] * n_nulls   # to match original implementation
+        null_seeds = [None] * n_nulls # to match original implementation
 
     # Turn coeffs into a 3D array of shape (n_modes, n_nulls, n_maps)
     if randomize:
