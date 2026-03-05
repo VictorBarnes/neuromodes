@@ -52,7 +52,7 @@ def eigenstrap(
         the constant mode (the first column) to be input too. If the number of eigenmodes is not a
         perfect square (i.e., number of modes doesn't allow for complete eigengroups), then the last
         incomplete eigengroup will be excluded.
-    evals : array-like
+    evals : array-like of shape (n_modes,)
         The eigenvalues array of shape (n_modes,). Note that, unlike the original implementation as
         shown in [1], this requires the zero eigenvalue (the first eigenvalue) to be input too. 
     n_nulls : int, optional
@@ -94,8 +94,8 @@ def eigenstrap(
     Returns
     -------
     ndarray of shape (n_verts, n_nulls) or (n_verts, n_nulls, n_maps)
-        Generated null maps of shape (n_verts, n_nulls) if n_maps = 1, or (n_verts, n_nulls, n_maps)
-        if n_maps > 1.
+        Generated null maps of shape (n_verts, n_nulls) if data has shape (n_verts,), or (n_verts,
+        n_nulls, n_maps) if data has shape (n_verts, n_maps).
     
     Raises
     ------
@@ -154,7 +154,7 @@ def eigenstrap(
         - Set the global seed before running this function (e.g., `np.random.seed(seed)`). 
         - Additionally, pass this seed into the function call: `SurfaceEigenstrapping(...,
           seed=seed)` 
-        - Remember to remove the first eigenmodes/eigenvalue from the call to SurfaceEigenstrapping 
+        - Remember to remove the first eigenmode/eigenvalue from the call to SurfaceEigenstrapping 
     For an example of how to do this, see:
     https://neuromodes.readthedocs.io/en/latest/validation/eigenstrapping_match_orig.html
 
@@ -174,7 +174,7 @@ def eigenstrap(
     emodes = np.asarray(emodes)  # chkfinite in decompose
     evals = np.asarray_chkfinite(evals) 
     data = np.asarray(data)  # chkfinite in decompose
-    if data.ndim == 1:
+    if (is_vector_data := data.ndim == 1):
         data = data[:, np.newaxis]
     n_maps = data.shape[1]
     n_cols = emodes.shape[1]
@@ -224,10 +224,9 @@ def eigenstrap(
 
     # Initialise RNG, with seed for each null
     if seed is not None:
-        rng = np.random.default_rng(seed)
-        null_seeds = rng.integers(np.iinfo(np.int32).max, size=n_nulls)
+        null_seeds = np.random.default_rng(seed).integers(np.iinfo(np.int32).max, size=n_nulls)
     else:
-        null_seeds = [None] * n_nulls # to match original implementation
+        null_seeds = np.full((n_nulls,), None) # to match original
 
     # Turn coeffs into a 3D array of shape (n_modes, n_nulls, n_maps)
     if randomize:
@@ -243,8 +242,8 @@ def eigenstrap(
 
     # Generate nulls using tforms of shape (n_modes, n_nulls, n_maps)
     tforms = _rotate_coeffs(
-        groups=groups,
         inv_coeffs=inv_coeffs,
+        groups=groups,
         seeds=null_seeds
     )
     
@@ -271,13 +270,13 @@ def eigenstrap(
         nulls /= nulls.std(axis=0, keepdims=True)
         nulls *= data.std(axis=0)
         nulls += data.mean(axis=0)
-    elif resample == 'range':
+    elif resample == 'range': # to match original
         nulls -= nulls.min(axis=0, keepdims=True)
         nulls /= nulls.max(axis=0, keepdims=True)
         nulls *= data.max(axis=0) - data.min(axis=0)
         nulls += data.min(axis=0)
 
-    if n_maps == 1:
+    if is_vector_data:
         nulls = nulls.squeeze(axis=2)
 
     return nulls
@@ -305,11 +304,8 @@ def _rotate_coeffs_scipy(
     """
     tforms = np.empty_like(inv_coeffs) # shape (n_modes, n_nulls, n_maps)
 
-    for i in range(len(seeds)): 
-        if seeds[i] is not None: 
-            random_state = np.random.default_rng(seeds[i])
-        else:
-            random_state = None     # to match original implementation
+    for i, seed in enumerate(seeds): # one seed for each null (done in series)
+        random_state = None if seed is None else np.random.default_rng(seed) # to match original 
         for group in groups:
             K = len(group)
 
@@ -348,7 +344,7 @@ def _rotate_coeffs_qr(
         random rotations for each null map.
     """
     tforms = np.empty_like(inv_coeffs) # shape (n_modes, n_nulls, n_maps)
-    rngs = [np.random.default_rng(s) for s in seeds] # one seed for each null
+    rngs = [np.random.default_rng(s) for s in seeds] # one seed for each null (done in parallel)
     # TODO probably need to change this as the rot mats for each group are not independent
 
     for group in groups:
