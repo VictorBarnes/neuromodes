@@ -30,7 +30,6 @@ def test_output_shape(solver, nulls):
 
 def test_internull_corrs(nulls):
     """Internull correlations should be centered around zero"""
-    # Plot null correlation distribution
     inter_null_corrs = np.corrcoef(nulls.T)
     triu_inds = np.triu_indices_from(inter_null_corrs, k=1)
     mean_corr = inter_null_corrs[triu_inds].mean()
