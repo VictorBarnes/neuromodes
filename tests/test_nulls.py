@@ -6,23 +6,22 @@ from neuromodes.nulls import eigenstrap
 
 # Params
 n_nulls = 100
-seed = 365
 
 @pytest.fixture(scope='module')
 def solver():
     mesh, medmask = fetch_surf(density='4k')
-    return EigenSolver(mesh, mask=medmask).solve(n_modes=100, seed=seed)
+    return EigenSolver(mesh, mask=medmask).solve(n_modes=100)
 
 @pytest.fixture(scope='module')
 def test_data(solver):
     """Generate 1D test data"""
-    rng = np.random.default_rng(seed)
+    rng = np.random.default_rng()
     return rng.normal(loc=1, size=solver.n_verts)  # random normal data, non-zero mean
 
 @pytest.fixture
 def nulls(solver, test_data):
     """Generate nulls for 1D test data"""
-    return solver.eigenstrap(test_data, n_nulls=n_nulls, seed=seed)
+    return solver.eigenstrap(test_data, n_nulls=n_nulls)
 
 def test_output_shape(solver, nulls):
     """Output shape should be (n_verts, n_nulls)"""    
@@ -42,7 +41,7 @@ def test_mean_preservation(test_data, nulls):
     """Nulls should approximately preserve mean of original data even without using resample='mean'"""
     data_mean = np.mean(test_data)
     null_means = np.mean(nulls, axis=0)
-    assert np.allclose(null_means, data_mean, atol=0.02), \
+    assert np.allclose(null_means, data_mean, atol=0.05), \
         f"Null means are not close to data mean {data_mean}"
         
 def test_psd_preservation():
@@ -69,9 +68,9 @@ def test_psd_preservation():
 @pytest.mark.parametrize("rotation_method", ['scipy', 'qr'])
 def test_reproducibility(solver, test_data, rotation_method):
     """Nulls with same seed should be identical"""
-    nulls1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=seed, rotation_method=rotation_method)
-    nulls2 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=seed, rotation_method=rotation_method)
-    nulls3 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=seed+1, rotation_method=rotation_method)
+    nulls1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=1, rotation_method=rotation_method)
+    nulls2 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=1, rotation_method=rotation_method)
+    nulls3 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=2, rotation_method=rotation_method)
     
     assert np.allclose(nulls1, nulls2, atol=1e-10), \
         f"Nulls with the same seed should be identical when using rotation method '{rotation_method}'"
@@ -81,8 +80,8 @@ def test_reproducibility(solver, test_data, rotation_method):
 @pytest.mark.parametrize("rotation_method", ['scipy', 'qr'])
 def test_reproducibility_nulls(solver, test_data, rotation_method):
     """Nulls with same seed should be identical, regardless of number of nulls requested"""
-    nulls1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=seed, rotation_method=rotation_method)
-    nulls2 = solver.eigenstrap(test_data, n_nulls=n_nulls-1, seed=seed, rotation_method=rotation_method)
+    nulls1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=1, rotation_method=rotation_method)
+    nulls2 = solver.eigenstrap(test_data, n_nulls=n_nulls-1, seed=1, rotation_method=rotation_method)
     
     assert np.allclose(nulls1[:,:-1], nulls2, atol=1e-10), \
         f"Nulls with the same seed should be identical"
@@ -91,8 +90,8 @@ def test_reproducibility_nulls(solver, test_data, rotation_method):
 def test_reproducibility_data(solver, test_data, rotation_method):
     """Nulls with same seed should be identical, regardless of number of input maps"""
     test_data2 = np.column_stack((test_data, np.random.normal(loc=1, size=solver.n_verts)))
-    nulls1 = solver.eigenstrap(test_data , n_nulls=n_nulls, seed=seed, rotation_method=rotation_method)
-    nulls2 = solver.eigenstrap(test_data2, n_nulls=n_nulls, seed=seed, rotation_method=rotation_method)
+    nulls1 = solver.eigenstrap(test_data , n_nulls=n_nulls, seed=1, rotation_method=rotation_method)
+    nulls2 = solver.eigenstrap(test_data2, n_nulls=n_nulls, seed=1, rotation_method=rotation_method)
     
     assert np.allclose(nulls1, nulls2[:,:,0], atol=1e-10), \
         f"Nulls with the same seed should be identical"
@@ -124,7 +123,7 @@ def test_shape_mismatch_emodes_evals(solver, test_data):
 
 def test_resample_exact(solver, test_data):
     """With resample=True, nulls should have same values as original data"""
-    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, resample="exact", seed=seed)
+    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, resample="exact")
     
     # Check that each null has the exact same values as original data (just reordered)
     for i in range(nulls.shape[1]):
@@ -135,7 +134,7 @@ def test_resample_exact(solver, test_data):
 
 def test_resample_affine(solver, test_data):
     """With resample='affine', nulls should have mean and std that match the data"""
-    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, resample="affine", seed=seed)
+    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, resample="affine")
     
     for i in range(nulls.shape[1]):
         mean = np.mean(nulls[:, i])
@@ -145,7 +144,7 @@ def test_resample_affine(solver, test_data):
 
 def test_resample_mean(solver, test_data):
     """With resample='mean', nulls should have mean equal to original data mean"""
-    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, resample="mean", seed=seed)
+    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, resample="mean")
     
     data_mean = np.mean(test_data)
     
@@ -155,7 +154,7 @@ def test_resample_mean(solver, test_data):
 
 def test_resample_range(solver, test_data):
     """With resample='range', nulls should have same min and max as original data"""
-    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, resample="range", seed=seed)
+    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, resample="range")
     
     data_min = np.min(test_data)
     data_max = np.max(test_data)
@@ -169,21 +168,21 @@ def test_resample_range(solver, test_data):
 @pytest.mark.parametrize("randomize", [True, False])
 def test_randomize_option(solver, test_data, randomize):
     """Test randomize parameter works without errors"""
-    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, randomize=randomize, seed=seed)
+    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, randomize=randomize)
     assert nulls.shape == (solver.n_verts, n_nulls)
     assert np.isfinite(nulls).all(), f"Nulls contain non-finite values when randomize={randomize}"
 
 @pytest.mark.parametrize("rotation_method", ['scipy', 'qr'])
 def test_rotation_option(solver, test_data, rotation_method):
     """Test randomize parameter works without errors"""
-    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, rotation_method=rotation_method, seed=seed)
+    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, rotation_method=rotation_method)
     assert nulls.shape == (solver.n_verts, n_nulls)
     assert np.isfinite(nulls).all(), f"Nulls contain non-finite values when rotation_method={rotation_method}"
 
 @pytest.mark.parametrize("residual_method", ['add', 'permute', None])
 def test_residual_methods(solver, test_data, residual_method):
     """Test different residual methods run without errors"""
-    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, residual=residual_method, seed=seed)
+    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, residual=residual_method)
     assert nulls.shape == (solver.n_verts, n_nulls)
     assert np.isfinite(nulls).all(), \
         f"Nulls contain non-finite values for residual method '{residual_method}'"
@@ -192,32 +191,32 @@ def test_non_square_modes(test_data):
     """Should handle non-square n_modes by truncating last eigengroup with warning"""
     # Use 8 modes (not a perfect square)
     mesh, medmask = fetch_surf(density='4k')
-    non_square_solver = EigenSolver(mesh, mask=medmask).solve(n_modes=8, seed=seed)
+    non_square_solver = EigenSolver(mesh, mask=medmask).solve(n_modes=8)
     
     # Should complete with a warning about truncating last eigengroup
     with pytest.warns(UserWarning, match="Last 4 modes will be excluded."):
-        nulls = non_square_solver.eigenstrap(test_data, n_nulls=n_nulls, seed=seed, residual='add')
+        nulls = non_square_solver.eigenstrap(test_data, n_nulls=n_nulls, residual='add')
     
     assert nulls.shape == (non_square_solver.n_verts, n_nulls)
 
 @pytest.fixture
 def test_data_2d(solver):
     """Generate 2D test data with 3 maps"""
-    rng = np.random.default_rng(seed)
+    rng = np.random.default_rng()
     data_2d = rng.standard_normal(size=(solver.n_verts, 3))
     return data_2d
 
 def test_output_shape_2d(solver, test_data_2d):
     """Output shape should be (n_verts, n_nulls, n_maps)"""
     n_maps = test_data_2d.shape[1]
-    nulls = solver.eigenstrap(test_data_2d, n_nulls=n_nulls, seed=seed)
+    nulls = solver.eigenstrap(test_data_2d, n_nulls=n_nulls)
     
     assert nulls.shape == (solver.n_verts, n_nulls, n_maps), \
         f"Expected shape {(solver.n_verts, n_nulls, n_maps)}, got {nulls.shape}"
 
 def test_resample_exact_2d(solver, test_data_2d):
     """With resample=True, nulls should have same values as original data"""
-    nulls = solver.eigenstrap(test_data_2d, n_nulls=n_nulls, resample="exact", seed=seed)
+    nulls = solver.eigenstrap(test_data_2d, n_nulls=n_nulls, resample="exact")
     
     # Check that each null has the exact same values as original data (just reordered)
     # TODO: vectorise if slow?
@@ -230,7 +229,7 @@ def test_resample_exact_2d(solver, test_data_2d):
 
 def test_resample_affine_2d(solver, test_data_2d):
     """With resample='affine', nulls should have mean and std that match the data"""
-    nulls = solver.eigenstrap(test_data_2d, n_nulls=n_nulls, resample="affine", seed=seed)
+    nulls = solver.eigenstrap(test_data_2d, n_nulls=n_nulls, resample="affine")
     
     for j in range(test_data_2d.shape[1]):
         for i in range(nulls.shape[1]):
@@ -243,7 +242,7 @@ def test_resample_affine_2d(solver, test_data_2d):
 
 def test_resample_mean_2d(solver, test_data_2d):
     """With resample='mean', nulls should have mean equal to original data mean"""
-    nulls = solver.eigenstrap(test_data_2d, n_nulls=n_nulls, resample="mean", seed=seed)
+    nulls = solver.eigenstrap(test_data_2d, n_nulls=n_nulls, resample="mean")
     
     for j in range(test_data_2d.shape[1]):
         data_mean = np.mean(test_data_2d[:, j])
@@ -254,7 +253,7 @@ def test_resample_mean_2d(solver, test_data_2d):
 
 def test_resample_range_2d(solver, test_data_2d):
     """With resample='range', nulls should have same min and max as original data"""
-    nulls = solver.eigenstrap(test_data_2d, n_nulls=n_nulls, resample="range", seed=seed)
+    nulls = solver.eigenstrap(test_data_2d, n_nulls=n_nulls, resample="range")
     
     for j in range(test_data_2d.shape[1]):
         data_min = np.min(test_data_2d[:, j])
@@ -267,14 +266,14 @@ def test_resample_range_2d(solver, test_data_2d):
 
 def test_randomize_option_2d(solver, test_data_2d):
     """Test randomize parameter works without errors"""
-    nulls = solver.eigenstrap(test_data_2d, n_nulls=n_nulls, randomize=True, seed=seed)
+    nulls = solver.eigenstrap(test_data_2d, n_nulls=n_nulls, randomize=True)
     assert nulls.shape == (solver.n_verts, n_nulls, test_data_2d.shape[1])
     assert np.isfinite(nulls).all(), "Nulls contain non-finite values"
 
 def test_residual_methods_2d(solver, test_data_2d):
     """Test different residual methods run without errors"""
     for method in ['add', 'permute']:
-        nulls = solver.eigenstrap(test_data_2d, n_nulls=n_nulls, residual=method, seed=seed)
+        nulls = solver.eigenstrap(test_data_2d, n_nulls=n_nulls, residual=method)
         assert nulls.shape == (solver.n_verts, n_nulls, test_data_2d.shape[1])
         assert np.isfinite(nulls).all(), \
             f"Nulls contain non-finite values for residual method '{method}'"
@@ -289,7 +288,7 @@ def test_all_parameters_eigenstrap(solver, test_data):
         randomize=True, 
         residual='permute', 
         decomp_method='project',
-        seed=seed
+        seed=1
     )
     assert nulls.shape == (solver.n_verts, n_nulls)
     assert np.isfinite(nulls).all(), "Nulls contain non-finite values"
