@@ -14,7 +14,6 @@ density = '4k'
 n_groups = (10,15,20)
 n_maps = (1,10,100)
 n_nulls = (1,10,100)
-seed = 0
 
 @pytest.fixture(scope='module')
 def solver():
@@ -22,14 +21,14 @@ def solver():
     mesh, medmask = fetch_surf(density=density)
     print(f"\nInitilising mesh with {density} vertices and {max(n_groups)**2} modes.")
     tic = time.time()
-    s = EigenSolver(mesh, mask=medmask).solve(n_modes=max(n_groups)**2, seed=seed)
+    s = EigenSolver(mesh, mask=medmask).solve(n_modes=max(n_groups)**2)
     print(f"Time to solve eigenmodes: {time.time() - tic:.5f} seconds.\n")
     return s
 
 @pytest.fixture(scope='module')
 def test_data(solver):
     """Generate 2D test data"""
-    rng = np.random.default_rng(seed)
+    rng = np.random.default_rng()
     return rng.normal(loc=1, size=(solver.n_verts, max(n_maps)))  # random normal data, non-zero mean
 
 def test_min(solver, test_data):
@@ -38,39 +37,39 @@ def test_min(solver, test_data):
     n_map = min(n_maps)
     n_group = min(n_groups)
     tic = time.time()
-    solver.eigenstrap(test_data[:,:n_map], n_nulls=n_null, n_groups=n_group, seed=seed)
+    solver.eigenstrap(test_data[:,:n_map], n_nulls=n_null, n_groups=n_group)
     toc = time.time()
-    print(f"Time to generate {n_null} nulls for {n_map} maps with {n_group} groups: {toc - tic:.5f} seconds.")
+    print(f"Time to generate {n_null} nulls for {n_map} maps with {n_group**2} modes: {toc - tic:.5f} seconds.")
 
 @pytest.mark.parametrize("rotation_method", ['qr', 'scipy'])
 def test_supermax_nulls(solver, test_data, rotation_method):
-    """Run one test (profile with `pytest tests/test_nulls_speed.py::test_one --profile`)."""
+    """Run one test (profile with `pytest tests/test_nulls_speed.py::test_supermax_nulls --profile`)."""
     n_null = 10 * max(n_nulls)
     n_map = min(n_maps)
     n_group = min(n_groups)
 
     tic = time.time()
-    solver.eigenstrap(test_data[:,:n_map], n_nulls=n_null, n_groups=n_group, seed=seed, rotation_method=rotation_method)
+    solver.eigenstrap(test_data[:,:n_map], n_nulls=n_null, n_groups=n_group, rotation_method=rotation_method)
     toc = time.time()
-    print(f"Time to generate {n_null} nulls for {n_map} maps with {n_group} groups using {rotation_method}: {toc - tic:.5f} seconds.")
+    print(f"Time to generate {n_null} nulls for {n_map} maps with {n_group**2} modes using {rotation_method}: {toc - tic:.5f} seconds.")
 
 @pytest.mark.parametrize("rotation_method", ['qr', 'scipy'])
 def test_supermax_maps(solver, test_data, rotation_method):
-    """Run one test (profile with `pytest tests/test_nulls_speed.py::test_one --profile`)."""
+    """Run one test (profile with `pytest tests/test_nulls_speed.py::test_supermax_maps --profile`)."""
     n_null = min(n_nulls)
     n_map = 10 * max(n_maps)
     n_group = min(n_groups)
 
     tic = time.time()
-    solver.eigenstrap(test_data[:,:n_map], n_nulls=n_null, n_groups=n_group, seed=seed, rotation_method=rotation_method)
+    solver.eigenstrap(test_data[:,:n_map], n_nulls=n_null, n_groups=n_group, rotation_method=rotation_method)
     toc = time.time()
-    print(f"Time to generate {n_null} nulls for {n_map} maps with {n_group} groups using {rotation_method}: {toc - tic:.5f} seconds.")
+    print(f"Time to generate {n_null} nulls for {n_map} maps with {n_group**2} modes using {rotation_method}: {toc - tic:.5f} seconds.")
 
 def test_all(solver, test_data):
-    """Generate nulls for test data"""
+    """Test all combinations of n_maps/n_groups/n_nulls"""
     s = 12 # for spacing only
     for n_group in n_groups:
-        print(f"\n{n_group**2} modes:")
+        print(f"\n{n_group**2} modes:")         # all these print statements are formatting output
         print(f"{'Maps | Nulls'}", end="")
         for n_null in n_nulls:
             print(f"{n_null:>{s}}", end="")
@@ -78,8 +77,8 @@ def test_all(solver, test_data):
         for n_map in n_maps:
             print(f"{n_map:<{s}}", end="")
             for n_null in n_nulls:
-                tic = time.time()
-                solver.eigenstrap(test_data[:,:n_map], n_nulls=n_null, n_groups=n_group, seed=seed)
+                tic = time.time()               # this is where the computation (and timing) is
+                solver.eigenstrap(test_data[:,:n_map], n_nulls=n_null, n_groups=n_group)
                 toc = time.time()
                 print(f"{toc - tic:>{s}.6f}", end="")
             print()
@@ -93,14 +92,11 @@ def test_32k():
 
     print(f"\nInitialising mesh with {density} vertices and {n_modes} modes.")
     tic = time.time()
-    solver = EigenSolver(fetch_surf(density=density)[0]).solve(n_modes=n_modes, seed=seed)
+    solver = EigenSolver(fetch_surf(density=density)[0]).solve(n_modes=n_modes)
     print(f"Time to solve eigenmodes: {time.time() - tic:.5f} seconds.")
 
-    test_data = np.random.default_rng(seed).normal(size=(solver.n_verts, n_maps))
+    test_data = np.random.default_rng().normal(size=(solver.n_verts, n_maps))
 
     tic = time.time()
-    solver.eigenstrap(test_data, n_nulls=n_nulls, seed=seed)
+    solver.eigenstrap(test_data, n_nulls=n_nulls)
     print(f"Nulls generated for {n_maps} maps with {n_nulls} nulls: {time.time() - tic:.5f} seconds.")
-
-# TODO create a test that compares n_maps with n_nulls
-# ie for a given density and n_modes, what is the difference between 1 map/k nulls and k maps/1 null

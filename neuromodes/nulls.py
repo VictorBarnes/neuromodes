@@ -223,8 +223,11 @@ def eigenstrap(
     norm_emodes = emodes / sqrt_evals # sqrt_evals behaves like a row vector
 
     # Initialise RNG, with seed for each null
+    # TODO : add support for user inputting the seeds for each null
+    # TODO : if that is not done, ensure that the seeds generated are all different!
     if seed is not None:
         null_seeds = np.random.default_rng(seed).integers(np.iinfo(np.int32).max, size=n_nulls)
+        # null_seeds = np.random.default_rng(seed).choice(np.iinfo(np.int32).max, size=n_nulls, replace=False, shuffle=False)
     else:
         null_seeds = np.full((n_nulls,), None) # to match original
 
@@ -287,38 +290,38 @@ def _rotate_coeffs_scipy(
     seeds: NDArray[integer]
 ) -> NDArray[floating]:
     """
-    Rotate coefficients using `scipy.stats.special_ortho_group.rvs` to sample random 
-    orthogonal matrices from SO(N).
+    Rotate coefficients using `scipy.stats.special_ortho_group.rvs` to sample random orthogonal
+    matrices from SO(N). This is largely a legacy option to match the original implementation of
+    eigenstrapping, which uses this method. The QR method is generally faster, especially for larger
+    numbers of modes and nulls, and is recommended for most users. However, the scipy method is
+    recommended only for users who want to exactly match the original implementation of
+    eigenstrapping.
 
     Parameters
     ----------
     inv_coeffs : array of shape (n_modes, n_nulls, n_maps)
-        The inverse-transformed coefficients (spheroid -> ellipsoid) of shape (n_modes, n_nulls, n_maps) 
-        to rotate.
+        The inverse-transformed coefficients (spheroid -> ellipsoid) of shape (n_modes, n_nulls,
+        n_maps) to rotate.
     groups : list of arrays
-        A list of arrays, where each array contains the indices of modes belonging to the 
-        same eigengroup.
+        A list of arrays, where each array contains the indices of modes belonging to the same
+        eigengroup.
     seeds : array of shape (n_nulls,)
-        An array of integer seeds of shape (n_nulls,) to use for reproducibility of the 
-        random rotations for each null map.
+        An array of integer seeds of shape (n_nulls,) to use for reproducibility of the random
+        rotations for each null map.
     """
-    tforms = np.empty_like(inv_coeffs) # shape (n_modes, n_nulls, n_maps)
+    # Unlike qr method, have to pass None (to keep using global seed) to match original eigenstrapping
+    rngs = [None if seed is None else np.random.default_rng(seed) for seed in seeds]
 
-    for i, seed in enumerate(seeds): # one seed for each null (done in series)
-        random_state = None if seed is None else np.random.default_rng(seed) # to match original 
-        for group in groups:
-            K = len(group)
+    # Define helper
+    def _get_so(k: int, rng: np.random.Generator | None) -> NDArray[floating]:
+        return special_ortho_group.rvs(dim=k, random_state=rng) if k != 1 else np.array([[1.0]])
 
-            # have to make sure random_state doesn't progress for the first group 
-            # to keep same as eigenstrapping (and `special_ortho_group.rvs(dim=1)` errors anyway)
-            if K == 1: 
-                tforms[group, i, :] = inv_coeffs[group, i, :]
-                continue
-
-            s = special_ortho_group.rvs(dim=K, random_state=random_state)
-            tforms[group, i:i+1, :] = np.matmul(
-                s, inv_coeffs[group,i:i+1,:], axes=[(0,1),(0,2),(0,2)]
-            )
+    tforms = np.empty_like(inv_coeffs)
+    for i, rng in enumerate(rngs):  # Has to be in this order to match original functionality 
+        for group in groups:        # ie can't switch order of loops (even though it would be better)
+            Q = _get_so(len(group), rng)
+            # NumPy slicing trickery as second dim of inv_coeffs is collapsed:
+            tforms[group, i, :] = Q @ inv_coeffs[group, i, :] 
 
     return tforms
 
@@ -328,42 +331,43 @@ def _rotate_coeffs_qr(
         seeds: NDArray[integer]
 ) -> NDArray[floating]:
     """
-    Rotate coefficients using QR decomposition of random normal matrices to generate random
+    Rotate coefficients using QR decomposition of random Gaussian matrices to generate random
     orthogonal matrices.
     
     Parameters
     ----------
     inv_coeffs : np.ndarray of shape (n_modes, n_nulls, n_maps)
-        The inverse-transformed coefficients (spheroid -> ellipsoid) of shape (n_modes, n_nulls, n_maps) 
-        to rotate.
+        The inverse-transformed coefficients (spheroid -> ellipsoid) of shape (n_modes, n_nulls,
+        n_maps) to rotate.
     groups : list of np.ndarrays
-        A list of arrays, where each array contains the indices of modes belonging to the 
-        same eigengroup.
+        A list of arrays, where each array contains the indices of modes belonging to the same
+        eigengroup.
     seeds : np.ndarray (n_nulls,)
-        An array of integer seeds of shape (n_nulls,) to use for reproducibility of the 
-        random rotations for each null map.
+        An array of integer seeds of shape (n_nulls,) to use for reproducibility of the random
+        rotations for each null map.
+
+    References
+    ----------
+    ..  [1] Mezzadri. (2007). How to generate random matrices from the classical compact groups. 
+        https://www.ams.org/notices/200705/fea-mezzadri-web.pdf
     """
-    tforms = np.empty_like(inv_coeffs) # shape (n_modes, n_nulls, n_maps)
-    rngs = [np.random.default_rng(s) for s in seeds] # one seed for each null (done in parallel)
-    # TODO probably need to change this as the rot mats for each group are not independent
+    # Unlike scipy method, still have to return Generator even if seed is None (for generating random Gaussian matrices)
+    rngs = [np.random.default_rng(seed) for seed in seeds]
 
-    for group in groups:
-        K = len(group)
-        if K == 1: # No rotation for first eigengroup (first mode; constant), only coefficients
-            tforms[group, :, :] = inv_coeffs[group, :, :]
-            continue
-
-        # TODO consider moving rotation matrix generation to its own function 
-        # Strictly maintain seeding reproducibility defined by docstring
-        X = np.stack([rng.standard_normal((K, K)) for rng in rngs], axis=0)
-        
-        Q, R = np.linalg.qr(X) # Q has shape (n_nulls, K, K)
-        r = np.sign(np.diagonal(R, axis1=1, axis2=2))
+    # Define helper
+    def _generate_so(k: int, rngs: list[np.random.Generator]) -> NDArray[floating]:
+        X = np.stack([rng.standard_normal((k, k)) for rng in rngs], axis=0) # rng progresses over each group
+        Q, R = np.linalg.qr(X) # Q has shape (n_nulls, k, k)
+        r = np.copysign(1.0, np.diagonal(R, axis1=1, axis2=2)) # copysign avoids chance of 0
         Q = Q * r[:, np.newaxis, :]
         dets = np.linalg.det(Q)
-        Q[:, :, 0] *= np.sign(dets)[:, np.newaxis]
+        Q[:, :, 0] *= dets[:, np.newaxis]
+        return Q
 
-        # Batched matmul (equiv of @) appears faster than einsum or tensordot
-        tforms[group,:,:] = np.matmul(Q, inv_coeffs[group, :, :], axes=[(1, 2), (0, 2), (0, 2)])
+    tforms = np.empty_like(inv_coeffs)
+    for group in groups:
+        Q = _generate_so(len(group), rngs) # unlike scipy, can generate all at once
+        # Batched matmul (equiv of @) appears faster than einsum or tensordot:
+        tforms[group, :, :] = np.matmul(Q, inv_coeffs[group, :, :], axes=[(1, 2), (0, 2), (0, 2)])
 
     return tforms

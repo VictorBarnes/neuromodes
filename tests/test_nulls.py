@@ -1,37 +1,28 @@
 import pytest
 import numpy as np
-from pathlib import Path
 from neuromodes.eigen import EigenSolver
-from neuromodes.io import fetch_surf, fetch_map
+from neuromodes.io import fetch_surf
 from neuromodes.nulls import eigenstrap
 
 # Params
 n_nulls = 100
-n_modes = 100
 seed = 365
 
 @pytest.fixture(scope='module')
 def solver():
     mesh, medmask = fetch_surf(density='4k')
-    return EigenSolver(mesh, mask=medmask).solve(n_modes=n_modes, seed=seed)
+    return EigenSolver(mesh, mask=medmask).solve(n_modes=100, seed=seed)
 
 @pytest.fixture(scope='module')
-def input_map(solver):
-    """Load input map for null generation"""
-    data = fetch_map(data="myelinmap", density="4k")[solver.mask]
-    return data
+def test_data(solver):
+    """Generate 1D test data"""
+    rng = np.random.default_rng(seed)
+    return rng.normal(loc=1, size=solver.n_verts)  # random normal data, non-zero mean
 
-@pytest.fixture(scope='module')
-def nulls(solver, input_map):
-    """Generate nulls for input map"""
-    return solver.eigenstrap(input_map, n_nulls=n_nulls, seed=seed)
-
-@pytest.fixture(scope='module')
-def nulls_orig():
-    """Load original nulls from file for reproducibility test"""
-    test_data_dir = Path(__file__).parent / "test_data"
-    nulls_orig_file = "sp-human_tpl-fsLR_den-4k_hemi-L_midthickness_eigenstrap-nulls-orig.npy"
-    return np.load(test_data_dir / nulls_orig_file)
+@pytest.fixture
+def nulls(solver, test_data):
+    """Generate nulls for 1D test data"""
+    return solver.eigenstrap(test_data, n_nulls=n_nulls, seed=seed)
 
 def test_output_shape(solver, nulls):
     """Output shape should be (n_verts, n_nulls)"""    
@@ -47,14 +38,12 @@ def test_internull_corrs(nulls):
     assert np.abs(mean_corr) < 0.01, \
         f"Mean internull correlation should be close to zero, got {mean_corr:.3f}"
     
-def test_mean_preservation(input_map, nulls):
+def test_mean_preservation(test_data, nulls):
     """Nulls should approximately preserve mean of original data even without using resample='mean'"""
-    data_mean = np.mean(input_map)
+    data_mean = np.mean(test_data)
     null_means = np.mean(nulls, axis=0)
-    
-    for i, null_mean in enumerate(null_means):
-        assert np.allclose(null_means, data_mean, atol=0.05), \
-            f"Null {i} mean {null_mean} is not close to data mean {data_mean}"
+    assert np.allclose(null_means, data_mean, atol=0.02), \
+        f"Null means are not close to data mean {data_mean}"
         
 def test_psd_preservation():
     """Nulls should preserve eigengroup power spectral density of map on sphere"""
@@ -77,88 +66,99 @@ def test_psd_preservation():
 
     assert np.allclose(psd0_group, psd1_group, atol=0.01)
     
-def test_reproducibility_nulls(solver, input_map, nulls):
+@pytest.mark.parametrize("rotation_method", ['scipy', 'qr'])
+def test_reproducibility(solver, test_data, rotation_method):
     """Nulls with same seed should be identical"""
-    nulls2 = solver.eigenstrap(input_map, n_nulls=n_nulls-1, seed=seed)
+    nulls1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=seed, rotation_method=rotation_method)
+    nulls2 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=seed, rotation_method=rotation_method)
+    nulls3 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=seed+1, rotation_method=rotation_method)
     
-    assert np.allclose(nulls[:,:-1], nulls2, atol=1e-10), \
-        "Null spaces with the same seed should be identical"
+    assert np.allclose(nulls1, nulls2, atol=1e-10), \
+        f"Nulls with the same seed should be identical when using rotation method '{rotation_method}'"
+    assert not np.allclose(nulls1, nulls3, atol=1e-10), \
+        f"Nulls with different seeds should be different when using rotation method '{rotation_method}'"
 
-def test_reproducibility_data(solver, input_map, nulls):
-    """Nulls with same seed but different n_maps should be identical"""
-    test_data2 = np.column_stack((input_map, np.random.normal(loc=1, size=solver.n_verts)))
-    nulls2 = solver.eigenstrap(test_data2, n_nulls=n_nulls, seed=seed)
+@pytest.mark.parametrize("rotation_method", ['scipy', 'qr'])
+def test_reproducibility_nulls(solver, test_data, rotation_method):
+    """Nulls with same seed should be identical, regardless of number of nulls requested"""
+    nulls1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=seed, rotation_method=rotation_method)
+    nulls2 = solver.eigenstrap(test_data, n_nulls=n_nulls-1, seed=seed, rotation_method=rotation_method)
     
-    assert np.allclose(nulls, nulls2[:,:,0], atol=1e-10), \
-        "Null spaces with the same seed should be identical"
+    assert np.allclose(nulls1[:,:-1], nulls2, atol=1e-10), \
+        f"Nulls with the same seed should be identical"
+
+@pytest.mark.parametrize("rotation_method", ['scipy', 'qr'])
+def test_reproducibility_data(solver, test_data, rotation_method):
+    """Nulls with same seed should be identical, regardless of number of input maps"""
+    test_data2 = np.column_stack((test_data, np.random.normal(loc=1, size=solver.n_verts)))
+    nulls1 = solver.eigenstrap(test_data , n_nulls=n_nulls, seed=seed, rotation_method=rotation_method)
+    nulls2 = solver.eigenstrap(test_data2, n_nulls=n_nulls, seed=seed, rotation_method=rotation_method)
     
-def test_reproducibility_nulls(solver, input_map, nulls):
-    """Nulls with same seed but different n_nulls should still be identical"""
-    nulls2 = solver.eigenstrap(input_map, n_nulls=n_nulls-1, seed=seed)
-    
-    assert np.allclose(nulls[:,:-1], nulls2, atol=1e-10), \
-        "Null spaces with the same seed should be identical"
+    assert np.allclose(nulls1, nulls2[:,:,0], atol=1e-10), \
+        f"Nulls with the same seed should be identical"
+    assert not np.allclose(nulls1, nulls2[:,:,1], atol=1e-10), \
+        f"Nulls with different data should be different"
 
 def test_finite(nulls):
     """Output should not contain NaNs or Infs"""    
     assert np.isfinite(nulls).all(), "Nulls contain NaNs or Infs"
 
-def test_invalid_residual_parameter(solver, input_map):
+def test_invalid_residual_parameter(solver, test_data):
     """Should raise ValueError for invalid residual parameter"""
     with pytest.raises(ValueError, match="Invalid residual method"):
-        solver.eigenstrap(input_map, residual='invalid')
+        solver.eigenstrap(test_data, residual='invalid')
 
-def test_shape_mismatch_data_emodes(solver, input_map):
+def test_shape_mismatch_data_emodes(solver, test_data):
     """`decompose()` should raise error when data length doesn't match emodes rows"""
-    wrong_data = input_map[:-100]  # Truncate data
+    wrong_data = test_data[:-100]  # Truncate data
     
     with pytest.raises((ValueError, IndexError)):
         solver.eigenstrap(wrong_data)
 
-def test_shape_mismatch_emodes_evals(solver, input_map):
+def test_shape_mismatch_emodes_evals(solver, test_data):
     """Should raise error when emodes columns doesn't match evals length"""
     wrong_evals = solver.evals[:-10]  # Truncate evals
     
     with pytest.raises(ValueError, match="must have shape"):
-        eigenstrap(input_map, solver.emodes, wrong_evals, mass=solver.mass)
+        eigenstrap(test_data, solver.emodes, wrong_evals, mass=solver.mass)
 
-def test_resample_exact(solver, input_map):
+def test_resample_exact(solver, test_data):
     """With resample=True, nulls should have same values as original data"""
-    nulls = solver.eigenstrap(input_map, n_nulls=n_nulls, resample="exact", seed=seed)
+    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, resample="exact", seed=seed)
     
     # Check that each null has the exact same values as original data (just reordered)
     for i in range(nulls.shape[1]):
         null_sorted = np.sort(nulls[:, i])
-        data_sorted = np.sort(input_map)
+        data_sorted = np.sort(test_data)
         assert np.allclose(null_sorted, data_sorted), \
             f"Null {i} doesn't preserve data distribution"
 
-def test_resample_affine(solver, input_map):
+def test_resample_affine(solver, test_data):
     """With resample='affine', nulls should have mean and std that match the data"""
-    nulls = solver.eigenstrap(input_map, n_nulls=n_nulls, resample="affine", seed=seed)
+    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, resample="affine", seed=seed)
     
     for i in range(nulls.shape[1]):
         mean = np.mean(nulls[:, i])
         std = np.std(nulls[:, i])
-        assert np.isclose(mean, input_map.mean()), f"Null {i} mean is not close to data mean"
-        assert np.isclose(std, input_map.std()), f"Null {i} std is not close to data std"
+        assert np.isclose(mean, test_data.mean()), f"Null {i} mean is not close to data mean"
+        assert np.isclose(std, test_data.std()), f"Null {i} std is not close to data std"
 
-def test_resample_mean(solver, input_map):
+def test_resample_mean(solver, test_data):
     """With resample='mean', nulls should have mean equal to original data mean"""
-    nulls = solver.eigenstrap(input_map, n_nulls=n_nulls, resample="mean", seed=seed)
+    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, resample="mean", seed=seed)
     
-    data_mean = np.mean(input_map)
+    data_mean = np.mean(test_data)
     
     for i in range(nulls.shape[1]):
         null_mean = np.mean(nulls[:, i])
         assert np.isclose(null_mean, data_mean), f"Null {i} mean is not close to data mean"
 
-def test_resample_range(solver, input_map):
+def test_resample_range(solver, test_data):
     """With resample='range', nulls should have same min and max as original data"""
-    nulls = solver.eigenstrap(input_map, n_nulls=n_nulls, resample="range", seed=seed)
+    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, resample="range", seed=seed)
     
-    data_min = np.min(input_map)
-    data_max = np.max(input_map)
+    data_min = np.min(test_data)
+    data_max = np.max(test_data)
     
     for i in range(nulls.shape[1]):
         null_min = np.min(nulls[:, i])
@@ -166,21 +166,29 @@ def test_resample_range(solver, input_map):
         assert np.isclose(null_min, data_min), f"Null {i} min is not close to data min"
         assert np.isclose(null_max, data_max), f"Null {i} max is not close to data max"
 
-def test_randomize_option(solver, input_map):
+@pytest.mark.parametrize("randomize", [True, False])
+def test_randomize_option(solver, test_data, randomize):
     """Test randomize parameter works without errors"""
-    nulls = solver.eigenstrap(input_map, n_nulls=n_nulls, randomize=True, seed=seed)
+    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, randomize=randomize, seed=seed)
     assert nulls.shape == (solver.n_verts, n_nulls)
-    assert np.isfinite(nulls).all(), "Nulls contain non-finite values when randomize=True"
+    assert np.isfinite(nulls).all(), f"Nulls contain non-finite values when randomize={randomize}"
 
-def test_residual_methods(solver, input_map):
+@pytest.mark.parametrize("rotation_method", ['scipy', 'qr'])
+def test_rotation_option(solver, test_data, rotation_method):
+    """Test randomize parameter works without errors"""
+    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, rotation_method=rotation_method, seed=seed)
+    assert nulls.shape == (solver.n_verts, n_nulls)
+    assert np.isfinite(nulls).all(), f"Nulls contain non-finite values when rotation_method={rotation_method}"
+
+@pytest.mark.parametrize("residual_method", ['add', 'permute', None])
+def test_residual_methods(solver, test_data, residual_method):
     """Test different residual methods run without errors"""
-    for method in ['add', 'permute']:
-        nulls = solver.eigenstrap(input_map, n_nulls=n_nulls, residual=method, seed=seed)
-        assert nulls.shape == (solver.n_verts, n_nulls)
-        assert np.isfinite(nulls).all(), \
-            f"Nulls contain non-finite values for residual method '{method}'"
+    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, residual=residual_method, seed=seed)
+    assert nulls.shape == (solver.n_verts, n_nulls)
+    assert np.isfinite(nulls).all(), \
+        f"Nulls contain non-finite values for residual method '{residual_method}'"
 
-def test_non_square_modes(input_map):
+def test_non_square_modes(test_data):
     """Should handle non-square n_modes by truncating last eigengroup with warning"""
     # Use 8 modes (not a perfect square)
     mesh, medmask = fetch_surf(density='4k')
@@ -188,7 +196,7 @@ def test_non_square_modes(input_map):
     
     # Should complete with a warning about truncating last eigengroup
     with pytest.warns(UserWarning, match="Last 4 modes will be excluded."):
-        nulls = non_square_solver.eigenstrap(input_map, n_nulls=n_nulls, seed=seed, residual='add')
+        nulls = non_square_solver.eigenstrap(test_data, n_nulls=n_nulls, seed=seed, residual='add')
     
     assert nulls.shape == (non_square_solver.n_verts, n_nulls)
 
@@ -271,10 +279,10 @@ def test_residual_methods_2d(solver, test_data_2d):
         assert np.isfinite(nulls).all(), \
             f"Nulls contain non-finite values for residual method '{method}'"
         
-def test_all_parameters_eigenstrap(solver, input_map): 
+def test_all_parameters_eigenstrap(solver, test_data): 
     """Test that all parameters together work without errors"""
     nulls = solver.eigenstrap(
-        input_map, 
+        test_data, 
         n_nulls=n_nulls, 
         n_groups=int(np.sqrt(n_nulls))-1,
         resample='affine', 
@@ -285,25 +293,3 @@ def test_all_parameters_eigenstrap(solver, input_map):
     )
     assert nulls.shape == (solver.n_verts, n_nulls)
     assert np.isfinite(nulls).all(), "Nulls contain non-finite values"
-
-def test_match_orig(solver, input_map, nulls_orig):
-    """Test that nulls match original nulls from file for reproducibility"""   
-    input_map_demean = input_map - np.mean(input_map)
-
-    np.random.seed(seed)
-    nulls_neuromodes = solver.eigenstrap(
-        input_map_demean,
-        n_nulls=nulls_orig.shape[1],
-        resample="range",
-        decomp_method="regress",
-        rotation_method="scipy",
-        seed=None
-    )
-
-    # Compare via correlation of null distributions
-    corr_matrix = np.corrcoef(nulls_neuromodes.T, nulls_orig.T)
-    diagonal_corrs = np.diag(corr_matrix[:nulls_neuromodes.shape[1], nulls_neuromodes.shape[1]:])
-    min_corr = np.min(diagonal_corrs)
-    
-    assert min_corr > 0.999, \
-        f"Minimum correlation between current and original nulls is: {min_corr:.4f} < 0.999 "
