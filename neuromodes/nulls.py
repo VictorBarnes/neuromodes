@@ -29,7 +29,7 @@ def eigenstrap(
     resample: Union[str, None] = None,
     decomp_method: str = 'project',
     mass: Union[spmatrix, ArrayLike, None] = None,
-    seed: Union[int, None] = None,
+    seed: Union[int, ArrayLike, None] = None,
     check_ortho: bool = True,
 ) -> NDArray[floating]:
     """
@@ -84,9 +84,12 @@ def eigenstrap(
     mass : array-like, optional
         The mass matrix of shape (n_verts, n_verts) used for the decomposition when `decomp_method`
         is `'project'`. Default is `None`.
-    seed : int, optional
-        Random seed for reproducibility. If provided, generates deterministic nulls (see Notes).
-        Default is `None`.
+    seed : array-like of shape (n_nulls,) or int, optional
+        Random seed for reproducibility. If an array of shape (n_nulls,) is provided, it is used
+        directly as the seed for each null. Otherwise, if a single integer is provided, it is used
+        to generate a master seed that is then used to generate a different seed for each null. If
+        `None`, the global state is used/progressed (in accordance with the original implementation
+        of eigenstrapping). Default is `None`.
     check_ortho : bool, optional
         Whether to check if `emodes` are mass-orthonormal before using the `'project'` method in
         `neuromodes.basis.decompose`. Default is `True`.
@@ -136,21 +139,22 @@ def eigenstrap(
     option produces the lowest false discovery rate (FDR). See [1] for an example of how to compute
     the FDR.
 
-    5. Seeding is handled in two stages. First `seed` is used to initialize a master random 
-    number generator (RNG) that generates an independent integer seed for each null map. Then each
-    null uses its allocated integer to generate its own RNG to use for all rotations/permutations of
-    that null.
+    5. Seeding is handled in one or two stages. First, if `seed` is not of shape (n_nulls,) or
+    similar, `seed` is used to initialize a master random number generator (RNG) for each null map
+    (this will start at a random integer given by `seed` and will then increment). Then, each null
+    uses its allocated integer to generate its own RNG to use for all rotations/permutations of that
+    null.
 
     6. To exactly match the default version of the original implementation of eigenstrapping in [1],
     users must do the following: 
         - Ensure `data` has a mean of zero. 
         - Set the global seed before running this function (e.g., `np.random.seed(seed)`). 
-        - Set `resample="range"` '
+        - Set `resample="range"`
         - Set `decomp_method="regress"` 
         - Set `rotation_method="scipy"` 
         - Set `seed=None` 
     Note that the original implementation (`eigenstrapping.SurfaceEigenstrapping`) must also be run
-    with a particular congifugration to ensure reproducibility/compatibility: 
+    with a particular configuration to ensure reproducibility/compatibility: 
         - Set the global seed before running this function (e.g., `np.random.seed(seed)`). 
         - Additionally, pass this seed into the function call: `SurfaceEigenstrapping(...,
           seed=seed)` 
@@ -162,7 +166,7 @@ def eigenstrap(
        residuals after resampling. Here, the order of these steps is swapped (ie add residuals and
        then resample). This ensures that the resampling is carried out as requested (e.g., that the
        surrogates and original actually have the same values). This difference is only relevant if
-       you are using both `resample` and `residual`. 
+       both `resample` and `residual` are used. 
     
     References
     ----------
@@ -223,13 +227,31 @@ def eigenstrap(
     norm_emodes = emodes / sqrt_evals # sqrt_evals behaves like a row vector
 
     # Initialise RNG, with seed for each null
-    # TODO : add support for user inputting the seeds for each null
-    # TODO : if that is not done, ensure that the seeds generated are all different!
-    if seed is not None:
-        null_seeds = np.random.default_rng(seed).integers(np.iinfo(np.int32).max, size=n_nulls)
-        # null_seeds = np.random.default_rng(seed).choice(np.iinfo(np.int32).max, size=n_nulls, replace=False, shuffle=False)
-    else:
+    if seed is None: 
         null_seeds = np.full((n_nulls,), None) # to match original
+    else: 
+        seed_array = np.ravel(seed).astype(int) # ravel handles ints, lists, and arrays
+        if seed_array.size == n_nulls:
+            # If user has provided a seed for each null (including where n_nulls == 1), use those
+            # directly. 
+            null_seeds = seed_array
+        elif seed_array.size == 1:
+            # Turn the seed into a random start point, and then use sequential integers after that.
+            # This is the easiest way to get random, different integers. 
+            #   - `.integers` does not offer sampling without replacement. 
+            #   - `.choice` is not reproducible if the number of nulls is changed due to hidden
+            # floating point round off in its implementation. Compare
+            # `np.random.default_rng(1).choice(2**31-1, size=4, shuffle=False, replace=False)` and
+            # `np.random.default_rng(1).choice(2**31-1, size=5, shuffle=False, replace=False)`.
+            #   - Just adding the index to the seed can lead to repeated nulls e.g. for `seed=0,
+            # n_nulls=1000` and `seed=42, n_nulls=1000` (or `seed=314`, `seed=365` etc). 
+            null_seeds = np.arange(n_nulls) + np.random.default_rng(int(seed_array[0])).integers(np.iinfo(np.int32).max)
+        else:
+            raise ValueError(
+                f"If `seed` is a single value, it must be an integer. "
+                f"If `seed` is an array, it must have exactly {n_nulls} elements. "
+                f"Got an input with {seed_array.size} elements."
+            )
 
     # Turn coeffs into a 3D array of shape (n_modes, n_nulls, n_maps)
     if randomize:
@@ -257,8 +279,8 @@ def eigenstrap(
     if residual == 'add':
         nulls += residual_data[:, np.newaxis, :] # pyright: ignore[reportPossiblyUnboundVariable]
     elif residual == 'permute':
-        for i, seed in enumerate(null_seeds):
-            nulls[:, i] += np.random.default_rng(seed).permutation(residual_data, axis=0) # pyright: ignore[reportPossiblyUnboundVariable]
+        for i, s in enumerate(null_seeds):
+            nulls[:, i] += np.random.default_rng(s).permutation(residual_data, axis=0) # pyright: ignore[reportPossiblyUnboundVariable]
 
     # Optionally resample values to match stats of original data
     if resample == 'exact':
