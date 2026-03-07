@@ -163,10 +163,11 @@ def eigenstrap(
     https://neuromodes.readthedocs.io/en/latest/validation/eigenstrapping_match_orig.html
 
     7. If both resampling and adding residuals is requested, the original implementation adds
-       residuals after resampling. Here, the order of these steps is swapped (ie add residuals and
-       then resample). This ensures that the resampling is carried out as requested (e.g., that the
-       surrogates and original actually have the same values). This difference is only relevant if
-       both `resample` and `residual` are used. 
+    residuals after resampling. Here, the order of these steps is swapped (ie, add residuals and
+    then resample). This ensures that the resampling remains intact (eg, that the surrogates and
+    original actually have the same values). If (instead) the resampling is done before the
+    residuals are added, then neither step will remain intact. This difference is only relevant if
+    both `resample` and `residual` are used. 
     
     References
     ----------
@@ -175,33 +176,23 @@ def eigenstrap(
         Imaging Neuroscience. https://doi.org/10.1162/IMAG.a.71
     """
     # Format / validate arguments
-    emodes = np.asarray(emodes)  # chkfinite in decompose
-    evals = np.asarray_chkfinite(evals) 
+    # data
     data = np.asarray(data)  # chkfinite in decompose
     if (is_vector_data := data.ndim == 1):
         data = data[:, np.newaxis]
     n_maps = data.shape[1]
+
+    # emodes and evals
+    emodes = np.asarray(emodes)  # chkfinite in decompose
+    evals = np.asarray_chkfinite(evals) 
     n_cols = emodes.shape[1]
     if emodes.ndim != 2 or emodes.shape[0] < n_cols:
         raise ValueError("`emodes` must have shape (n_verts, n_modes), where n_verts ≥ n_modes.")
     if evals.shape != (n_cols,):
-        raise ValueError(f"`evals` must have shape (n_modes,) = {(n_cols,)}, matching the number "
+        raise ValueError(f"`evals` must have shape (n_modes,) = ({n_cols},), matching the number "
                          "of columns in `emodes`.")
-    if residual not in (None, 'add', 'permute'):
-        raise ValueError(f"Invalid residual method '{residual}'; must be 'add', 'permute', or "
-                         "None.")
-    if resample not in (None, 'exact', 'affine', 'mean', 'range'):
-        raise ValueError(f"Invalid resampling method '{resample}'; must be 'exact', 'affine', "
-                         "'mean', 'range', or None.")
     
-    if rotation_method == 'qr':
-        _rotate_coeffs = _rotate_coeffs_qr
-    elif rotation_method == 'scipy':
-        _rotate_coeffs = _rotate_coeffs_scipy
-    else: 
-        raise ValueError(f"Invalid rotation method '{rotation_method}'; must be 'qr' or 'scipy'.")
-
-    # Determine eigengroups
+    # n_groups : Determine number of eigengroups, and trim emodes and evals to match
     if n_groups is None:
         n_groups = int(np.sqrt(n_cols))  # floor of root
         if n_groups**2 != n_cols:
@@ -214,19 +205,24 @@ def eigenstrap(
     groups = get_eigengroup_inds(n_modes)
     emodes = emodes[:, :n_modes].copy()
     evals = evals[:n_modes].copy()
-
-    # Eigendecompose maps (coeffs is n_modes x n_maps)
-    coeffs = decompose(data, emodes, method=decomp_method, mass=mass, check_ortho=check_ortho)
-
-    if residual is not None: # Compute residuals before coeffs are potentially randomized
-        residual_data = data - emodes @ coeffs
-
-    # Precompute transformed modes (ellipsoid -> spheroid for each eigengroup)
-    sqrt_evals = np.sqrt(evals)
-    sqrt_evals[0] = 1  # No transform for constant mode (preserves mean and avoids division by zero)
-    norm_emodes = emodes / sqrt_evals # sqrt_evals behaves like a row vector
-
-    # Initialise RNG, with seed for each null
+    
+    # rotation_method : Set which helper function to use
+    if rotation_method == 'qr':
+        _rotate_coeffs = _rotate_coeffs_qr
+    elif rotation_method == 'scipy':
+        _rotate_coeffs = _rotate_coeffs_scipy
+    else: 
+        raise ValueError(f"Invalid rotation method '{rotation_method}'; must be 'qr' or 'scipy'.")
+    
+    # residual and resample
+    if residual not in (None, 'add', 'permute'):
+        raise ValueError(f"Invalid residual method '{residual}'; must be 'add', 'permute', or "
+                         "None.")
+    if resample not in (None, 'exact', 'affine', 'mean', 'range'):
+        raise ValueError(f"Invalid resampling method '{resample}'; must be 'exact', 'affine', "
+                         "'mean', 'range', or None.")
+    
+    # seed : Initialise RNG with seed for each null
     if seed is None: 
         null_seeds = np.full((n_nulls,), None) # to match original
     else: 
@@ -237,15 +233,17 @@ def eigenstrap(
             null_seeds = seed_array
         elif seed_array.size == 1:
             # Turn the seed into a random start point, and then use sequential integers after that.
-            # This is the easiest way to get random, different integers. 
+            # This is the easiest way to get random, different integers:
             #   - `.integers` does not offer sampling without replacement. 
             #   - `.choice` is not reproducible if the number of nulls is changed due to hidden
             # floating point round off in its implementation. Compare
             # `np.random.default_rng(1).choice(2**31-1, size=4, shuffle=False, replace=False)` and
             # `np.random.default_rng(1).choice(2**31-1, size=5, shuffle=False, replace=False)`.
-            #   - Just adding the index to the seed can lead to repeated nulls e.g. for `seed=0,
+            #   - Just adding the index to the seed can lead to nulls being repeated across
+            # different seeds, when they would be expected to be different e.g. for `seed=0,
             # n_nulls=1000` and `seed=42, n_nulls=1000` (or `seed=314`, `seed=365` etc). 
-            null_seeds = np.arange(n_nulls) + np.random.default_rng(int(seed_array[0])).integers(np.iinfo(np.int32).max)
+            null_seeds = (np.arange(n_nulls, dtype=np.int64) 
+                          + np.random.default_rng(int(seed_array[0])).integers(np.iinfo(np.int32).max))
         else:
             raise ValueError(
                 f"If `seed` is a single value, it must be an integer. "
@@ -253,17 +251,26 @@ def eigenstrap(
                 f"Got an input with {seed_array.size} elements."
             )
 
-    # Turn coeffs into a 3D array of shape (n_modes, n_nulls, n_maps)
-    if randomize:
-        null_coeffs = np.empty((n_modes, n_nulls, n_maps))
-        for i, s in enumerate(null_seeds):
-            for group in groups:
-                null_coeffs[group, i, :] = np.random.default_rng(s).permutation(coeffs[group, :], axis=0)
-    else: 
-        null_coeffs = np.broadcast_to(coeffs[:, np.newaxis, :], (n_modes, n_nulls, n_maps))
+    # Main calculations
+    # Precompute transformed modes (ellipsoid -> spheroid for each eigengroup)
+    sqrt_evals = np.sqrt(evals)
+    sqrt_evals[0] = 1 # No transform for constant mode (preserves mean and avoids division by zero)
+    norm_emodes = emodes / sqrt_evals[np.newaxis, :] # sqrt_evals behaves like a row vector
+    sqrt_evals = sqrt_evals[:, np.newaxis, np.newaxis] # turn it into 3D column vector for below broadcasting
 
-    # Precompute inverse-transformed coefficients (spheroid -> ellipsoid for each eigengroup)
-    inv_coeffs = sqrt_evals[:, np.newaxis, np.newaxis] * null_coeffs # sqrt_evals behaves like a 3D column vector 
+    # Eigendecompose maps (coeffs is n_modes x n_maps)
+    coeffs = decompose(data, emodes, method=decomp_method, mass=mass, check_ortho=check_ortho)
+    # Turn coeffs into inv_coeffs, a 3D array of shape (n_modes, n_nulls, n_maps)
+    # This is the precomputed inverse-transformed coefficients (spheroid -> ellipsoid for each eigengroup)
+    if randomize:
+        inv_coeffs = np.empty((n_modes, n_nulls, n_maps))
+        for i, s in enumerate(null_seeds):
+            rng = np.random.default_rng(s)
+            for group in groups:
+                inv_coeffs[group, i, :] = rng.permutation(coeffs[group, :], axis=0) 
+        inv_coeffs *= sqrt_evals
+    else:
+        inv_coeffs = np.broadcast_to((coeffs[:, np.newaxis, :] * sqrt_evals), (n_modes, n_nulls, n_maps))
 
     # Generate nulls using tforms of shape (n_modes, n_nulls, n_maps)
     tforms = _rotate_coeffs(
@@ -271,16 +278,18 @@ def eigenstrap(
         groups=groups,
         seeds=null_seeds
     )
-    
     # tensordot appears faster than einsum
     nulls = np.tensordot(norm_emodes, tforms, axes=(1, 0)) # (n_verts, n_nulls, n_maps)
 
+    # Optional post-processing steps
     # Optionally add residuals of reconstruction
-    if residual == 'add':
-        nulls += residual_data[:, np.newaxis, :] # pyright: ignore[reportPossiblyUnboundVariable]
-    elif residual == 'permute':
-        for i, s in enumerate(null_seeds):
-            nulls[:, i] += np.random.default_rng(s).permutation(residual_data, axis=0) # pyright: ignore[reportPossiblyUnboundVariable]
+    if residual is not None:
+        residual_data = data - emodes @ coeffs # shape (n_verts, n_maps)
+        if residual == 'add':
+            nulls += residual_data[:, np.newaxis, :]
+        elif residual == 'permute':
+            for i, s in enumerate(null_seeds):
+                nulls[:, i, :] += np.random.default_rng(s).permutation(residual_data, axis=0)
 
     # Optionally resample values to match stats of original data
     if resample == 'exact':
@@ -332,17 +341,17 @@ def _rotate_coeffs_scipy(
         rotations for each null map.
     """
     # Unlike qr method, have to pass None (to keep using global seed) to match original eigenstrapping
-    rngs = [None if seed is None else np.random.default_rng(seed) for seed in seeds]
+    rngs = [None if s is None else np.random.default_rng(s) for s in seeds]
 
     # Define helper
     def _get_so(k: int, rng: np.random.Generator | None) -> NDArray[floating]:
         return special_ortho_group.rvs(dim=k, random_state=rng) if k != 1 else np.array([[1.0]])
 
     tforms = np.empty_like(inv_coeffs)
-    for i, rng in enumerate(rngs):  # Has to be in this order to match original functionality 
+    for i, rng in enumerate(rngs):  # Has to be in this order to match original functionality
         for group in groups:        # ie can't switch order of loops (even though it would be better)
             Q = _get_so(len(group), rng)
-            # NumPy slicing trickery as second dim of inv_coeffs is collapsed:
+            # NumPy slicing trickery as second dims of tforms and inv_coeffs are collapsed:
             tforms[group, i, :] = Q @ inv_coeffs[group, i, :] 
 
     return tforms
@@ -374,7 +383,7 @@ def _rotate_coeffs_qr(
         https://www.ams.org/notices/200705/fea-mezzadri-web.pdf
     """
     # Unlike scipy method, still have to return Generator even if seed is None (for generating random Gaussian matrices)
-    rngs = [np.random.default_rng(seed) for seed in seeds]
+    rngs = [np.random.default_rng(s) for s in seeds]
 
     # Define helper
     def _generate_so(k: int, rngs: list[np.random.Generator]) -> NDArray[floating]:
@@ -387,8 +396,8 @@ def _rotate_coeffs_qr(
         return Q
 
     tforms = np.empty_like(inv_coeffs)
-    for group in groups:
-        Q = _generate_so(len(group), rngs) # unlike scipy, can generate all at once
+    for group in groups: # unlike scipy, can loop over groups only (don't also have to loop over nulls)
+        Q = _generate_so(len(group), rngs) # as we can generate rotations for all nulls at once
         # Batched matmul (equiv of @) appears faster than einsum or tensordot:
         tforms[group, :, :] = np.matmul(Q, inv_coeffs[group, :, :], axes=[(1, 2), (0, 2), (0, 2)])
 
