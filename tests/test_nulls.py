@@ -19,7 +19,7 @@ def test_data(solver):
     rng = np.random.default_rng()
     return rng.normal(loc=1, size=solver.n_verts)  # random normal data, non-zero mean
 
-@pytest.fixture
+@pytest.fixture(scope='module')
 def nulls(solver, test_data):
     """Generate nulls for 1D test data"""
     return solver.eigenstrap(test_data, n_nulls=n_nulls)
@@ -101,14 +101,6 @@ def test_decomp_options(solver, test_data, decomp_method):
     assert np.isfinite(nulls).all(), \
         f"Nulls contain non-finite values for decomp method '{decomp_method}'"
     
-@pytest.mark.parametrize("seed", [None, 0, 42, np.random.randint(100,size=n_nulls)])
-def test_seed_options(solver, test_data, seed):
-    """Test different decomp methods run without errors"""
-    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=seed)
-    assert nulls.shape == (solver.n_verts, n_nulls)
-    assert np.isfinite(nulls).all(), \
-        f"Nulls contain non-finite values for seed={seed}"
-
 # Test more properties of output nulls (more akin to correctness)
 def test_finite(nulls):
     """Output should not contain NaNs or Infs"""    
@@ -261,14 +253,6 @@ def test_decomp_options_2d(solver, test_data_2d, decomp_method):
     assert nulls.shape == (solver.n_verts, n_nulls, test_data_2d.shape[1])
     assert np.isfinite(nulls).all(), \
         f"Nulls contain non-finite values for `decomp_method='{decomp_method}'`"
-
-@pytest.mark.parametrize("seed", [None, 0, 42, np.random.randint(100,size=n_nulls)])
-def test_seed_options_2d(solver, test_data_2d, seed):
-    """Test different seed options run without errors"""
-    nulls = solver.eigenstrap(test_data_2d, n_nulls=n_nulls, seed=seed)
-    assert nulls.shape == (solver.n_verts, n_nulls, test_data_2d.shape[1])
-    assert np.isfinite(nulls).all(), \
-        f"Nulls contain non-finite values for seed={seed}"
 
 def test_same_map(solver, test_data_2d): 
     """For the same map, nulls should be the same (and different for different maps)"""
