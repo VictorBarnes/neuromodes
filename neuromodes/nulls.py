@@ -169,9 +169,9 @@ def eigenstrap(
     residuals are added, then neither step will remain intact. This difference is only relevant if
     both `resample` and `residual` are used. 
 
-    8. `rotaion_method="scipy"` is largely a legacy option to match the original implementation of
-    eigenstrapping, which uses this method. `rotation_method="qr"` is generally faster, especially for larger
-    numbers of modes and nulls, and is recommended for most users. However, the scipy method is
+    8. `rotation_method="scipy"` is largely a legacy option to match the original implementation of
+    eigenstrapping, which uses this method. `rotation_method="qr"` is generally faster, especially
+    for larger numbers of modes and nulls, and is recommended for most users. The scipy method is
     recommended only for users who want to exactly match the original implementation of
     eigenstrapping.
     
@@ -332,9 +332,8 @@ def _rotate_coeffs_scipy(
     Rotate coefficients using `scipy.stats.special_ortho_group.rvs` to sample random orthogonal
     matrices from SO(N). This is largely a legacy option to match the original implementation of
     eigenstrapping, which uses this method. The QR method is generally faster, especially for larger
-    numbers of modes and nulls, and is recommended for most users. However, the scipy method is
-    recommended only for users who want to exactly match the original implementation of
-    eigenstrapping.
+    numbers of modes and nulls, and is recommended for most users. The scipy method is recommended
+    only for users who want to exactly match the original implementation of eigenstrapping.
 
     Parameters
     ----------
@@ -393,13 +392,13 @@ def _rotate_coeffs_qr(
     # Unlike scipy method, still have to return Generator even if seed is None (for generating random Gaussian matrices)
     rngs = [np.random.default_rng(s) for s in seeds]
 
-    # Define helper to generat random orthogonal matrices via QR decomposition
+    # Define helper to generate random orthogonal matrices via QR decomposition (using [1])
     def _generate_so(k: int, rngs: list[np.random.Generator]) -> NDArray[floating]:
         # Generate random gaussian matrices for all nulls
         X = np.stack([rng.standard_normal((k, k)) for rng in rngs], axis=0) # rng progresses over each group
         # Perform QR decomposition
         Q, R = np.linalg.qr(X) # Q has shape (n_nulls, k, k)
-        # Standardize the decomp by making R's diagonal positive
+        # Make QR decomp unique and uniform by making R's diagonal positive
         r = np.copysign(1.0, np.diagonal(R, axis1=1, axis2=2)) # copysign avoids chance of 0
         Q = Q * r[:, np.newaxis, :]
         # Ensure det(Q) = 1
