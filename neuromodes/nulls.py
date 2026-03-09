@@ -164,10 +164,16 @@ def eigenstrap(
 
     7. If both resampling and adding residuals is requested, the original implementation adds
     residuals after resampling. Here, the order of these steps is swapped (ie, add residuals and
-    then resample). This ensures that the resampling remains intact (eg, that the surrogates and
+    then resample). This ensures that the resampling remains intact (e.g., that the surrogates and
     original actually have the same values). If (instead) the resampling is done before the
     residuals are added, then neither step will remain intact. This difference is only relevant if
     both `resample` and `residual` are used. 
+
+    8. `rotaion_method="scipy"` is largely a legacy option to match the original implementation of
+    eigenstrapping, which uses this method. `rotation_method="qr"` is generally faster, especially for larger
+    numbers of modes and nulls, and is recommended for most users. However, the scipy method is
+    recommended only for users who want to exactly match the original implementation of
+    eigenstrapping.
     
     References
     ----------
@@ -242,8 +248,10 @@ def eigenstrap(
             #   - Just adding the index to the seed can lead to nulls being repeated across
             # different seeds, when they would be expected to be different e.g. for `seed=0,
             # n_nulls=1000` and `seed=42, n_nulls=1000` (or `seed=314`, `seed=365` etc). 
-            null_seeds = (np.arange(n_nulls, dtype=np.int64) 
-                          + np.random.default_rng(int(seed_array[0])).integers(np.iinfo(np.int32).max))
+            null_seeds = (
+                np.arange(n_nulls, dtype=np.int64) 
+                + np.random.default_rng(int(seed_array[0])).integers(np.iinfo(np.int64).max)
+            )
         else:
             raise ValueError(
                 f"If `seed` is a single value, it must be an integer. "
@@ -343,7 +351,7 @@ def _rotate_coeffs_scipy(
     # Unlike qr method, have to pass None (to keep using global seed) to match original eigenstrapping
     rngs = [None if s is None else np.random.default_rng(s) for s in seeds]
 
-    # Define helper
+    # Define helper to sample rotation matrices from SO(k)
     def _get_so(k: int, rng: np.random.Generator | None) -> NDArray[floating]:
         return special_ortho_group.rvs(dim=k, random_state=rng) if k != 1 else np.array([[1.0]])
 
@@ -385,12 +393,16 @@ def _rotate_coeffs_qr(
     # Unlike scipy method, still have to return Generator even if seed is None (for generating random Gaussian matrices)
     rngs = [np.random.default_rng(s) for s in seeds]
 
-    # Define helper
+    # Define helper to generat random orthogonal matrices via QR decomposition
     def _generate_so(k: int, rngs: list[np.random.Generator]) -> NDArray[floating]:
+        # Generate random gaussian matrices for all nulls
         X = np.stack([rng.standard_normal((k, k)) for rng in rngs], axis=0) # rng progresses over each group
+        # Perform QR decomposition
         Q, R = np.linalg.qr(X) # Q has shape (n_nulls, k, k)
+        # Standardize the decomp by making R's diagonal positive
         r = np.copysign(1.0, np.diagonal(R, axis1=1, axis2=2)) # copysign avoids chance of 0
         Q = Q * r[:, np.newaxis, :]
+        # Ensure det(Q) = 1
         dets = np.linalg.det(Q)
         Q[:, :, 0] *= dets[:, np.newaxis]
         return Q
