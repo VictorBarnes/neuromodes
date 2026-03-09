@@ -1,9 +1,8 @@
 import pytest
 import time
 import numpy as np
-from neuromodes.eigen import EigenSolver, get_eigengroup_inds
-from neuromodes.io import fetch_surf, fetch_map
-from neuromodes.nulls import eigenstrap
+from neuromodes.eigen import EigenSolver
+from neuromodes.io import fetch_surf
 
 # This test should be run with the `-s` flag to print timing results, e.g. `pytest -s tests/test_nulls_speed.py`
 
@@ -87,8 +86,8 @@ def test_32k():
     """Test on 32k mesh with specific number of nulls/maps/modes."""
     density='32k'
     n_modes = 100 # should be square number
-    n_maps = 100
-    n_nulls = 100
+    n_maps = 10
+    n_nulls = 1000
 
     print(f"\nInitialising mesh with {density} vertices and {n_modes} modes.")
     tic = time.time()
@@ -97,6 +96,7 @@ def test_32k():
 
     test_data = np.random.default_rng().normal(size=(solver.n_verts, n_maps))
 
-    tic = time.time()
-    solver.eigenstrap(test_data, n_nulls=n_nulls)
-    print(f"Nulls generated for {n_maps} maps with {n_nulls} nulls: {time.time() - tic:.5f} seconds.")
+    for rotation_method in ['qr', 'scipy']:
+        tic = time.time()
+        solver.eigenstrap(test_data, n_nulls=n_nulls, rotation_method=rotation_method)
+        print(f"Nulls generated for {n_maps} maps with {n_nulls} nulls using {rotation_method}: {time.time() - tic:.5f} seconds.")
