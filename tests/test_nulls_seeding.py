@@ -20,6 +20,23 @@ def test_data(solver):
     """Generate test data""" # random normal data, non-zero mean
     return np.random.default_rng(None).normal(loc=1, size=(solver.n_verts, n_maps))  
 
+@pytest.mark.parametrize("seed", [None, 0, 42, np.random.randint(100,size=n_nulls)])
+def test_seed_options(solver, test_data, seed):
+    """Test different seed options run without errors (1D data)"""
+    test_data_1d = test_data[:, 0]
+    nulls = solver.eigenstrap(test_data_1d, n_nulls=n_nulls, seed=seed)
+    assert nulls.shape == (solver.n_verts, n_nulls)
+    assert np.isfinite(nulls).all(), \
+        f"Nulls contain non-finite values for seed={seed}"
+
+@pytest.mark.parametrize("seed", [None, 0, 42, np.random.randint(100,size=n_nulls)])
+def test_seed_options_2d(solver, test_data, seed):
+    """Test different seed options run without errors (2D data)"""
+    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=seed)
+    assert nulls.shape == (solver.n_verts, n_nulls, test_data.shape[1])
+    assert np.isfinite(nulls).all(), \
+        f"Nulls contain non-finite values for seed={seed}"
+    
 @pytest.mark.parametrize("rotation_method", ['qr', 'scipy'])
 @pytest.mark.parametrize("randomize", [True, False])
 @pytest.mark.parametrize("residual", [None, 'add', 'permute']) # skip resample and decomp method as they are not related to seeding
@@ -145,4 +162,5 @@ def test_compared_to_original():
         'New nulls should not be similar to different old nulls'
     assert np.allclose(np.mean(column_mean), 0.0, atol=0.001), \
         'New nulls should not be similar to different old nulls'
+
 
