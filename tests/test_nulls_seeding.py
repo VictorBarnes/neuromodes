@@ -61,6 +61,23 @@ def test_seed_none(solver, test_data, rotation_method):
     assert not np.allclose(a1, b1), \
         "Nulls generated with None seeds should be different by default"
 
+@pytest.mark.parametrize("rotation_method", ['qr', 'scipy'])
+@pytest.mark.parametrize("randomize", [True, False])
+@pytest.mark.parametrize("residual", [None, 'add', 'permute']) 
+def test_randomize_resample(solver, rotation_method, randomize, residual):
+    """Test that the rotation matrices are not affected by randomizing/resampling"""
+    # Generate beta coeffs at the group level so that they are not affected by randomization
+    group_indices = np.floor(np.sqrt(np.arange(solver.n_modes))).astype(int)
+    beta0_group = np.random.default_rng(None).normal(loc=1, size=(max(group_indices)+1, n_maps))
+    beta0_mode = beta0_group[group_indices, :]  # coeffs will be the same within each group, so not affected by randomization
+    data = solver.emodes @ beta0_mode           # data generated from the bases, so there will be no residuals
+
+    nulls0 = solver.eigenstrap(data, n_nulls=n_nulls, seed=1, rotation_method=rotation_method, randomize=False, residual=None) 
+    nulls1 = solver.eigenstrap(data, n_nulls=n_nulls, seed=1, rotation_method=rotation_method, randomize=randomize, residual=residual)
+
+    assert np.allclose(nulls0, nulls1), \
+        f"Nulls should be the same regardless of randomize and residual parameters when seed is fixed"
+
 def test_seed_global_scipy(solver, test_data): 
     """Setting the global seed should produce the same nulls (to maintain compatibility with original implementation)"""
     np.random.seed(1) # set global seed
@@ -77,8 +94,8 @@ def test_seed_global_scipy(solver, test_data):
 
 def test_seed_global_qr(solver, test_data): 
     """Setting the global seed should not affect nulls generated with QR rotation"""
-    np.random.seed(1) # set global seed
-    np.random.default_rng(1) # neither of these change inner state for QR rotation
+    np.random.seed(1)           # set random states in two different ways
+    np.random.default_rng(1)    # neither of these change inner state for QR rotation
     a1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=None, rotation_method="qr")
     np.random.seed(1)
     np.random.default_rng(1)
