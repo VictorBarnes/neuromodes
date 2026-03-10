@@ -10,6 +10,13 @@ n_modes = 100 # should be a square number
 n_maps = 3
 n_nulls = 20
 
+# Set these parameters as options for the tests below. This determines how thorough the tests are.
+# The options can be reduced to speed up testing (only a subset of the correctness will be tested). 
+rotation_options = ['qr', 'scipy']
+randomize_options = [True, False]
+residual_options = [None, 'permute'] # skip add for convenience as it has no randomisation
+# Skip resample and decomp method as they are not related to seeding
+
 @pytest.fixture(scope='module')
 def solver(seed=None):
     mesh, medmask = fetch_surf(density=density)
@@ -20,27 +27,33 @@ def test_data(solver):
     """Generate test data""" # random normal data, non-zero mean
     return np.random.default_rng(None).normal(loc=1, size=(solver.n_verts, n_maps))  
 
-@pytest.mark.parametrize("seed", [None, 0, 42, np.random.randint(100,size=n_nulls)])
-def test_seed_options(solver, test_data, seed):
+@pytest.mark.parametrize("rotation_method", rotation_options)
+@pytest.mark.parametrize("randomize", randomize_options)
+@pytest.mark.parametrize("residual", residual_options) 
+@pytest.mark.parametrize("seed", [None, 0, 42, np.random.choice(n_nulls, n_nulls, replace=False)])
+def test_seed_options_1d(solver, test_data, seed, rotation_method, randomize, residual):
     """Test different seed options run without errors (1D data)"""
     test_data_1d = test_data[:, 0]
-    nulls = solver.eigenstrap(test_data_1d, n_nulls=n_nulls, seed=seed)
+    nulls = solver.eigenstrap(test_data_1d, n_nulls=n_nulls, seed=seed, rotation_method=rotation_method, randomize=randomize, residual=residual)
     assert nulls.shape == (solver.n_verts, n_nulls)
     assert np.isfinite(nulls).all(), \
         f"Nulls contain non-finite values for seed={seed}"
 
-@pytest.mark.parametrize("seed", [None, 0, 42, np.random.randint(100,size=n_nulls)])
-def test_seed_options_2d(solver, test_data, seed):
+@pytest.mark.parametrize("rotation_method", rotation_options)
+@pytest.mark.parametrize("randomize", randomize_options)
+@pytest.mark.parametrize("residual", residual_options) 
+@pytest.mark.parametrize("seed", [None, 0, 42, np.random.choice(n_nulls, n_nulls, replace=False)])
+def test_seed_options(solver, test_data, seed, rotation_method, randomize, residual):
     """Test different seed options run without errors (2D data)"""
-    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=seed)
+    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=seed, rotation_method=rotation_method, randomize=randomize, residual=residual)
     assert nulls.shape == (solver.n_verts, n_nulls, test_data.shape[1])
     assert np.isfinite(nulls).all(), \
         f"Nulls contain non-finite values for seed={seed}"
     
-@pytest.mark.parametrize("rotation_method", ['qr', 'scipy'])
-@pytest.mark.parametrize("randomize", [True, False])
-@pytest.mark.parametrize("residual", [None, 'add', 'permute']) # skip resample and decomp method as they are not related to seeding
-@pytest.mark.parametrize("seed", [0, 42, np.arange(n_nulls)])
+@pytest.mark.parametrize("rotation_method", rotation_options)
+@pytest.mark.parametrize("randomize", randomize_options)
+@pytest.mark.parametrize("residual", residual_options) 
+@pytest.mark.parametrize("seed", [0, 42, np.random.choice(n_nulls, n_nulls, replace=False)])
 def test_same_and_different_seeds(solver, test_data, rotation_method, randomize, residual, seed): 
     """Test the results based on seeding"""
     a1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=seed, rotation_method=rotation_method, randomize=randomize, residual=residual)
@@ -52,18 +65,20 @@ def test_same_and_different_seeds(solver, test_data, rotation_method, randomize,
     assert not np.allclose(a1, b1), \
         "Nulls generated with different seeds should be different"
     
-@pytest.mark.parametrize("rotation_method", ['qr', 'scipy'])
-def test_seed_none(solver, test_data, rotation_method): 
+@pytest.mark.parametrize("rotation_method", rotation_options)
+@pytest.mark.parametrize("randomize", randomize_options)
+@pytest.mark.parametrize("residual", residual_options) 
+def test_seed_none(solver, test_data, rotation_method, randomize, residual): 
     """Test the results based on seeding"""
-    a1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=None, rotation_method=rotation_method)
-    b1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=None, rotation_method=rotation_method)
-    
+    a1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=None, rotation_method=rotation_method, randomize=randomize, residual=residual)
+    b1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=None, rotation_method=rotation_method, randomize=randomize, residual=residual)
+
     assert not np.allclose(a1, b1), \
         "Nulls generated with None seeds should be different by default"
 
-@pytest.mark.parametrize("rotation_method", ['qr', 'scipy'])
-@pytest.mark.parametrize("randomize", [True, False])
-@pytest.mark.parametrize("residual", [None, 'add', 'permute']) 
+@pytest.mark.parametrize("rotation_method", rotation_options)
+@pytest.mark.parametrize("randomize", randomize_options)
+@pytest.mark.parametrize("residual", residual_options) 
 def test_randomize_resample(solver, rotation_method, randomize, residual):
     """Test that the rotation matrices are not affected by randomizing/resampling"""
     # Generate beta coeffs at the group level so that they are not affected by randomization
@@ -76,61 +91,105 @@ def test_randomize_resample(solver, rotation_method, randomize, residual):
     nulls1 = solver.eigenstrap(data, n_nulls=n_nulls, seed=1, rotation_method=rotation_method, randomize=randomize, residual=residual)
 
     assert np.allclose(nulls0, nulls1), \
-        f"Nulls should be the same regardless of randomize and residual parameters when seed is fixed"
+        f"These specific nulls should be the same regardless of randomize and residual parameters when seed is fixed"
 
-def test_seed_global_scipy(solver, test_data): 
+@pytest.mark.parametrize("rotation_method", rotation_options)
+@pytest.mark.parametrize("randomize", randomize_options)
+@pytest.mark.parametrize("residual", residual_options) 
+def test_seeds_reordered(solver, test_data, rotation_method, randomize, residual):
+    """Test that the same seed produces the same nulls even if input data is in different order (eg different number of maps)"""
+    a1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=np.arange(n_nulls), rotation_method=rotation_method, randomize=randomize, residual=residual)
+    a2 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=np.flip(np.arange(n_nulls)), rotation_method=rotation_method, randomize=randomize, residual=residual)
+
+    assert np.allclose(np.flip(a1,axis=1), a2, atol=1e-10), \
+        "Nulls generated with the same seed should be identical regardless of seed position"
+
+@pytest.mark.parametrize("rotation_method", rotation_options)
+@pytest.mark.parametrize("randomize", randomize_options)
+@pytest.mark.parametrize("residual", residual_options) 
+def test_seed_reordered_data(solver, test_data, rotation_method, randomize, residual):
+    """Test that the same seed produces the same nulls even if input data is in different order"""
+    a1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=1, rotation_method=rotation_method, randomize=randomize, residual=residual)
+    a2 = solver.eigenstrap(np.flip(test_data, axis=1), n_nulls=n_nulls, seed=1, rotation_method=rotation_method, randomize=randomize, residual=residual)
+
+    assert np.allclose(np.flip(a1, axis=2), a2, atol=1e-10), \
+        "Nulls generated with the same seed should be identical regardless of input data order"
+
+@pytest.mark.parametrize("rotation_method", rotation_options)
+@pytest.mark.parametrize("randomize", randomize_options)
+@pytest.mark.parametrize("residual", residual_options) 
+def test_seed_single_multiple(solver, test_data, rotation_method, randomize, residual):
+    """Test that the same seed produces the same nulls regardless of whether seed is passed as single value or array"""
+    a1 = solver.eigenstrap(test_data, n_nulls=2, seed=np.arange(2), rotation_method=rotation_method, randomize=randomize, residual=residual)
+
+    for i in range(2):
+        a2 = solver.eigenstrap(test_data, n_nulls=1, seed=i, rotation_method=rotation_method, randomize=randomize, residual=residual)
+        assert np.allclose(a1[:, i:i+1, :], a2, atol=1e-10), \
+            f"Nulls generated with seed {i} should be identical"
+
+@pytest.mark.parametrize("randomize", [False])  # only rotation_method may be affected by global state
+@pytest.mark.parametrize("residual", [None])    # these methods use the new Generators and will not be affected
+def test_seed_global_scipy_match_orig(solver, test_data, randomize, residual): 
     """Setting the global seed should produce the same nulls (to maintain compatibility with original implementation)"""
     np.random.seed(1) # set global seed
-    a1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=None, rotation_method="scipy")
+    a1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=None, rotation_method="scipy", randomize=randomize, residual=residual)
     np.random.seed(1) # reset global seed
-    a2 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=None, rotation_method="scipy")
+    a2 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=None, rotation_method="scipy", randomize=randomize, residual=residual)
     np.random.seed(2) # change global seed
-    b1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=None, rotation_method="scipy")
-    
+    b1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=None, rotation_method="scipy", randomize=randomize, residual=residual)
+
     assert np.allclose(a1, a2), \
         f"Nulls generated with the same global seed should be identical for seed=None and rotation_method='scipy'"
     assert not np.allclose(a1, b1), \
         f"Nulls generated with different global seeds should be different for seed=None and rotation_method='scipy'"
 
-def test_seed_global_qr(solver, test_data): 
+@pytest.mark.parametrize("randomize", randomize_options)
+@pytest.mark.parametrize("residual", residual_options)
+def test_seed_global_qr(solver, test_data, randomize, residual): 
     """Setting the global seed should not affect nulls generated with QR rotation"""
     np.random.seed(1)           # set random states in two different ways
     np.random.default_rng(1)    # neither of these change inner state for QR rotation
-    a1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=None, rotation_method="qr")
+    a1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=None, rotation_method="qr", randomize=randomize, residual=residual)
     np.random.seed(1)
     np.random.default_rng(1)
-    b1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=None, rotation_method="qr")
+    b1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=None, rotation_method="qr", randomize=randomize, residual=residual)
     
     assert not np.allclose(a1, b1), \
         f"Nulls generated with the same global seed should not be identical for seed=None and rotation_method='qr'"
 
-@pytest.mark.parametrize("rotation_method", ['qr', 'scipy'])
+@pytest.mark.parametrize("rotation_method", rotation_options)
+@pytest.mark.parametrize("randomize", randomize_options)
+@pytest.mark.parametrize("residual", residual_options)
 @pytest.mark.parametrize("seed", [0, 42, np.arange(n_nulls)])
-def test_specific_seed_not_affected_by_global_seed(solver, test_data, rotation_method, seed): 
+def test_specific_seed_not_affected_by_global_seed(solver, test_data, rotation_method, randomize, residual, seed): 
     """Setting the global seed should not affect nulls generated with a specific seed (to maintain compatibility with original implementation)"""
     np.random.seed(1) # set global seed
-    a1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=seed, rotation_method=rotation_method)
+    a1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=seed, rotation_method=rotation_method, randomize=randomize, residual=residual)
     np.random.seed(2) # change global seed
-    a2 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=seed, rotation_method=rotation_method)
-    
+    a2 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=seed, rotation_method=rotation_method, randomize=randomize, residual=residual)
+
     assert np.allclose(a1, a2), \
         f"Nulls generated with the same specific seed (seed={seed}) should be identical regardless of global seed for rotation_method={rotation_method}"
 
-@pytest.mark.parametrize("rotation_method", ['scipy', 'qr'])
-def test_reproducibility_number_nulls(solver, test_data, rotation_method):
+@pytest.mark.parametrize("rotation_method", rotation_options)
+@pytest.mark.parametrize("randomize", randomize_options)
+@pytest.mark.parametrize("residual", residual_options)
+def test_reproducibility_number_nulls(solver, test_data, rotation_method, randomize, residual):
     """Nulls with same seed should be identical, regardless of number of nulls requested"""
-    a1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=1, rotation_method=rotation_method)
-    a2 = solver.eigenstrap(test_data, n_nulls=n_nulls-1, seed=1, rotation_method=rotation_method)
-    
+    a1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=1, rotation_method=rotation_method, randomize=randomize, residual=residual)
+    a2 = solver.eigenstrap(test_data, n_nulls=n_nulls-1, seed=1, rotation_method=rotation_method, randomize=randomize, residual=residual)
+
     assert np.allclose(a1[:,:-1], a2, atol=1e-10), \
         f"Nulls with the same seed should be identical"
 
-@pytest.mark.parametrize("rotation_method", ['scipy', 'qr'])
-def test_reproducibility_number_data(solver, test_data, rotation_method):
+@pytest.mark.parametrize("rotation_method", rotation_options)
+@pytest.mark.parametrize("randomize", randomize_options)
+@pytest.mark.parametrize("residual", residual_options)
+def test_reproducibility_number_data(solver, test_data, rotation_method, randomize, residual):
     """Nulls with same seed should be identical, regardless of number of input maps"""
-    a1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=1, rotation_method=rotation_method)
-    a2 = solver.eigenstrap(test_data[:,:-1], n_nulls=n_nulls, seed=1, rotation_method=rotation_method)
-    
+    a1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=1, rotation_method=rotation_method, randomize=randomize, residual=residual)
+    a2 = solver.eigenstrap(test_data[:,:-1], n_nulls=n_nulls, seed=1, rotation_method=rotation_method, randomize=randomize, residual=residual)
+
     assert np.allclose(a1[:,:,:-1], a2, atol=1e-10), \
         f"Nulls with the same seed should be identical"
 
@@ -179,5 +238,3 @@ def test_compared_to_original():
         'New nulls should not be similar to different old nulls'
     assert np.allclose(np.mean(column_mean), 0.0, atol=0.001), \
         'New nulls should not be similar to different old nulls'
-
-
