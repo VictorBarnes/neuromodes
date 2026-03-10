@@ -413,6 +413,15 @@ def _rotate_coeffs_scipy(
     seeds : array of shape (n_nulls,)
         An array of integer seeds of shape (n_nulls,) to use for reproducibility of the random
         rotations for each null map.
+
+    Notes
+    -----
+    We cannot use `special_ortho_group.rvs(..., size=len(seeds))` here in order to match the
+    original implementation. This is because the rotations have to be generated separately for each
+    null. Due to how the random seed progresses when the rotations are generated, it is not possible
+    to generate rotations for all nulls at once. For the same reason, the order of the following
+    loops cannot be changed (must generate rotations for one null before moving on to the next
+    null).
     """
     # Unlike qr method, have to pass None (to keep using global seed) to match original eigenstrapping
     rngs = [None if s is None else np.random.default_rng(s) for s in seeds]
@@ -451,15 +460,21 @@ def _rotate_coeffs_qr(
         An array of integer seeds of shape (n_nulls,) to use for reproducibility of the random
         rotations for each null map.
 
-    References
-    ----------
-    ..  [1] Mezzadri. (2007). How to generate random matrices from the classical compact groups. 
-        https://www.ams.org/notices/200705/fea-mezzadri-web.pdf
+    Notes
+    -----
+    We choose not to use `special_ortho_group.rvs(..., size=len(seeds))` here in order to facilitate
+    generating rotations with precise seeding. We _could_ use this approach instead of defining our
+    own helper, but it would not allow specific seeds to be used for each null. Instead, the user
+    would have to pass a single seed which would then generate the rotations matrices for all the
+    nulls. This would make it difficult to exactly replicate specific nulls, thus impairing
+    replicability. Instead, we unwrap the code in `special_ortho_group.rvs`: we generate random
+    Gaussian matrices ourself (using specific seeds for each null), and then use the same procedure
+    as in that function (also in a vectorised manner). 
     """
     # Unlike scipy method, still have to return Generator even if seed is None (for generating random Gaussian matrices)
     rngs = [np.random.default_rng(s) for s in seeds]
 
-    # Define helper to generate random orthogonal matrices via QR decomposition (using [1])
+    # Define helper to generate random orthogonal matrices via QR decomposition (using scipy/Mezzadri algorithm)
     def _generate_so(k: int, rngs: list[np.random.Generator]) -> NDArray[floating]:
         # Generate random gaussian matrices for all nulls
         X = np.stack([rng.standard_normal((k, k)) for rng in rngs], axis=0) # rng progresses over each group
