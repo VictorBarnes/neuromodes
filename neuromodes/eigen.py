@@ -232,14 +232,17 @@ class EigenSolver(Solver):
         self.compute_lbo(lump)
         
         # Set intitialization vector (if desired) for reproducibile eigenvectors 
-        if seed is None or isinstance(seed, int):
+        if seed is None or isinstance(seed, (int, np.integer)):
             rng = np.random.default_rng(seed)
             v0 = rng.random(self.n_verts)
         else:
             v0 = np.asarray_chkfinite(seed)
+            if not np.issubdtype(v0.dtype, np.floating):
+                raise ValueError("If `seed` is an array, it must be of a floating-point "
+                                 f"type, got dtype {v0.dtype}.")
             if v0.shape != (self.n_verts,):
-                raise ValueError("`seed` must be either an integer or an array of shape (n_verts,) "
-                                 f"= {(self.n_verts,)}.")
+                raise ValueError("If `seed` is an array, it must be of shape (n_verts,) "
+                                 f"= {(self.n_verts,)}, got shape {v0.shape}.")
 
         # Solve the eigenvalue problem
         lu = splu(self.stiffness - sigma * self.mass)
