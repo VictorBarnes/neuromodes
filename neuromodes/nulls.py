@@ -306,33 +306,33 @@ def eigenstrap(
         raise ValueError(f"Invalid resampling method '{resample}'; must be 'exact', 'affine', "
                          "'mean', 'range', or None.")
     
-    # seed : Initialise RNG with seed for each null
-    if seed is None: 
-        null_seeds = np.full((n_nulls,), None) # to match original
+    # seed : Initialise RNG with seed for each null (input must be None, or int, or array of shape (n_nulls,))
+    if seed is None: # to match original
+        null_seeds = np.full((n_nulls,), None) 
+    elif isinstance(seed, (int, np.integer)): # single integer
+        # Turn the seed into a random start point, and then use sequential integers after that. This
+        # is the easiest way to get random, different integers:
+        #   - `.integers` does not offer sampling without replacement. 
+        #   - `.choice` is not reproducible if the number of nulls is changed due to hidden floating
+        # point round off in its implementation. Compare `np.random.default_rng(1).choice(2**31-1,
+        # size=4, shuffle=False, replace=False)` and `np.random.default_rng(1).choice(2**31-1,
+        # size=5, shuffle=False, replace=False)`.
+        #   - Just adding the index to the seed can lead to nulls being repeated across different
+        # seeds, when they would be expected to be different e.g. for `seed=0, n_nulls=1000` and
+        # `seed=42, n_nulls=1000` (or `seed=314`, `seed=365` etc). 
+        null_seeds = (
+            np.arange(n_nulls, dtype=np.int64) # different ints to prevent overflow when adding
+            + np.random.default_rng(int(seed)).integers(np.iinfo(np.int32).max)
+        )
     else:
-        null_seeds = np.asarray(seed)
+        null_seeds = np.asarray_chkfinite(seed) # has to be like this in case input is a tuple
         if not np.issubdtype(null_seeds.dtype, np.integer):
             raise ValueError(f"`seed` must be an integer or array of integers, got dtype "
                              f"{null_seeds.dtype}.")
-        if null_seeds.ndim == 0:  # single integer
-            # Turn the seed into a random start point, and then use sequential integers after that.
-            # This is the easiest way to get random, different integers:
-            #   - `.integers` does not offer sampling without replacement. 
-            #   - `.choice` is not reproducible if the number of nulls is changed due to hidden
-            # floating point round off in its implementation. Compare
-            # `np.random.default_rng(1).choice(2**31-1, size=4, shuffle=False, replace=False)` and
-            # `np.random.default_rng(1).choice(2**31-1, size=5, shuffle=False, replace=False)`.
-            #   - Just adding the index to the seed can lead to nulls being repeated across
-            # different seeds, when they would be expected to be different e.g. for `seed=0,
-            # n_nulls=1000` and `seed=42, n_nulls=1000` (or `seed=314`, `seed=365` etc). 
-            seed_int = int(null_seeds)
-            null_seeds = (
-                np.arange(n_nulls, dtype=np.int64)
-                + np.random.default_rng(seed_int).integers(np.iinfo(np.int64).max)
-            ) if n_nulls > 1 else np.array([seed_int], dtype=np.int64)
-        elif null_seeds.shape != (n_nulls,):
-            raise ValueError(f"If `seed` is an array, it must have shape (n_nulls,) = ({n_nulls},), got "
-                             f"{null_seeds.shape}.")
+
+    if null_seeds.shape != (n_nulls,): # at this stage, there should be one seed (perhaps None) for each null
+        raise ValueError(f"If `seed` is an array, it must have shape (n_nulls,) = ({n_nulls},), got "
+                         f"{null_seeds.shape}.")
 
     # Main calculations
     # Precompute transformed modes (ellipsoid -> spheroid for each eigengroup)

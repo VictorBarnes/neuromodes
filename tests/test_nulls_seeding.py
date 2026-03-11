@@ -123,8 +123,14 @@ def test_seed_single_multiple(solver, test_data, rotation_method, randomize, res
     a1 = solver.eigenstrap(test_data, n_nulls=2, seed=np.arange(2), rotation_method=rotation_method, randomize=randomize, residual=residual)
 
     for i in range(2):
-        a2 = solver.eigenstrap(test_data, n_nulls=1, seed=i, rotation_method=rotation_method, randomize=randomize, residual=residual)
+        # If the input seed is a tuple or array, it should use that seed directly
+        a2 = solver.eigenstrap(test_data, n_nulls=1, seed=(i,), rotation_method=rotation_method, randomize=randomize, residual=residual)
         assert np.allclose(a1[:, i:i+1, :], a2, atol=1e-10), \
+            f"Nulls generated with seed {i} should be identical"
+        
+        # If the input seed is a single integer, it should use that to spawn a new set of seed(s)
+        b1 = solver.eigenstrap(test_data, n_nulls=1, seed=i, rotation_method=rotation_method, randomize=randomize, residual=residual)
+        assert not np.allclose(a1[:, i:i+1, :], b1, atol=1e-10), \
             f"Nulls generated with seed {i} should be identical"
 
 @pytest.mark.parametrize("randomize", [False])  # only rotation_method may be affected by global state
@@ -203,7 +209,7 @@ def test_reproducibility_number_groups(solver, test_data, rotation_method, rando
                            randomize=False, residual=residual, n_groups=int(np.sqrt(solver.n_modes)))
     a2 = solver.eigenstrap(test_data[:,:1], n_nulls=n_nulls, seed=1, rotation_method=rotation_method, 
                            randomize=False, residual=residual, n_groups=n_groups2)
-    # Null's wont be exactly equal, but betas should be
+    # Nulls won't be exactly equal, but betas should be
     beta1 = solver.decompose(np.squeeze(a1, axis=2))
     beta2 = solver.decompose(np.squeeze(a2, axis=2))
 
