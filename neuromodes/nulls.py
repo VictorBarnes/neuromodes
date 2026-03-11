@@ -307,8 +307,12 @@ def eigenstrap(
                          "'mean', 'range', or None.")
     
     # seed : Initialise RNG with seed for each null (input must be None, or int, or array of shape (n_nulls,))
+    ss_main = None
+    # if rotation_method == 'scipy':
+    #     np.random.seed(seed)
     if seed is None: # to match original
-        null_seeds = np.full((n_nulls,), None) 
+        # null_seeds = np.full((n_nulls,), None)
+        ss_main = np.random.SeedSequence() # use global state to generate seed for each null
     elif isinstance(seed, (int, np.integer)): # single integer
         # Turn the seed into a random start point, and then use sequential integers after that. This
         # is the easiest way to get random, different integers:
@@ -320,19 +324,28 @@ def eigenstrap(
         #   - Just adding the index to the seed can lead to nulls being repeated across different
         # seeds, when they would be expected to be different e.g. for `seed=0, n_nulls=1000` and
         # `seed=42, n_nulls=1000` (or `seed=314`, `seed=365` etc). 
-        null_seeds = (
-            np.arange(n_nulls, dtype=np.int64) # different ints to prevent overflow when adding
-            + np.random.default_rng(int(seed)).integers(np.iinfo(np.int32).max)
-        )
+        # null_seeds = (
+        #     np.arange(n_nulls, dtype=np.int64) # different ints to prevent overflow when adding
+        #     + np.random.default_rng(int(seed)).integers(np.iinfo(np.int32).max)
+        # )
+        ss_main = np.random.SeedSequence(seed) # use seed to generate seed for each null
+
+    if ss_main is not None:
+        ss_randomize, ss_rotate, ss_residual = ss_main.spawn(3) 
+        seeds_randomize = ss_randomize.generate_state(n_nulls, dtype=np.uint64) # large ints to minimize chance of repetition
+        seeds_rotate = ss_rotate.generate_state(n_nulls, dtype=np.uint64)
+        seeds_residual = ss_residual.generate_state(n_nulls, dtype=np.uint64)
+        if seed is None and rotation_method == 'scipy':
+            seeds_rotate = np.full((n_nulls,), None)
     else:
         null_seeds = np.asarray_chkfinite(seed) # has to be like this in case input is a tuple
         if not np.issubdtype(null_seeds.dtype, np.integer):
             raise ValueError(f"`seed` must be an integer or array of integers, got dtype "
                              f"{null_seeds.dtype}.")
-
-    if null_seeds.shape != (n_nulls,): # at this stage, there should be one seed (perhaps None) for each null
-        raise ValueError(f"If `seed` is an array, it must have shape (n_nulls,) = ({n_nulls},), got "
-                         f"{null_seeds.shape}.")
+        if null_seeds.shape != (n_nulls,):
+            raise ValueError(f"If `seed` is an array, it must have shape (n_nulls,) = ({n_nulls},), got "
+                                f"{null_seeds.shape}.")
+        seeds_randomize = seeds_rotate = seeds_residual = null_seeds
 
     # Main calculations
     # Precompute transformed modes (ellipsoid -> spheroid for each eigengroup)
@@ -347,7 +360,7 @@ def eigenstrap(
     # This is the precomputed inverse-transformed coefficients (spheroid -> ellipsoid for each eigengroup)
     if randomize:
         inv_coeffs = np.empty((n_modes, n_nulls, n_maps))
-        for i, s in enumerate(null_seeds):
+        for i, s in enumerate(seeds_randomize):
             rng = np.random.default_rng(s)
             for group in groups:
                 inv_coeffs[group, i, :] = rng.permutation(coeffs[group, :], axis=0) 
@@ -359,7 +372,7 @@ def eigenstrap(
     tforms = _rotate_coeffs(
         inv_coeffs=inv_coeffs,
         groups=groups,
-        seeds=null_seeds
+        seeds=seeds_rotate
     )
     # tensordot appears faster than einsum
     nulls = np.tensordot(norm_emodes, tforms, axes=(1, 0)) # (n_verts, n_nulls, n_maps)
@@ -371,7 +384,7 @@ def eigenstrap(
         if residual == 'add':
             nulls += residual_data[:, np.newaxis, :]
         elif residual == 'permute':
-            for i, s in enumerate(null_seeds):
+            for i, s in enumerate(seeds_residual):
                 nulls[:, i, :] += np.random.default_rng(s).permutation(residual_data, axis=0)
 
     # Optionally resample values to match stats of original data
