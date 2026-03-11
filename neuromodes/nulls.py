@@ -308,8 +308,6 @@ def eigenstrap(
     
     # seed : Initialise RNG with seed for each null (input must be None, or int, or array of shape (n_nulls,))
     ss_main = None
-    # if rotation_method == 'scipy':
-    #     np.random.seed(seed)
     if seed is None: # to match original
         # null_seeds = np.full((n_nulls,), None)
         ss_main = np.random.SeedSequence() # use global state to generate seed for each null
@@ -335,8 +333,8 @@ def eigenstrap(
         seeds_randomize = ss_randomize.generate_state(n_nulls, dtype=np.uint64) # large ints to minimize chance of repetition
         seeds_rotate = ss_rotate.generate_state(n_nulls, dtype=np.uint64)
         seeds_residual = ss_residual.generate_state(n_nulls, dtype=np.uint64)
-        if seed is None and rotation_method == 'scipy':
-            seeds_rotate = np.full((n_nulls,), None)
+        # if seed is None and rotation_method == 'scipy':
+        #     seeds_rotate = np.full((n_nulls,), None)
     else:
         null_seeds = np.asarray_chkfinite(seed) # has to be like this in case input is a tuple
         if not np.issubdtype(null_seeds.dtype, np.integer):
@@ -346,6 +344,16 @@ def eigenstrap(
             raise ValueError(f"If `seed` is an array, it must have shape (n_nulls,) = ({n_nulls},), got "
                                 f"{null_seeds.shape}.")
         seeds_randomize = seeds_rotate = seeds_residual = null_seeds
+
+    if rotation_method == 'scipy':
+        if seed is None:
+            seeds_rotate = np.full((n_nulls,), None)
+            # np.random.seed(seed)
+        elif isinstance(seed, (int, np.integer)): 
+            seeds_rotate = np.full((n_nulls,), None)
+            np.random.seed(seed)
+        else: 
+            null_seeds = np.asarray_chkfinite(seed)
 
     # Main calculations
     # Precompute transformed modes (ellipsoid -> spheroid for each eigengroup)

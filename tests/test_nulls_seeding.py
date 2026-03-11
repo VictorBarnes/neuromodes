@@ -199,15 +199,16 @@ def test_reproducibility_number_data(solver, test_data, rotation_method, randomi
     assert np.allclose(a1[:,:,:-1], a2, atol=1e-10), \
         f"Nulls with the same seed should be identical"
 
-@pytest.mark.parametrize("rotation_method", rotation_options)
+@pytest.mark.parametrize("rotation_method", ['qr']) # only new method supports this
 @pytest.mark.parametrize("randomize", randomize_options)
-@pytest.mark.parametrize("residual", [None]) # has to be none so we can accurately get back betas
-def test_reproducibility_number_groups(solver, test_data, rotation_method, randomize, residual):
+@pytest.mark.parametrize("residual", [None, 'add']) # can't be permute so we can accurately get back betas
+@pytest.mark.parametrize("seed", [0, 42, np.random.choice(n_nulls, n_nulls, replace=False)]) # supported for all seeds except None
+def test_reproducibility_number_groups_qr(solver, test_data, rotation_method, randomize, residual, seed):
     """Nulls with same seed should be identical, regardless of number of groups"""
     n_groups2 = int(np.sqrt(solver.n_modes)/2)
-    a1 = solver.eigenstrap(test_data[:,:1], n_nulls=n_nulls, seed=1, rotation_method=rotation_method, 
+    a1 = solver.eigenstrap(test_data[:,:1], n_nulls=n_nulls, seed=seed, rotation_method=rotation_method, 
                            randomize=False, residual=residual, n_groups=int(np.sqrt(solver.n_modes)))
-    a2 = solver.eigenstrap(test_data[:,:1], n_nulls=n_nulls, seed=1, rotation_method=rotation_method, 
+    a2 = solver.eigenstrap(test_data[:,:1], n_nulls=n_nulls, seed=seed, rotation_method=rotation_method, 
                            randomize=False, residual=residual, n_groups=n_groups2)
     # Nulls won't be exactly equal, but betas should be
     beta1 = solver.decompose(np.squeeze(a1, axis=2))
@@ -216,7 +217,25 @@ def test_reproducibility_number_groups(solver, test_data, rotation_method, rando
     assert np.allclose(beta1[:n_groups2**2,:], beta2[:n_groups2**2,:], atol=1e-10), \
         f"Nulls with the same seed should be identical regardless of number of groups"
 
-def test_compared_to_original(): 
+@pytest.mark.parametrize("rotation_method", ['scipy']) # scipy needs to specify individiual seeds to support this
+@pytest.mark.parametrize("randomize", randomize_options)
+@pytest.mark.parametrize("residual", [None, 'add']) # can't be permute so we can accurately get back betas
+@pytest.mark.parametrize("seed", [np.random.choice(n_nulls, n_nulls, replace=False)]) # supported only for all seeds specified
+def test_reproducibility_number_groups_scipy(solver, test_data, rotation_method, randomize, residual, seed):
+    """Nulls with same seed should be identical, regardless of number of groups"""
+    n_groups2 = int(np.sqrt(solver.n_modes)/2)
+    a1 = solver.eigenstrap(test_data[:,:1], n_nulls=n_nulls, seed=seed, rotation_method=rotation_method, 
+                           randomize=False, residual=residual, n_groups=int(np.sqrt(solver.n_modes)))
+    a2 = solver.eigenstrap(test_data[:,:1], n_nulls=n_nulls, seed=seed, rotation_method=rotation_method, 
+                           randomize=False, residual=residual, n_groups=n_groups2)
+    # Nulls won't be exactly equal, but betas should be
+    beta1 = solver.decompose(np.squeeze(a1, axis=2))
+    beta2 = solver.decompose(np.squeeze(a2, axis=2))
+
+    assert np.allclose(beta1[:n_groups2**2,:], beta2[:n_groups2**2,:], atol=1e-10), \
+        f"Nulls with the same seed should be identical regardless of number of groups"
+
+def test_compared_to_original_seed_outside(): 
     # These parameters are hard coded to match data saved in the repo and should not be changed
     density = '4k'
     hemi = 'L'
@@ -243,6 +262,51 @@ def test_compared_to_original():
         data=map,
         n_nulls=n_nulls,
         seed=None,                  # matches original seed=seed 
+        residual=None,              # matches original add_res=False and permute=False
+        resample="range",           # matches original resample=False
+        decomp_method="regress",    # matches original decomp_method='matrix'
+        rotation_method="scipy",    # matches original rotations.indirect_method (called by geometry.gen_eigensamples)
+    )
+
+    # Compare (on diagonal near 1, off diagonal near 0)
+    null_corrs = np.corrcoef(nulls_neuromodes.T, nulls_orig.T)[:n_nulls, n_nulls:]
+
+    diagonal_corrs = np.diagonal(null_corrs)
+    assert np.allclose(diagonal_corrs, 1.0, atol=0.001), \
+        'New nulls should be similar to corresponding old nulls'
+
+    column_mean = np.mean(null_corrs - np.diag(diagonal_corrs), axis=0)
+    assert np.allclose(column_mean, 0.0, atol=0.1), \
+        'New nulls should not be similar to different old nulls'
+    assert np.allclose(np.mean(column_mean), 0.0, atol=0.001), \
+        'New nulls should not be similar to different old nulls'
+
+def test_compared_to_original_seed_inside(): 
+    # These parameters are hard coded to match data saved in the repo and should not be changed
+    density = '4k'
+    hemi = 'L'
+    surf_type = 'midthickness'
+    n_modes = 10**2
+    n_nulls = 100
+    seed = 365
+    data = 'myelinmap'
+
+    # Load original nulls
+    test_data = Path(__file__).parent / 'test_data'
+    nulls_file = f"sp-human_tpl-fsLR_den-{density}_hemi-{hemi}_{surf_type}_eigenstrap-nulls-orig.npy"
+    nulls_orig = np.load(test_data / nulls_file)
+
+    # Load data
+    mesh, medmask = fetch_surf(density=density, hemi=hemi, surf_type=surf_type)
+    map = fetch_map(data, density=density)[medmask]
+    map = (map - np.mean(map)) # to match original implementation which doesn't use the constant mode
+
+    # Compute new nulls
+    solver = EigenSolver(mesh, mask=medmask).solve(n_modes, fix_mode1=True)
+    nulls_neuromodes = solver.eigenstrap(
+        data=map,
+        n_nulls=n_nulls,
+        seed=seed,                  # matches original seed=seed 
         residual=None,              # matches original add_res=False and permute=False
         resample="range",           # matches original resample=False
         decomp_method="regress",    # matches original decomp_method='matrix'
