@@ -87,10 +87,10 @@ def test_randomize_resample(solver, rotation_method, randomize, residual):
     beta0_mode = beta0_group[group_indices, :]  # coeffs will be the same within each group, so not affected by randomization
     data = solver.emodes @ beta0_mode           # data generated from the bases, so there will be no residuals
 
-    nulls0 = solver.eigenstrap(data, n_nulls=n_nulls, seed=1, rotation_method=rotation_method, randomize=False, residual=None) 
-    nulls1 = solver.eigenstrap(data, n_nulls=n_nulls, seed=1, rotation_method=rotation_method, randomize=randomize, residual=residual)
+    a1 = solver.eigenstrap(data, n_nulls=n_nulls, seed=1, rotation_method=rotation_method, randomize=False, residual=None) 
+    a2 = solver.eigenstrap(data, n_nulls=n_nulls, seed=1, rotation_method=rotation_method, randomize=randomize, residual=residual)
 
-    assert np.allclose(nulls0, nulls1), \
+    assert np.allclose(a1, a2), \
         f"These specific nulls should be the same regardless of randomize and residual parameters when seed is fixed"
 
 @pytest.mark.parametrize("rotation_method", rotation_options)
@@ -192,6 +192,23 @@ def test_reproducibility_number_data(solver, test_data, rotation_method, randomi
 
     assert np.allclose(a1[:,:,:-1], a2, atol=1e-10), \
         f"Nulls with the same seed should be identical"
+
+@pytest.mark.parametrize("rotation_method", rotation_options)
+@pytest.mark.parametrize("randomize", randomize_options)
+@pytest.mark.parametrize("residual", [None]) # has to be none so we can accurately get back betas
+def test_reproducibility_number_groups(solver, test_data, rotation_method, randomize, residual):
+    """Nulls with same seed should be identical, regardless of number of groups"""
+    n_groups2 = int(np.sqrt(solver.n_modes)/2)
+    a1 = solver.eigenstrap(test_data[:,:1], n_nulls=n_nulls, seed=1, rotation_method=rotation_method, 
+                           randomize=False, residual=residual, n_groups=int(np.sqrt(solver.n_modes)))
+    a2 = solver.eigenstrap(test_data[:,:1], n_nulls=n_nulls, seed=1, rotation_method=rotation_method, 
+                           randomize=False, residual=residual, n_groups=n_groups2)
+    # Null's wont be exactly equal, but betas should be
+    beta1 = solver.decompose(np.squeeze(a1, axis=2))
+    beta2 = solver.decompose(np.squeeze(a2, axis=2))
+
+    assert np.allclose(beta1[:n_groups2**2,:], beta2[:n_groups2**2,:], atol=1e-10), \
+        f"Nulls with the same seed should be identical regardless of number of groups"
 
 def test_compared_to_original(): 
     # These parameters are hard coded to match data saved in the repo and should not be changed
