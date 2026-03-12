@@ -306,34 +306,15 @@ def eigenstrap(
     else: 
         raise ValueError(f"Invalid rotation method '{rotation_method}'; must be 'qr' or 'scipy'.")
     
-    # seed : Initialise RNG with seed for each null (input must be None, or int, or array of shape (n_nulls,))
-    # if seed is None or isinstance(seed, (int, np.integer)):
-    #     ss_main = np.random.SeedSequence(seed)
-    #     ss_randomize, ss_residual, ss_rotate = ss_main.spawn(3) 
-    #     seeds_randomize = ss_randomize.generate_state(n_nulls, dtype=np.uint64) # large ints to minimize chance of repetition
-    #     seeds_residual = ss_residual.generate_state(n_nulls, dtype=np.uint64)
-    #     seeds_rotate = ss_rotate.generate_state(n_nulls, dtype=np.uint64)   
-    #     if rotation_method == 'scipy':
-    #         seeds_rotate = np.full((n_nulls,), None)
-    #         if seed is not None: 
-    #             np.random.seed(seed)
-    # else:
-    #     ss_main = np.asarray_chkfinite(seed)
-    #     if not np.issubdtype(ss_main.dtype, np.integer):
-    #         raise ValueError(f"`seed` must be an integer or array of integers, got dtype "
-    #                          f"{ss_main.dtype}.")
-    #     if ss_main.shape != (n_nulls,):
-    #         raise ValueError(f"If `seed` is an array, it must have shape (n_nulls,) = ({n_nulls},), got "
-    #                          f"{ss_main.shape}.")
-    #     seeds_randomize = seeds_residual = seeds_rotate = ss_main
-
-    seeds_randomize = np.empty(n_nulls, dtype=np.uint64)
-    seeds_residual = np.empty(n_nulls, dtype=np.uint64)
-    seeds_rotate = np.empty(n_nulls, dtype=np.uint64)
-
-    if seed is None or isinstance(seed, (int, np.integer)):
+    # seed : Need to ultimately generate n_nulls * 3 Generators to use for each step of the process
+    # (randomize, residual, rotate). We do this by generating n_nulls * 3 random seeds which are
+    # then used to initialise each of the Generators: (i) if seed is an array of shape (n_nulls,),
+    # we use each seed to generate 3 new seeds; (ii) if seed is an int or None, we first generate
+    # an array of shape (n_nulls,), then do (i).
+    if seed is None or isinstance(seed, (int, np.integer)): # generate a new array of seeds, one for each null
         ss_main = np.random.default_rng(seed).integers(0, 2**64, size=(n_nulls,), dtype=np.uint64)
-    else: 
+        seed_scalar_input = True
+    else: # check that this is a valid array of seeds, one for each null
         ss_main = np.asarray_chkfinite(seed)
         if not np.issubdtype(ss_main.dtype, np.integer):
             raise ValueError(f"`seed` must be an integer or array of integers, got dtype "
@@ -341,14 +322,21 @@ def eigenstrap(
         if ss_main.shape != (n_nulls,):
             raise ValueError(f"If `seed` is an array, it must have shape (n_nulls,) = ({n_nulls},), got "
                              f"{ss_main.shape}.")
+        seed_scalar_input = False
 
+    # Convert the n_nulls seeds into n_nulls*3 seeds for each step of the process in a reproducible way
+    seeds_randomize = np.empty(n_nulls, dtype=np.uint64)
+    seeds_residual = np.empty(n_nulls, dtype=np.uint64)
+    seeds_rotate = np.empty(n_nulls, dtype=np.uint64)
     for i, s in enumerate(ss_main):
-        rand_ss, res_ss, rot_ss = np.random.SeedSequence(ss_main[i]).spawn(3)
-        seeds_randomize[i] = rand_ss.generate_state(1, dtype=np.uint64)[0]
-        seeds_residual[i] = res_ss.generate_state(1, dtype=np.uint64)[0]
-        seeds_rotate[i] = rot_ss.generate_state(1, dtype=np.uint64)[0]
+        tmp = np.random.SeedSequence(s).spawn(1)[0]
+        seeds_randomize[i], seeds_residual[i], seeds_rotate[i] = tmp.generate_state(3, dtype=np.uint64)
 
-    if rotation_method == 'scipy' and (seed is None or isinstance(seed, (int, np.integer))):
+    # For legacy behaviour only (compatability with original eigenstrapping). The legacy
+    # implementation does not support array inputs, so we can just keep the above behaviour in that
+    # case. Moreover, it would not be possible to make the two compatible (given all the other
+    # differences between our implementations). 
+    if rotation_method == 'scipy' and seed_scalar_input:
         seeds_rotate = np.full((n_nulls,), None)
         if seed is not None: 
             np.random.seed(seed)
