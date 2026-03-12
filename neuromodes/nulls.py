@@ -298,43 +298,44 @@ def eigenstrap(
         raise ValueError(f"Invalid resampling method '{resample}'; must be 'exact', 'affine', "
                          "'mean', 'range', or None.")
     
-    # rotation_method : Set which helper function to use
+    # seed : Need to ultimately generate n_nulls * 3 Generators to use for each step of the process
+    # (randomize, residual, rotate). (i) If `seed` is an array of shape (n_nulls,), we use each seed
+    # to generate 3 new seeds; (ii) if `seed` is an int or None, we first generate an array of shape
+    # (n_nulls,), then do (i).
+    seed_scalar_input = seed is None or isinstance(seed, (int, np.integer))
+    if seed_scalar_input: # generate a new array of seeds, one for each null
+        seeds_main = np.random.SeedSequence(seed).generate_state(n_nulls, dtype=np.uint64)
+    else: # check that this is a valid array of seeds, one for each null
+        seeds_main = np.asarray_chkfinite(seed)
+        if seeds_main.shape != (n_nulls,):
+            raise ValueError(f"If `seed` is an array, it must have shape (n_nulls,) = ({n_nulls},), got "
+                             f"{seeds_main.shape}.")
+        if not np.issubdtype(seeds_main.dtype, np.integer):
+            raise ValueError(f"`seed` must be an integer or array of integers, got dtype "
+                             f"{seeds_main.dtype}.")
+
+    # Convert the n_nulls seeds into n_nulls*3 seeds for each step of the process in a reproducible way
+    states = np.array([np.random.SeedSequence(s).generate_state(3, dtype=np.uint64) for s in seeds_main])
+    seeds_rotate, seeds_randomize, seeds_residual = states.T # randomize and residual only used if needed
+
+    # rotation_method : For legacy behaviour mainly (compatability with original eigenstrapping).
+    # 1. We preserve the legacy behaviour of the original eigenstrapping under default parameters
+    # (ie. randomize=False and residual=None) when using the 'scipy' method. We don't support the
+    # other cases due to the various other changes we have made to increase speed and facilitate
+    # reproducibility. Therefore, we don't change seeds_randomize or seeds_residual here.  
+    # 2. The legacy implementation does not support array inputs, so we can just keep the above
+    # behaviour in that case. Moreover, it would not be possible to make the two compatible (given
+    # all the other differences between our implementations). 
     if rotation_method == 'qr':
         _rotate_coeffs = _rotate_coeffs_qr
     elif rotation_method == 'scipy':
         _rotate_coeffs = _rotate_coeffs_scipy
+        if seed_scalar_input: # legacy mode needs to set seeds_rotate to all Nones (cf. _rotate_coeffs_scipy)
+            seeds_rotate = np.full((n_nulls,), None)
+            if seed is not None: # allow legacy seeding to set the seed inside or outside the function call
+                np.random.seed(seed) 
     else: 
         raise ValueError(f"Invalid rotation method '{rotation_method}'; must be 'qr' or 'scipy'.")
-    
-    # seed : Need to ultimately generate n_nulls * 3 Generators to use for each step of the process
-    # (randomize, residual, rotate). We do this by generating n_nulls * 3 random seeds which are
-    # then used to initialise each of the Generators: (i) if seed is an array of shape (n_nulls,),
-    # we use each seed to generate 3 new seeds; (ii) if seed is an int or None, we first generate
-    # an array of shape (n_nulls,), then do (i).
-    seed_scalar_input = seed is None or isinstance(seed, (int, np.integer))
-    if seed_scalar_input: # generate a new array of seeds, one for each null
-        ss_main = np.random.SeedSequence(seed).generate_state(n_nulls, dtype=np.uint64)
-    else: # check that this is a valid array of seeds, one for each null
-        ss_main = np.asarray_chkfinite(seed)
-        if ss_main.shape != (n_nulls,):
-            raise ValueError(f"If `seed` is an array, it must have shape (n_nulls,) = ({n_nulls},), got "
-                             f"{ss_main.shape}.")
-        if not np.issubdtype(ss_main.dtype, np.integer):
-            raise ValueError(f"`seed` must be an integer or array of integers, got dtype "
-                             f"{ss_main.dtype}.")
-
-    # Convert the n_nulls seeds into n_nulls*3 seeds for each step of the process in a reproducible way
-    states = np.array([np.random.SeedSequence(s).generate_state(3, dtype=np.uint64) for s in ss_main])
-    seeds_rotate, seeds_randomize, seeds_residual = states.T # randomize and residual only used if needed
-
-    # For legacy behaviour only (compatability with original eigenstrapping). The legacy
-    # implementation does not support array inputs, so we can just keep the above behaviour in that
-    # case. Moreover, it would not be possible to make the two compatible (given all the other
-    # differences between our implementations). 
-    if rotation_method == 'scipy' and seed_scalar_input:
-        seeds_rotate = np.full((n_nulls,), None)
-        if seed is not None: 
-            np.random.seed(seed)
 
     # Main calculations
     # Precompute transformed modes (ellipsoid -> spheroid for each eigengroup)
