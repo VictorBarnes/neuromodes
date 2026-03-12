@@ -46,13 +46,13 @@ def eigenstrap(
         Empirical brain map(s) of shape ``(n_verts,)`` or ``(n_verts, n_maps)`` to generate nulls from. If
         n_maps > 1, the same set of randomized rotations is applied to all maps for each null (see
         Notes). 
-    emodes : array-like of shape ``(n_verts, n_modes)``
+    emodes : array-like
         The eigenmodes array of shape ``(n_verts, n_modes)``. This function rotates modes within
         eigengroups. Note that, unlike the original implementation [1]_, this requires the constant
         mode (the first column) to be input too. By default (if ``n_groups`` is None), if the number of
         eigenmodes is not a perfect square (i.e., the number of modes does not allow for complete
         eigengroups), then the last incomplete eigengroup will be excluded.
-    evals : array-like of shape ``(n_modes,)``
+    evals : array-like
         The eigenvalues array of shape ``(n_modes,)``. Note that, unlike the original
         implementation [1]_, this requires the zero eigenvalue (the first eigenvalue) to be input
         too. 
@@ -86,7 +86,7 @@ def eigenstrap(
     mass : array-like, optional
         The mass matrix of shape ``(n_verts, n_verts)`` used for the decomposition when
         ``decomp_method`` is ``'project'``. Default is ``None``.
-    seed : array-like of shape ``(n_nulls,)`` or int, optional
+    seed : array-like or int, optional
         Random seed for reproducibility. If an array of shape ``(n_nulls,)`` is provided, it is used
         directly as the seed for each null. Otherwise, if a single integer is provided, it is used
         to generate a master seed that is then used to generate a different seed for each null. If
@@ -424,13 +424,13 @@ def _rotate_coeffs_scipy(
 
     Parameters
     ----------
-    inv_coeffs : array of shape (n_modes, n_nulls, n_maps)
+    inv_coeffs : array-like
         The inverse-transformed coefficients (spheroid -> ellipsoid) of shape (n_modes, n_nulls,
         n_maps) to rotate.
     groups : list of arrays
         A list of arrays, where each array contains the indices of modes belonging to the same
         eigengroup.
-    seeds : array of shape (n_nulls,)
+    seeds : array-like
         An array of integer seeds of shape (n_nulls,) to use for reproducibility of the random
         rotations for each null map.
 
@@ -475,13 +475,13 @@ def _rotate_coeffs_qr(
     
     Parameters
     ----------
-    inv_coeffs : np.ndarray of shape ``(n_modes, n_nulls, n_maps)``
+    inv_coeffs : np.ndarray
         The inverse-transformed coefficients (spheroid -> ellipsoid) of shape ``(n_modes, n_nulls,
         n_maps)`` to rotate.
     groups : list of np.ndarrays
         A list of arrays, where each array contains the indices of modes belonging to the same
         eigengroup.
-    seeds : np.ndarray of shape ``(n_nulls,)``
+    seeds : np.ndarray
         An array of integer seeds of shape ``(n_nulls,)`` to use for reproducibility of the random
         rotations for each null map.
 
