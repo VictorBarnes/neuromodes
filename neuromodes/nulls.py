@@ -307,17 +307,33 @@ def eigenstrap(
         raise ValueError(f"Invalid rotation method '{rotation_method}'; must be 'qr' or 'scipy'.")
     
     # seed : Initialise RNG with seed for each null (input must be None, or int, or array of shape (n_nulls,))
+    # if seed is None or isinstance(seed, (int, np.integer)):
+    #     ss_main = np.random.SeedSequence(seed)
+    #     ss_randomize, ss_residual, ss_rotate = ss_main.spawn(3) 
+    #     seeds_randomize = ss_randomize.generate_state(n_nulls, dtype=np.uint64) # large ints to minimize chance of repetition
+    #     seeds_residual = ss_residual.generate_state(n_nulls, dtype=np.uint64)
+    #     seeds_rotate = ss_rotate.generate_state(n_nulls, dtype=np.uint64)   
+    #     if rotation_method == 'scipy':
+    #         seeds_rotate = np.full((n_nulls,), None)
+    #         if seed is not None: 
+    #             np.random.seed(seed)
+    # else:
+    #     ss_main = np.asarray_chkfinite(seed)
+    #     if not np.issubdtype(ss_main.dtype, np.integer):
+    #         raise ValueError(f"`seed` must be an integer or array of integers, got dtype "
+    #                          f"{ss_main.dtype}.")
+    #     if ss_main.shape != (n_nulls,):
+    #         raise ValueError(f"If `seed` is an array, it must have shape (n_nulls,) = ({n_nulls},), got "
+    #                          f"{ss_main.shape}.")
+    #     seeds_randomize = seeds_residual = seeds_rotate = ss_main
+
+    seeds_randomize = np.empty(n_nulls, dtype=np.uint64)
+    seeds_residual = np.empty(n_nulls, dtype=np.uint64)
+    seeds_rotate = np.empty(n_nulls, dtype=np.uint64)
+
     if seed is None or isinstance(seed, (int, np.integer)):
-        ss_main = np.random.SeedSequence(seed)
-        ss_randomize, ss_residual, ss_rotate = ss_main.spawn(3) 
-        seeds_randomize = ss_randomize.generate_state(n_nulls, dtype=np.uint64) # large ints to minimize chance of repetition
-        seeds_residual = ss_residual.generate_state(n_nulls, dtype=np.uint64)
-        seeds_rotate = ss_rotate.generate_state(n_nulls, dtype=np.uint64)   
-        if rotation_method == 'scipy':
-            seeds_rotate = np.full((n_nulls,), None)
-            if seed is not None: 
-                np.random.seed(seed)
-    else:
+        ss_main = np.random.default_rng(seed).integers(0, 2**64, size=(n_nulls,), dtype=np.uint64)
+    else: 
         ss_main = np.asarray_chkfinite(seed)
         if not np.issubdtype(ss_main.dtype, np.integer):
             raise ValueError(f"`seed` must be an integer or array of integers, got dtype "
@@ -325,22 +341,17 @@ def eigenstrap(
         if ss_main.shape != (n_nulls,):
             raise ValueError(f"If `seed` is an array, it must have shape (n_nulls,) = ({n_nulls},), got "
                              f"{ss_main.shape}.")
-        seeds_randomize = seeds_residual = seeds_rotate = ss_main
 
-        # # Preallocate arrays for the isolated states
-        # seeds_randomize = np.empty(n_nulls, dtype=np.uint64)
-        # seeds_residual = np.empty(n_nulls, dtype=np.uint64)
-        # seeds_rotate = np.empty(n_nulls, dtype=np.uint64)
+    for i, s in enumerate(ss_main):
+        rand_ss, res_ss, rot_ss = np.random.SeedSequence(ss_main[i]).spawn(3)
+        seeds_randomize[i] = rand_ss.generate_state(1, dtype=np.uint64)[0]
+        seeds_residual[i] = res_ss.generate_state(1, dtype=np.uint64)[0]
+        seeds_rotate[i] = rot_ss.generate_state(1, dtype=np.uint64)[0]
 
-        # # Spawn isolated branches for every map based on its specific user seed
-        # for i, s in enumerate(ss_main):
-        #     map_root = np.random.SeedSequence(s)
-        #     rand_ss, res_ss, rot_ss = map_root.spawn(3)
-            
-        #     # Extract single 64-bit integer states for the downstream logic
-        #     seeds_randomize[i] = rand_ss.generate_state(1, dtype=np.uint64)[0]
-        #     seeds_residual[i] = res_ss.generate_state(1, dtype=np.uint64)[0]
-        #     seeds_rotate[i] = rot_ss.generate_state(1, dtype=np.uint64)[0]
+    if rotation_method == 'scipy' and (seed is None or isinstance(seed, (int, np.integer))):
+        seeds_rotate = np.full((n_nulls,), None)
+        if seed is not None: 
+            np.random.seed(seed)
 
     # Main calculations
     # Precompute transformed modes (ellipsoid -> spheroid for each eigengroup)
