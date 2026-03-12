@@ -48,13 +48,14 @@ def eigenstrap(
         Notes). 
     emodes : array-like of shape (n_verts, n_modes)
         The eigenmodes array of shape (n_verts, n_modes). This function rotates modes within
-        eigengroups. Note that, unlike the original implementation[1]_, this requires
-        the constant mode (the first column) to be input too. If the number of eigenmodes is not a
-        perfect square (i.e., number of modes doesn't allow for complete eigengroups), then the last
-        incomplete eigengroup will be excluded.
+        eigengroups. Note that, unlike the original implementation[1]_, this requires the constant
+        mode (the first column) to be input too. By default (if n_groups is None), if the number of
+        eigenmodes is not a perfect square (i.e., the number of modes does not allow for complete
+        eigengroups), then the last incomplete eigengroup will be excluded.
     evals : array-like of shape (n_modes,)
-        The eigenvalues array of shape (n_modes,). Note that, unlike the original implementation[1]_, 
-        this requires the zero eigenvalue (the first eigenvalue) to be input too. 
+        The eigenvalues array of shape (n_modes,). Note that, unlike the original
+        implementation[1]_, this requires the zero eigenvalue (the first eigenvalue) to be input
+        too. 
     n_nulls : int, optional
         Number of null maps to generate per input map. Default is 1000.
     n_groups : int or None, optional
@@ -64,8 +65,8 @@ def eigenstrap(
         The method used to generate random rotations for each eigengroup. Either ``'qr'`` to
         generate random orthogonal matrices using QR decomposition of random normal matrices, or
         ``'scipy'`` to sample random orthogonal matrices from SO(N) using
-        ``scipy.stats.special_ortho_group.rvs``. Default is ``'qr'``. See Notes for details on
-        which option to choose.
+        ``scipy.stats.special_ortho_group.rvs``. Default is ``'qr'``. See Notes for details on which
+        option to choose.
     randomize : bool, optional
         Whether to shuffle decomposition coefficients within eigengroups. This increases
         randomization but reduces spatial autocorrelation similarity to empirical data. Default is
@@ -91,14 +92,14 @@ def eigenstrap(
         to generate a master seed that is then used to generate a different seed for each null. If
         ``None``, the global state is used. Default is ``None``.
     check_ortho : bool, optional
-        Whether to check if ``emodes`` are mass-orthonormal before using the ``'project'`` method
-        in ``neuromodes.basis.decompose``. Default is ``True``.
+        Whether to check if ``emodes`` are mass-orthonormal before using the ``'project'`` method in
+        ``neuromodes.basis.decompose``. Default is ``True``.
     
     Returns
     -------
     ndarray of shape (n_verts, n_nulls) or (n_verts, n_nulls, n_maps)
-        Generated null maps of shape (n_verts, n_nulls) if ``data`` has shape (n_verts,), or (n_verts,
-        n_nulls, n_maps) if ``data`` has shape (n_verts, n_maps).
+        Generated null maps of shape (n_verts, n_nulls) if ``data`` has shape (n_verts,), or
+        (n_verts, n_nulls, n_maps) if ``data`` has shape (n_verts, n_maps).
     
     Raises
     ------
@@ -114,14 +115,15 @@ def eigenstrap(
     ValueError
         If ``rotation_method`` is not one of ``'qr'`` or ``'scipy'``.
     ValueError
-        If ``n_groups`` is greater than the number of eigengroups than can be formed from the
-        number of modes in ``emodes``.
+        If ``n_groups`` is greater than the number of eigengroups than can be formed from the number
+        of modes in ``emodes``.
 
     Notes
     -----
     1. Same transformations for each map. When ``data`` contains multiple maps (n_maps > 1), the
-       same set of randomized rotations is applied to all maps for each null. This means that null
-       i for map A and null i for map B use identical eigenmode rotations.
+       same set of randomized rotations is applied to all maps for each null. This means that null i
+       for map A and null i for map B use identical eigenmode rotations (± coefficient
+       randomizations and residual permutations).
 
     2. ``n_groups`` and ``residual``. The choice of ``n_groups`` and ``residual`` will affect the
        spatial autocorrelation similarity between the nulls and empirical data. See ref[1]_ for a
@@ -135,47 +137,51 @@ def eigenstrap(
        of modes and nulls, and is recommended for most users. See more similarities/differences in
        the notes below.
 
-    4. ``resample``. The choice of ``resample`` will affect the distribution of values in the
-       nulls. ``'mean'``, ``'affine'``, and ``'range'`` are linear transformations, while
-       ``'exact'`` is a non-linear transformation. ``'mean'`` preserves the location (mean) of the
-       distribution, while ``'affine'`` preserves the location and scale (mean and standard
-       deviation) of the distribution. As these are both affine transformations, they preserve the
-       "relative PSD" of the distribution. In contrast, ``'range'`` and ``'exact'`` do not preserve
-       the relative PSD of the distribution, as they change the location and scale of the
-       reconstructed nulls. The choice of ``resample`` should be guided by the importance of
-       matching the original distribution of values and ultimately by whichever option produces the
-       lowest false discovery rate (FDR). See ref[1]_ for an example of how to compute the FDR.
+    4. ``resample``. The choice of ``resample`` will affect the distribution of values in the nulls.
+       ``'mean'``, ``'affine'``, and ``'range'`` are linear transformations, while ``'exact'`` is a
+       non-linear transformation. ``'mean'`` preserves the location (mean) of the distribution,
+       while ``'affine'`` preserves the location and scale (mean and standard deviation) of the
+       distribution. As these are both affine transformations, they preserve the "relative PSD" of
+       the distribution. In contrast, ``'range'`` and ``'exact'`` do not preserve the relative PSD
+       of the distribution, as they change the location and scale of the reconstructed nulls. The
+       choice of ``resample`` should be guided by the importance of matching the original
+       distribution of values and ultimately by whichever option produces the lowest false discovery
+       rate (FDR). See ref[1]_ for an example of how to compute the FDR.
 
-    5. ``seed``. Seeding is handled in one or two stages. First, if ``np.ravel(seed)`` is not of
-       size ``n_nulls``, ``seed`` is used to initialize a master random number generator (RNG) for
-       each null map (this will start at a random integer given by ``seed`` and will then
-       increment). Then, each null uses its allocated integer to generate its own RNG to use for
-       all rotations/permutations of that null.
+    5. ``seed``. Seeding is handled in one or two stages. First, if ``seed`` is None or a scalar
+       integer, it is used to generate an array of size (n_nulls,). (If ``seed`` is already an array
+       of size (n_nulls,1), it is used directly.) Then, each of the n_nulls seeds are used to
+       generate 3 new seeds: for rotations, randomisations, and residual permutations (if
+       randomisations/permutations are not requested, these will be generated but not used). This
+       ensures that the same seed will produce the same nulls regardless of how many nulls are
+       generated (e.g., if n_nulls is increased from 10 to 100, the first 10 nulls will be
+       identical).
 
-    6. Comparisons with original implementation. The following notes are in relation to the
-       original implementation of eigenstrapping in ref[1]_, which is available
-       `here <https://github.com/SNG-Newy/eigenstrapping>`__.
-       In this function, we have made a few changes to the implementation. These changes simplify installation,
-       increase speed, process multiple maps concurrently, and facilitate reproducibility.
-       Nonetheless, under a specific configuration, the function can exactly match the default
-       usage of the implementation (i.e. generating the same nulls when the corresponding seed is
-       set). See
-       `this notebook <https://neuromodes.readthedocs.io/en/latest/validation/eigenstrapping_match_orig.html>`__
+    6. Comparisons with original implementation. The following notes are in relation to the original
+       implementation of eigenstrapping in ref[1]_, which is available `here
+       <https://github.com/SNG-Newy/eigenstrapping/tree/c2d8e5a5e7af47649f6358334644a6b49d22cf8e>`__.
+       In this function, we have made a few changes to the implementation. These changes simplify
+       installation, increase speed, process multiple maps concurrently, and facilitate
+       reproducibility. Nonetheless, under a specific configuration, the function can exactly match
+       the default usage of the implementation (i.e. generating the same nulls when the
+       corresponding seed is set). See `this notebook
+       <https://neuromodes.readthedocs.io/en/latest/validation/eigenstrapping_match_orig.html>`__
        for an example.
 
-       a. Simplified installation. ``eigenstrapping`` is dependent on many packages, including
-          exact versions of ``brainspace`` and ``lapy``. In contrast, ``neuromodes`` depends on
-          much fewere dependencies. This makes installation easier and
-          reduces the risk of conflicts with other packages.
+       a. Simplified installation. ``eigenstrapping`` is dependent on many packages, including exact
+          versions of ``brainspace`` and ``lapy``. In contrast, ``neuromodes`` depends on much fewer
+          dependencies. This makes installation easier and reduces the risk of conflicts with other
+          packages.
 
-       b. Speed comparison. When generating 1000 nulls for one map on a 4k surface using 100
-          modes, the methods take:
+       b. Speed comparison. When generating 1000 nulls for one map on a 4k surface using 100 modes,
+          the methods take:
 
           i. ``SurfaceEigenstrapping(n=1000)``:         3.80 seconds
           ii. ``eigenstrap(rotation_method='scipy')``:  1.12 seconds (exactly the same output as i)
           iii. ``eigenstrap(rotation_method='qr')``:    0.10 seconds
 
-          See `this notebook <https://neuromodes.readthedocs.io/en/latest/validation/eigenstrapping_compare_speeds.html>`__
+          See `this notebook
+          <https://neuromodes.readthedocs.io/en/latest/validation/eigenstrapping_compare_speeds.html>`__
           for more comparisons between the ``'scipy'`` and ``'qr'`` methods.
 
        c. Lack of cholmod. The original implementation uses ``cholmod`` for fast sparse matrix
@@ -189,69 +195,72 @@ def eigenstrap(
           parallelize the generation of nulls across multiple CPU cores. Given our generation of
           nulls is faster, we have not implemented that at this stage. We welcome contributions to
           add support for this, but not that it may be difficult to implement this in a way that is
-          reproducible across different numbers of nulls/maps/cores/seeding strategies. We note
-          that the original implementation is not reproducible when using ``joblib`` due to the
-          order in which the seeds are generated/used.
+          reproducible across different numbers of nulls/maps/cores/seeding strategies. We note that
+          the original implementation is not reproducible when using ``joblib`` due to the order in
+          which the seeds are generated/used.
 
-       e. Only match default. We are able to exactly match the default functionality of the
-          original implementation, but not all possible configurations. This is because of some
-          changes we have made to increase speed and facilitate reproducibility. In particular,
-          when ``randomize=False`` and ``residual=None``, the output of
-          ``eigenstrap(rotation_method='scipy')`` will match the original output (see below for
-          more parameters which also need to be specified). However, if ``randomize=True`` or
+       e. Only match default. We are able to exactly match the default functionality of the original
+          implementation, but not all possible configurations. This is because of some changes we
+          have made to increase speed and facilitate reproducibility. In particular, when
+          ``randomize=False`` and ``residual=None``, the output of
+          ``eigenstrap(rotation_method='scipy')`` will match the original output (see below for more
+          parameters which also need to be specified). However, if ``randomize=True`` or
           ``residual='permute'``, it is not possible to match results between the two
           implementations. This is because of changes we have made to increase speed.
 
-       f. Changes to RNG. Here, we have changed to ``numpy``'s newer ``Generator`` for random
-          number generation, which means that the global seed does not affect the output of the
-          function when using ``rotation_method='qr'``. This is in contrast to the original
-          implementation, which used the legacy ``RandomState`` approach. See the last paragraph
-          in the `'Quick Start' section <https://numpy.org/doc/stable/reference/random/index.html#random-quick-start>`__
-          for more information about the change. In particular, the original implementation was
-          affected by the global seed when using ``seed=None``; this is preserved in
-          ``rotation_method='scipy'`` for compatibility, but not in ``rotation_method='qr'``.
+       f. Changes to RNG. Here, we have changed to ``numpy``'s newer ``Generator`` for random number
+          generation, which means that the global seed does not affect the output of the function
+          when using ``rotation_method='qr'``. This is in contrast to the original implementation,
+          which used the legacy ``RandomState`` approach. See the last paragraph in the `'Quick
+          Start' section
+          <https://numpy.org/doc/stable/reference/random/index.html#random-quick-start>`__ for more
+          information about the change. In particular, the original implementation was affected by
+          the global seed when using ``seed=None``; this is preserved in ``rotation_method='scipy'``
+          for compatibility, but not in ``rotation_method='qr'``.
 
        g. Use of first mode: This function uses the constant mode (first column of ``emodes``) and
           its corresponding eigenvalue to generate mean-preserving nulls. In contrast, the original
           implementation excludes the constant mode and its eigenvalue. Whereas in the original
           implementation users were expected to input ``emodes`` and ``evals`` with the constant
-          mode/eigenvalue removed (something of the form ``emodes[:, 1:]`` and ``evals[1:]``),
-          here users are expected to input ``emodes`` and ``evals`` with the constant
-          mode/eigenvalue included.
+          mode/eigenvalue removed (something of the form ``emodes[:, 1:]`` and ``evals[1:]``), here
+          users are expected to input ``emodes`` and ``evals`` with the constant mode/eigenvalue
+          included. This has minimal changes to the functionality of the code, other than this
+          syntactic change. 
 
        h. Concurrent processing of multiple maps. This function can process multiple maps at the
           same time. This was possible in the original implementation, but required users to save
           rotation matrices and reapply them to all maps.
 
        i. Resample AND add residuals: If both resampling and adding residuals is requested, the
-          original implementation adds residuals after resampling. Here, the order of these steps
-          is swapped (ie, add residuals and then resample). This ensures that the resampling
-          remains intact (e.g., that the surrogates and original actually have the same values). If
+          original implementation adds residuals after resampling. Here, the order of these steps is
+          swapped (ie, add residuals and then resample). This ensures that the resampling remains
+          intact (e.g., that the surrogates and original actually have the same values). If
           (instead) the resampling is done before the residuals are added, then neither step will
           remain intact. This difference is only relevant if both ``resample`` and ``residual`` are
           used.
 
        j. Syntax for exact replication. To exactly match the default version of the original
-          implementation of eigenstrapping in ref[1]_, users must do the following:
+          implementation of eigenstrapping in ref[1]_, users specify the following input parameters
+          to this function:
 
           - Ensure ``data`` has a mean of zero.
-          - Set the global seed before running this function (e.g., ``np.random.seed(seed)``).
+          - Set ``seed=seed``
           - Set ``resample="range"``
           - Set ``decomp_method="regress"``
           - Set ``rotation_method="scipy"``
 
-          Note that the original implementation (``eigenstrapping.SurfaceEigenstrapping``) must
-          also be run with a particular configuration to ensure reproducibility/compatibility:
+          Note that the original implementation (``eigenstrapping.SurfaceEigenstrapping``) must also
+          be run with a particular configuration to ensure reproducibility/compatibility:
 
           - Set the global seed before running ``SurfaceEigenstrapping(...)`` (e.g.,
             ``np.random.seed(seed)``).
-          - Additionally, pass this seed into the function call:
-            ``SurfaceEigenstrapping(..., seed=seed)``
+          - Additionally, pass this seed into the function call: ``SurfaceEigenstrapping(...,
+            seed=seed)``
           - Remember to remove the first eigenmode/eigenvalue from the call to
             ``SurfaceEigenstrapping``
 
-          For an example of how to do this, see
-          `this notebook <https://neuromodes.readthedocs.io/en/latest/validation/eigenstrapping_match_orig.html>`__.
+          For an example of how to do this, see `this notebook
+          <https://neuromodes.readthedocs.io/en/latest/validation/eigenstrapping_match_orig.html>`__.
     
     References
     ----------
