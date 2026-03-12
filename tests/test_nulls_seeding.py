@@ -257,11 +257,10 @@ def test_compared_to_original_seed_outside():
 
     # Compute new nulls
     solver = EigenSolver(mesh, mask=medmask).solve(n_modes, fix_mode1=True)
-    np.random.seed(seed)            # match eigenstrapping
+    np.random.seed(seed)            # matches original seed=seed 
     nulls_neuromodes = solver.eigenstrap(
         data=map,
         n_nulls=n_nulls,
-        seed=None,                  # matches original seed=seed 
         residual=None,              # matches original add_res=False and permute=False
         resample="range",           # matches original resample=False
         decomp_method="regress",    # matches original decomp_method='matrix'
