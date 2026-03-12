@@ -290,14 +290,6 @@ def eigenstrap(
     emodes = emodes[:, :n_modes].copy()
     evals = evals[:n_modes].copy()
     
-    # rotation_method : Set which helper function to use
-    if rotation_method == 'qr':
-        _rotate_coeffs = _rotate_coeffs_qr
-    elif rotation_method == 'scipy':
-        _rotate_coeffs = _rotate_coeffs_scipy
-    else: 
-        raise ValueError(f"Invalid rotation method '{rotation_method}'; must be 'qr' or 'scipy'.")
-    
     # residual and resample
     if residual not in (None, 'add', 'permute'):
         raise ValueError(f"Invalid residual method '{residual}'; must be 'add', 'permute', or "
@@ -306,54 +298,49 @@ def eigenstrap(
         raise ValueError(f"Invalid resampling method '{resample}'; must be 'exact', 'affine', "
                          "'mean', 'range', or None.")
     
+    # rotation_method : Set which helper function to use
+    if rotation_method == 'qr':
+        _rotate_coeffs = _rotate_coeffs_qr
+    elif rotation_method == 'scipy':
+        _rotate_coeffs = _rotate_coeffs_scipy
+    else: 
+        raise ValueError(f"Invalid rotation method '{rotation_method}'; must be 'qr' or 'scipy'.")
+    
     # seed : Initialise RNG with seed for each null (input must be None, or int, or array of shape (n_nulls,))
-    ss_main = None
-    if seed is None: # to match original
-        # null_seeds = np.full((n_nulls,), None)
-        ss_main = np.random.SeedSequence() # use global state to generate seed for each null
-    elif isinstance(seed, (int, np.integer)): # single integer
-        # Turn the seed into a random start point, and then use sequential integers after that. This
-        # is the easiest way to get random, different integers:
-        #   - `.integers` does not offer sampling without replacement. 
-        #   - `.choice` is not reproducible if the number of nulls is changed due to hidden floating
-        # point round off in its implementation. Compare `np.random.default_rng(1).choice(2**31-1,
-        # size=4, shuffle=False, replace=False)` and `np.random.default_rng(1).choice(2**31-1,
-        # size=5, shuffle=False, replace=False)`.
-        #   - Just adding the index to the seed can lead to nulls being repeated across different
-        # seeds, when they would be expected to be different e.g. for `seed=0, n_nulls=1000` and
-        # `seed=42, n_nulls=1000` (or `seed=314`, `seed=365` etc). 
-        # null_seeds = (
-        #     np.arange(n_nulls, dtype=np.int64) # different ints to prevent overflow when adding
-        #     + np.random.default_rng(int(seed)).integers(np.iinfo(np.int32).max)
-        # )
-        ss_main = np.random.SeedSequence(seed) # use seed to generate seed for each null
-
-    if ss_main is not None:
-        ss_randomize, ss_rotate, ss_residual = ss_main.spawn(3) 
+    if seed is None or isinstance(seed, (int, np.integer)):
+        ss_main = np.random.SeedSequence(seed)
+        ss_randomize, ss_residual, ss_rotate = ss_main.spawn(3) 
         seeds_randomize = ss_randomize.generate_state(n_nulls, dtype=np.uint64) # large ints to minimize chance of repetition
-        seeds_rotate = ss_rotate.generate_state(n_nulls, dtype=np.uint64)
         seeds_residual = ss_residual.generate_state(n_nulls, dtype=np.uint64)
-        # if seed is None and rotation_method == 'scipy':
-        #     seeds_rotate = np.full((n_nulls,), None)
+        seeds_rotate = ss_rotate.generate_state(n_nulls, dtype=np.uint64)   
+        if rotation_method == 'scipy':
+            seeds_rotate = np.full((n_nulls,), None)
+            if seed is not None: 
+                np.random.seed(seed)
     else:
-        null_seeds = np.asarray_chkfinite(seed) # has to be like this in case input is a tuple
-        if not np.issubdtype(null_seeds.dtype, np.integer):
+        ss_main = np.asarray_chkfinite(seed)
+        if not np.issubdtype(ss_main.dtype, np.integer):
             raise ValueError(f"`seed` must be an integer or array of integers, got dtype "
-                             f"{null_seeds.dtype}.")
-        if null_seeds.shape != (n_nulls,):
+                             f"{ss_main.dtype}.")
+        if ss_main.shape != (n_nulls,):
             raise ValueError(f"If `seed` is an array, it must have shape (n_nulls,) = ({n_nulls},), got "
-                                f"{null_seeds.shape}.")
-        seeds_randomize = seeds_rotate = seeds_residual = null_seeds
+                             f"{ss_main.shape}.")
+        seeds_randomize = seeds_residual = seeds_rotate = ss_main
 
-    if rotation_method == 'scipy':
-        if seed is None:
-            seeds_rotate = np.full((n_nulls,), None)
-            # np.random.seed(seed)
-        elif isinstance(seed, (int, np.integer)): 
-            seeds_rotate = np.full((n_nulls,), None)
-            np.random.seed(seed)
-        else: 
-            null_seeds = np.asarray_chkfinite(seed)
+        # # Preallocate arrays for the isolated states
+        # seeds_randomize = np.empty(n_nulls, dtype=np.uint64)
+        # seeds_residual = np.empty(n_nulls, dtype=np.uint64)
+        # seeds_rotate = np.empty(n_nulls, dtype=np.uint64)
+
+        # # Spawn isolated branches for every map based on its specific user seed
+        # for i, s in enumerate(ss_main):
+        #     map_root = np.random.SeedSequence(s)
+        #     rand_ss, res_ss, rot_ss = map_root.spawn(3)
+            
+        #     # Extract single 64-bit integer states for the downstream logic
+        #     seeds_randomize[i] = rand_ss.generate_state(1, dtype=np.uint64)[0]
+        #     seeds_residual[i] = res_ss.generate_state(1, dtype=np.uint64)[0]
+        #     seeds_rotate[i] = rot_ss.generate_state(1, dtype=np.uint64)[0]
 
     # Main calculations
     # Precompute transformed modes (ellipsoid -> spheroid for each eigengroup)

@@ -131,7 +131,7 @@ def test_seed_single_multiple(solver, test_data, rotation_method, randomize, res
         # If the input seed is a single integer, it should use that to spawn a new set of seed(s)
         b1 = solver.eigenstrap(test_data, n_nulls=1, seed=i, rotation_method=rotation_method, randomize=randomize, residual=residual)
         assert not np.allclose(a1[:, i:i+1, :], b1, atol=1e-10), \
-            f"Nulls generated with seed {i} should be identical"
+            f"Nulls generated with seed {i} should be different when passed as single integer vs array"
 
 @pytest.mark.parametrize("randomize", [False])  # only rotation_method may be affected by global state
 @pytest.mark.parametrize("residual", [None])    # these methods use the new Generators and will not be affected
