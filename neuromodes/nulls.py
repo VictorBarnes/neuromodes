@@ -44,7 +44,7 @@ def eigenstrap(
     ----------
     data : array-like
         Empirical brain map(s) of shape ``(n_verts,)`` or ``(n_verts, n_maps)`` to generate nulls from. If
-        n_maps > 1, the same set of randomized rotations is applied to all maps for each null (see
+        ``n_maps > 1``, the same set of randomized rotations is applied to all maps for each null (see
         Notes). 
     emodes : array-like
         The eigenmodes array of shape ``(n_verts, n_modes)``. This function rotates modes within
@@ -73,7 +73,7 @@ def eigenstrap(
         ``False``.
     residual : str, optional
         How to handle reconstruction residuals after generating null maps. Either ``None`` to
-        exclude residuals, ``'add'`` to add original residuals, or ``'permute'`` to adds shuffled
+        exclude residuals, ``'add'`` to add original residuals, or ``'permute'`` to add shuffled
         residuals. Default is ``None``. See Notes for details on which option to choose.
     resample : bool, optional
         How to resample values from original data. Options are ``'exact'`` to match the sorted
@@ -93,7 +93,7 @@ def eigenstrap(
         ``None``, the global state is used. Default is ``None``.
     check_ortho : bool, optional
         Whether to check if ``emodes`` are mass-orthonormal before using the ``'project'`` method in
-        :func:`neuromodes.basis.decompose`. Default is ``True``.
+        :func:`~neuromodes.basis.decompose`. Default is ``True``.
     
     Returns
     -------
@@ -194,7 +194,7 @@ def eigenstrap(
        d. Lack of parallelization from ``joblib``. The original implementation uses ``joblib`` to
           parallelize the generation of nulls across multiple CPU cores. Given our generation of
           nulls is faster, we have not implemented that at this stage. We welcome contributions to
-          add support for this, but not that it may be difficult to implement this in a way that is
+          add support for this, but note that it may be difficult to implement this in a way that is
           reproducible across different numbers of nulls/maps/cores/seeding strategies. We note that
           the original implementation is not reproducible when using ``joblib`` due to the order in
           which the seeds are generated/used.
@@ -233,7 +233,7 @@ def eigenstrap(
 
        i. Resample AND add residuals: If both resampling and adding residuals is requested, the
           original implementation adds residuals after resampling. Here, the order of these steps is
-          swapped (ie, add residuals and then resample). This ensures that the resampling remains
+          swapped (i.e., add residuals and then resample). This ensures that the resampling remains
           intact (e.g., that the surrogates and original actually have the same values). If
           (instead) the resampling is done before the residuals are added, then neither step will
           remain intact. This difference is only relevant if both ``resample`` and ``residual`` are
@@ -289,7 +289,7 @@ def eigenstrap(
     if n_groups is None:
         n_groups = int(np.sqrt(n_cols))  # floor of root
         if n_groups**2 != n_cols:
-            warn("`emodes` contains an incomplete eigengroup (i.e, number of modes is not a "
+              warn("`emodes` contains an incomplete eigengroup (i.e., number of modes is not a "
                  f"perfect square). Last {n_cols - n_groups**2} modes will be excluded.")
     elif n_groups**2 > n_cols:
         raise ValueError(f"`n_groups`={n_groups} implies n_modes={n_groups**2}, which exceeds the "
@@ -327,9 +327,9 @@ def eigenstrap(
     states = np.array([np.random.SeedSequence(s).generate_state(3, dtype=np.uint64) for s in seeds_main])
     seeds_rotate, seeds_randomize, seeds_residual = states.T # randomize and residual only used if needed
 
-    # rotation_method : For legacy behaviour mainly (compatability with original eigenstrapping).
+    # rotation_method : For legacy behaviour mainly (compatibility with original eigenstrapping).
     # 1. We preserve the legacy behaviour of the original eigenstrapping under default parameters
-    # (ie. randomize=False and residual=None) when using the 'scipy' method. We don't support the
+    # (i.e., randomize=False and residual=None) when using the 'scipy' method. We don't support the
     # other cases due to the various other changes we have made to increase speed and facilitate
     # reproducibility. Therefore, we don't change seeds_randomize or seeds_residual here.  
     # 2. The legacy implementation does not support array inputs, so we can just keep the above
@@ -495,10 +495,10 @@ def _rotate_coeffs_qr(
     We choose not to use ``special_ortho_group.rvs(..., size=len(seeds))`` here in order to
     facilitate generating rotations with precise seeding. We _could_ use this approach instead of
     defining our own helper, but it would not allow specific seeds to be used for each null.
-    Instead, the user would have to pass a single seed which would then generate the rotations
+    Instead, the user would have to pass a single seed which would then generate the rotation
     matrices for all the nulls. This would make it difficult to exactly replicate specific nulls,
     thus impairing replicability. Instead, we unwrap the code in ``special_ortho_group.rvs``: we
-    generate random Gaussian matrices ourself (using specific seeds for each null), and then use
+    generate random Gaussian matrices ourselves (using specific seeds for each null), and then use
     the same procedure as in that function (also in a vectorised manner).
     """
     # Unlike scipy method, still have to return Generator even if seed is None (for generating random Gaussian matrices)
