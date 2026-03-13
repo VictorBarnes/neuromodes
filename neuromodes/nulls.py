@@ -97,7 +97,7 @@ def eigenstrap(
     
     Returns
     -------
-    ndarray of shape ``(n_verts, n_nulls)`` or ``(n_verts, n_nulls, n_maps)``
+    np.ndarray
         Generated null maps of shape ``(n_verts, n_nulls)`` if ``data`` has shape ``(n_verts,)``, or
         ``(n_verts, n_nulls, n_maps)`` if ``data`` has shape ``(n_verts, n_maps)``.
 
