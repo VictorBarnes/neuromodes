@@ -258,7 +258,17 @@ def test_scale_hetero(surf_medmask_hetero):
     assert np.isclose(np.mean(hetero_sig), 1.0, atol=1e-3)
     assert np.all((hetero_sig > 0) & (hetero_sig < 2))
 
-    # Check that exponential-scaled hetero is all positive
+# TODO: add aniso tests
+# - test that aniso_map works
+# - test that aniso_map with beta = 0 gives isotropic curvature (same as no aniso_map)
+# - test that aniso_map and aniso_curv are mutually exclusive (should raise error)
+# - test aniso_curv with scalar
+# - test aniso_curv with tuple
+# - test beta is ignored when aniso_curv is provided
+# - test aniso_curv = 0 or (0, 0) gives isotropic curvature (same as no aniso_curv)
+
+def test_scale_hetero_exponential_positive(surf_medmask_hetero):
+    _, _, hetero = surf_medmask_hetero
     hetero_exp = scale_hetero(hetero, scaling='exponential')
     assert np.all(hetero_exp > 0)
 

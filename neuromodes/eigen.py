@@ -50,14 +50,19 @@ class EigenSolver(Solver):
         Scaling function to apply to the heterogeneity map. Must be `'sigmoid'` or
         `'exponential'`. If a heterogenity map is specified, the default is `'sigmoid'`.
         Otherwise, this value is ignored (and is set to `None`).
-    aniso : array-like, optional
-        Anisotropy map to incorporate regional anisotropy into the Laplace-Beltrami 
-        operator. Default is `None`.
+    aniso_map : array-like, optional
+        Anisotropy map used to incorporate regional anisotropy into the Laplace-Beltrami
+        operator via the gradient of this map. Default is `None`.
+    aniso_curv : float or tuple of shape (2,), optional
+        Curvature-based anisotropy strength(s). If a scalar, uses the same strength along both
+        principal curvature directions. If a tuple ``(a1, a2)``, uses separate strengths where
+        large ``a1`` suppresses diffusion along the minimum curvature direction and large
+        ``a2`` suppresses diffusion along the maximum curvature direction. Default is `None`.
     beta: float, optional
-        Anisotropy ratio parameter controlling directional bias of diffusion. When beta=0, 
-        diffusion is isotropic. Positive beta enhances diffusion parallel to the gradient of 
-        `aniso` while reducing it perpendicular to the gradient. Negative beta does the 
-        opposite: enhances diffusion perpendicular to the gradient while reducing it parallel. 
+        Directional bias parameter used only with `aniso_map`. When beta=0, diffusion is
+        isotropic. Positive beta enhances diffusion parallel to the gradient of `aniso_map` while
+        reducing it perpendicular to the gradient. Negative beta does the opposite. Ignored when
+        `aniso_curv` is provided.
         
     Raises
     ------
@@ -87,7 +92,8 @@ class EigenSolver(Solver):
         hetero: Union[ArrayLike, None] = None,
         alpha: Union[float, None] = None, # default to 1.0 if hetero given (and remains None)
         scaling: Union[str, None] = None,  # default to "sigmoid" if hetero given (and remains None)
-        aniso: Union[ArrayLike, None] = None,
+        aniso_map: Union[ArrayLike, None] = None,
+        aniso_curv: Union[float, Tuple[float, float], None] = None,
         beta: Union[float, None] = None
     ):
         # Surface inputs and checks
@@ -143,27 +149,46 @@ class EigenSolver(Solver):
             )
 
         # Aniso inputs
-        if aniso is None:
+        if aniso_curv is not None and aniso_map is not None:
+            raise ValueError("Specify only one of `aniso_map` or `aniso_curv`.")
+
+        self._aniso_curv = None
+        if aniso_curv is not None:
             if beta is not None:
-                warn("`beta` is ignored as `aniso` is None.")
+                warn("`beta` is ignored as `aniso_curv` is provided.")
+            if np.isscalar(aniso_curv):
+                a0 = float(aniso_curv)
+                a1 = float(aniso_curv)
+            else:
+                aniso_curv_arr = np.asarray(aniso_curv)
+                if aniso_curv_arr.shape != (2,):
+                    raise ValueError("`aniso_curv` must be a scalar or a tuple/array of shape (2,).")
+                a0 = float(aniso_curv_arr[0])
+                a1 = float(aniso_curv_arr[1])
+            self._aniso_curv = (a0, a1)
+            self.aniso = None
+            self._beta = None
+        elif aniso_map is None:
+            if beta is not None:
+                warn("`beta` is ignored as `aniso_map` is None.")
             self.aniso = None
             self._beta = None
         else:
-            aniso = np.asarray(aniso)
+            aniso_map = np.asarray(aniso_map)
             beta = 1.0 if beta is None else float(beta)
 
-            # Ensure aniso has correct length (masked or unmasked)
-            if mask is not None and aniso.shape == (len(mask),):
-                aniso = aniso[mask]
-            elif aniso.shape != (self.n_verts,):
+            # Ensure aniso_map has correct length (masked or unmasked)
+            if self.mask is not None and aniso_map.shape == (len(self.mask),):
+                aniso_map = aniso_map[self.mask]
+            elif aniso_map.shape != (self.n_verts,):
                 err_str = f"the number of vertices in the surface mesh ({self.n_verts})"
                 if self.mask is not None:
                     err_str += f" or the masked surface mesh (of size {self.mask.sum()})"
                 raise ValueError(
-                    f"`aniso` must be a 1D array with length matching {err_str}."
+                    f"`aniso_map` must be a 1D array with length matching {err_str}."
                 )
-            
-            aniso_check = np.asarray_chkfinite(aniso)   # check for NaNs and infs
+
+            aniso_check = np.asarray_chkfinite(aniso_map)   # check for NaNs and infs
             self.aniso = (aniso_check - np.mean(aniso_check)) / np.std(aniso_check)
             self._beta = beta
 
@@ -175,6 +200,10 @@ class EigenSolver(Solver):
             str_out += f' ({np.sum(self.mask == 0)} vertices masked out)'
         if self._raw_hetero is not None:
             str_out += f'\nHeterogeneity map scaling: {self._scaling} (alpha={self._alpha})'
+        if self.aniso is not None:
+            str_out += f'\nAnisotropy: map-gradient (beta={self._beta})'
+        elif getattr(self, "_aniso_curv", None) is not None:
+            str_out += f'\nAnisotropy: curvature (strengths={self._aniso_curv})'
         str_out += f'\n{self.n_modes if hasattr(self, "n_modes") else "No"} eigenmodes computed'
 
         return str_out
@@ -214,13 +243,15 @@ class EigenSolver(Solver):
         preserves the determinant (geometric mean = 1). This decouples the effects of 
         hetero (overall diffusion magnitude) and beta (directional bias).
         """
-        if self.hetero is None and self.aniso is None:
+        if self.hetero is None and self.aniso is None and self._aniso_curv is None:
             stiffness, mass = self._fem_tria(self.geometry, lump)
         else:
             if self.hetero is not None:
                 hetero_tri = self.geometry.map_vfunc_to_tfunc(self.hetero)
+            else:
+                hetero_tri = np.ones(self.geometry.t.shape[0])
 
-            u1, u2, _, _ = self.geometry.curvature_tria(smoothit=smoothit)
+            u1, u2, c1, c2 = self.geometry.curvature_tria(smoothit=smoothit)
             
             if self.aniso is not None:
                 # Compute 3D gradient at each triangle
@@ -247,6 +278,20 @@ class EigenSolver(Solver):
                 aniso_mat = np.column_stack([
                     hetero_tri * aniso_u1,  # when beta=0, this becomes hetero_tri * 1
                     hetero_tri * aniso_u2   # when beta=0, this becomes hetero_tri * 1
+                ])
+            elif self._aniso_curv is not None:
+                # Curvature-based anisotropy (following lapy), re-normalized to preserve 
+                # determinant so that hetero controls overall diffusion magnitude.
+                a1, a2 = self._aniso_curv
+                log_p = -a1 * np.abs(c2)  # column 0
+                log_q = -a2 * np.abs(c1)  # column 1
+                mean_log = (log_p + log_q) / 2  # mean log for normalization
+                aniso_u1 = np.exp(log_p - mean_log)
+                aniso_u2 = np.exp(log_q - mean_log)
+
+                aniso_mat = np.column_stack([
+                    hetero_tri * aniso_u1,
+                    hetero_tri * aniso_u2,
                 ])
             else:
                 # Isotropic case
