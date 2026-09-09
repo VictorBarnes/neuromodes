@@ -29,6 +29,7 @@ docs/generated/
 examples/_cache/
 examples/data/
 examples/results/
+examples/scripts/*.sh
 
 # PyBuilder
 .pybuilder/
