@@ -234,7 +234,7 @@ def _cache_output(
         cache_dir = getenv("CACHE_DIR")
         if cache_dir is None:
             cache_dir = Path.home() / ".neuromodes_cache"
-        print(f"Using cache directory at {cache_dir}. To cache elsewhere, set cache_dir.")  
+            print(f"Using cache directory at {cache_dir}. To cache elsewhere, set cache_dir.")  
 
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
