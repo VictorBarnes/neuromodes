@@ -26,9 +26,9 @@ docs/_build/
 docs/generated/
 
 # Demos
-docs/demos/_cache/
-docs/demos/demo_data/
-docs/demos/results/
+examples/_cache/
+examples/data/
+examples/results/
 
 # PyBuilder
 .pybuilder/

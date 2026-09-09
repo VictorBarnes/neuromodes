@@ -160,7 +160,7 @@ def _fetch_empirical_constants() -> Tuple[int, float, float, int]:
 def _setup_surface_and_masks(subj_id: str, visit: str) -> Tuple[str, np.ndarray]:
     surf = str(
         DEMO_DIR
-        / "demo_data"
+        / "data"
         / subj_id
         / visit
         / f"{subj_id}.L.midthickness_MSMAll.4k_fs_LR.surf.gii"
@@ -176,7 +176,7 @@ def _load_empirical_data(subj_id: str, visit: str, medmask: np.ndarray) -> np.nd
         for acquisition in ("LR", "RL"):
             bold_path = (
                 DEMO_DIR
-                / "demo_data"
+                / "data"
                 / subj_id
                 / visit
                 / f"rfMRI_REST{session}_{acquisition}_Atlas_MSMAll_hp2000_clean_rclean_tclean_4k.L.func.gii"
@@ -537,7 +537,7 @@ def main() -> None:
     hetero_map = nib.load(
         str(
             DEMO_DIR
-            / "demo_data"
+            / "data"
             / args.subj_id
             / args.visit
             / f"{args.subj_id}.L.MyelinMap_BC_MSMAll.4k_fs_LR.func.gii"
