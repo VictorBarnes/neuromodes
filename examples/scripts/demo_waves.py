@@ -387,7 +387,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--subj_id", type=str, required=True)
     parser.add_argument("--visit", type=str, required=True)
-    parser.add_argument("--n_runs", type=int, default=10)
+    parser.add_argument("--n_runs", type=int, default=4)    # 4 runs to match no. of empirical timeseries
     parser.add_argument("--n_modes", type=int, default=500)
     parser.add_argument(
         "--metrics",
