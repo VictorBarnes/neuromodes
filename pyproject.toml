@@ -25,6 +25,11 @@ tutorials = [
 cache = [
     "joblib>=1.5.3",
 ]
+demos = [
+    "kaleido>=1.4.0",
+    "optuna>=5.0.0",
+    "optunahub>=0.4.1",
+]
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
