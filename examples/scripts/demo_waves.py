@@ -32,7 +32,7 @@ from neuromodes.io import fetch_example_surf
 
 plt.rcParams["figure.dpi"] = 300
 
-DEMO_DIR = Path(__file__).parent.resolve()
+DEMO_DIR = Path(__file__).parent.parent.resolve()
 DEFAULT_ALPHA = None
 DEFAULT_R = 18.0
 DEFAULT_GAMMA = 116.0
@@ -619,6 +619,7 @@ def main() -> None:
                 emp_outputs, 
                 args.metrics
 			)
+            # TODO: save metrics as optuna attributes for each trial
             score = float(sum(metrics[name] for name in args.metrics))
             if not np.isfinite(score):
                 raise ValueError(f"Non-finite score: {score}")
@@ -674,7 +675,7 @@ def main() -> None:
     print(f"Best score: {-best_trial.value:.8f}")
     print(f"Best parameters: {best_trial.params}")
     print(f"Results directory: {subj_dir}")
-    print(f"Total optimization time: {(time.time() - t0) / 3600:.3f} hrs")
+    print(f"Total optimization time with {args.n_jobs} CPUs: {(time.time() - t0) / 3600:.3f} hrs")
 
     fig_opt_history = optuna.visualization.plot_optimization_history(study)
     fig_opt_history.write_image(str(subj_dir / "optimization_history.png"))
