@@ -20,7 +20,8 @@ import nibabel as nib
 import numpy as np
 import optuna
 import optunahub
-from scipy.stats import zscore
+from scipy.stats import zscore, ks_2samp
+from scipy.signal import butter, filtfilt, hilbert
 import matplotlib.pyplot as plt
 
 from nsbutils.plotting import plot_surf
@@ -36,7 +37,7 @@ DEMO_DIR = Path(__file__).parent.parent.resolve()
 DEFAULT_ALPHA = None
 DEFAULT_R = 18.0
 DEFAULT_GAMMA = 116.0
-METRIC_CHOICES = ("edge_fc_corr", "node_fc_corr")
+METRIC_CHOICES = ("edge_fc_corr", "node_fc_corr", "fcd_ks")
 PARAM_ORDER = ("alpha", "r", "gamma")
 
 
@@ -182,9 +183,15 @@ def _load_empirical_data(subj_id: str, visit: str, medmask: np.ndarray) -> np.nd
                 / f"rfMRI_REST{session}_{acquisition}_Atlas_MSMAll_hp2000_clean_rclean_tclean_4k.L.func.gii"
             )
             bold = np.asarray(nib.load(str(bold_path)).agg_data(), dtype=np.float32)[:, medmask].T
-            bold_data.append(zscore(bold, axis=1).astype(np.float32))
-            if np.isnan(bold_data).any():
+            bold_z = zscore(bold, axis=1).astype(np.float32)
+            if np.isnan(bold_z).any():
                 raise ValueError(f"NaN values found in empirical BOLD data: {bold_path}")
+            if np.shape(bold_z) != (np.sum(medmask), 1200):
+                raise ValueError(
+                    f"Empirical BOLD data shape mismatch: {bold_path} has shape {bold_z.shape}, "
+                    f"expected ({np.sum(medmask)}, 1200)"
+                )
+            bold_data.append(bold_z)
     return np.concatenate(bold_data, axis=1).astype(np.float32)
 
 
@@ -222,7 +229,7 @@ def _simulate_bold(
     solver.solve(hetero=hetero, n_modes=int(n_modes), seed=365)
     downsample_factor = int(dt_emp / dt_model)
     nt_model = int(nt_emp * downsample_factor) + int(tsteady)
-    bold = np.empty((int(np.sum(medmask)), nt_emp, n_runs), dtype=np.float32)
+    bold = np.empty((int(np.sum(medmask)), nt_emp*n_runs), dtype=np.float32)
 
     for i in range(n_runs):
         sim_kwargs: Dict[str, Any] = {
@@ -239,7 +246,7 @@ def _simulate_bold(
 
         bold_i = solver.balloon_model(solver.sim_nft_waves(**sim_kwargs), dt=dt_model).astype(np.float32)
         bold_i = bold_i[:, tsteady:][:, ::downsample_factor]
-        bold[:, :, i] = zscore(bold_i, axis=1).astype(np.float32)
+        bold[:, i*nt_emp:(i+1)*nt_emp] = zscore(bold_i, axis=1).astype(np.float32)
 
     return bold
 
@@ -262,6 +269,129 @@ def calc_node_fc(fc: np.ndarray, eps: float = 1e-7) -> np.ndarray:
     return np.nanmean(np.arctanh(fc_clipped), axis=1)
 
 
+def filter_bold(bold, fnq, band_freq=(0.01, 0.1), k=2):
+    """
+    Apply Butterworth bandpass filter to BOLD signal.
+    
+    Parameters
+    ----------
+    bold : np.ndarray
+        BOLD time series to filter.
+    fnq : float
+        Nyquist frequency in Hz.
+    band_freq : tuple, default=(0.01, 0.1)
+        Frequency band (low, high) in Hz.
+    k : int, default=2
+        Filter order.
+    
+    Returns
+    -------
+    bold_filtered : np.ndarray
+        Bandpass filtered BOLD signal.
+    """
+    # Normalize frequency band to Nyquist frequency
+    Wn = [band_freq[0] / fnq, band_freq[1] / fnq]
+    b, a = butter(k, Wn, btype="bandpass")
+
+    # Z-score and apply zero-phase filter
+    bold_z = zscore(bold, axis=1).astype(np.float32)
+    bold_filtered = filtfilt(b, a, bold_z, axis=1)
+
+    return bold_filtered
+
+
+def calc_fcd_efficient(bold, fnq, band_freq=(0.04, 0.07), n_avg=3, 
+                       chunk_size=50, metric="phase", verbose=False):
+    """
+    Calculate FCD using memory-efficient chunked processing.
+    
+    This implementation processes time series in chunks to reduce memory usage
+    for large datasets.
+    
+    Parameters
+    ----------
+    bold : np.ndarray
+        BOLD time series with shape (n_regions, n_timepoints).
+    fnq : float
+        Nyquist frequency in Hz.
+    band_freq : tuple, default=(0.01, 0.1)
+        Frequency band (low, high) in Hz for bandpass filtering.
+    n_avg : int, default=3
+        Number of timepoints to average for sliding window.
+    chunk_size : int, default=50
+        Number of timepoints to process per chunk.
+    metric : str, default="phase"
+        Metric to use: "phase" or "amplitude".
+    
+    Returns
+    -------
+    fcd_upper : np.ndarray
+        Upper triangular FCD matrix values.
+    """
+    t1 = time.time()
+    if n_avg < 1:
+        raise ValueError("n_avg must be greater than 0")
+
+    bold = bold.astype(np.float32, copy=False)
+    n_regions, nt = bold.shape
+    
+    # Extract phase or amplitude from analytic signal
+    bold_filtered = filter_bold(bold, fnq, band_freq=band_freq, k=2)
+    analytic = hilbert(bold_filtered, axis=1)
+    if metric == "amplitude":
+        signal = np.abs(analytic)
+    elif metric == "phase":
+        signal = np.angle(analytic)
+    else:
+        raise ValueError("Invalid metric. Choose 'amplitude' or 'phase'.")
+
+    # Remove edge artifacts
+    t_trunc = np.arange(9, nt - 9)
+    nt_trunc = len(t_trunc)
+    signal_trunc = signal[:, t_trunc]
+
+    triu_i, triu_j = np.triu_indices(n_regions, k=1)
+    n_edges = len(triu_i)
+
+    # Pre-allocate normalized synchrony matrix
+    n_windows = nt_trunc - n_avg - 1
+    p_mat = np.empty((n_windows, n_edges), dtype=np.float32)
+
+    # Process in chunks to reduce memory footprint
+    for chunk_start in range(0, nt_trunc, chunk_size):
+        chunk_end = min(chunk_start + chunk_size, nt_trunc)
+        chunk_size_actual = chunk_end - chunk_start
+
+        # Compute synchrony for current chunk
+        synchrony_chunk = np.empty((chunk_size_actual, n_edges), dtype=np.float32)
+        for i in range(chunk_size_actual):
+            signal_t = signal_trunc[:, chunk_start + i]
+            synchrony_mat = np.cos(signal_t[:, None] - signal_t[None, :])
+            synchrony_chunk[i, :] = synchrony_mat[triu_i, triu_j]
+
+        # Apply sliding window averaging within chunk
+        for i in range(chunk_size_actual):
+            global_t = chunk_start + i
+            if global_t < n_windows:
+                start_idx = max(0, global_t - chunk_start)
+                end_idx = min(chunk_size_actual, global_t + n_avg - chunk_start)
+
+                if end_idx > start_idx:
+                    avg_sync = np.mean(synchrony_chunk[start_idx:end_idx, :], axis=0)
+                    norm_val = np.sqrt(np.sum(avg_sync ** 2))
+                    
+                    p_mat[global_t, :] = avg_sync / norm_val if norm_val > 1e-6 else 0.0
+
+    # Compute temporal correlation of synchrony patterns
+    fcd_mat = p_mat @ p_mat.T
+    triu_ind = np.triu_indices(fcd_mat.shape[0], k=1)
+
+    t2 = time.time()
+    if verbose:
+        print(f"FCD calculation completed in {(t2 - t1) / 60:.2f} minutes.")
+    return fcd_mat[triu_ind]
+
+
 def evaluate_model(
     model_outputs: Mapping[str, np.ndarray],
     emp_outputs: Mapping[str, np.ndarray],
@@ -276,6 +406,11 @@ def evaluate_model(
         model_node_fc = calc_node_fc(model_outputs["fc"])
         emp_node_fc = calc_node_fc(emp_outputs["fc"])
         results["node_fc_corr"] = float(np.corrcoef(model_node_fc, emp_node_fc)[0, 1])
+    if "fcd_ks" in metrics:
+        results['fcd_ks'] = 1 - ks_2samp(
+            model_outputs['fcd'].flatten(), 
+            emp_outputs['fcd'].flatten()
+        )[0]
     return results
 
 
@@ -394,8 +529,9 @@ def parse_args() -> argparse.Namespace:
         type=str,
         nargs="+",
         choices=METRIC_CHOICES,
-        default=["edge_fc_corr", "node_fc_corr"],
+        default=["edge_fc_corr", "node_fc_corr", "fcd_ks"],
     )
+    parser.add_argument("--band_freq", type=float, nargs=2, default=(0.04, 0.07), metavar=("LOW", "HIGH"))
     parser.add_argument("--alpha", type=float, nargs=3, default=None, metavar=("MIN", "MAX", "STEP"))
     parser.add_argument("--r", type=float, nargs=3, default=None, metavar=("MIN", "MAX", "STEP"))
     parser.add_argument("--gamma", type=float, nargs=3, default=None, metavar=("MIN", "MAX", "STEP"))
@@ -496,6 +632,7 @@ def main() -> None:
         "metrics": list(args.metrics),
         "n_runs": int(args.n_runs),
         "n_modes": int(args.n_modes),
+        "band_freq": list(args.band_freq),
         "noise_seed": int(args.noise_seed),
         "defaults": defaults,
         "fixed_params": fixed_params,
@@ -548,12 +685,32 @@ def main() -> None:
     hetero_map[~medmask] = np.nan
     hetero_fig, ax = plt.subplots(1, 1, figsize=(6, 4))
     plot_surf(surf, hetero_map, cmap="turbo", ax=ax)
-    hetero_fig.savefig(subj_dir / f"myelinmap.png", dpi=300, bbox_inches="tight")
-    
-    print("Loading empirical data and calculating FC...")
-    emp_bold = _load_empirical_data(args.subj_id, args.visit, medmask)
-    emp_outputs = {"fc": calc_fc(emp_bold)}
+    hetero_fig.savefig(subj_dir / f"myelinmap.png", dpi=200, bbox_inches="tight")
+
+    # Load empirical BOLD data and calculate FC
+    print("Loading empirical data and calculating outputs...")
     nt_emp, dt_emp, dt_model, tsteady = _fetch_empirical_constants()
+    emp_bold = _load_empirical_data(args.subj_id, args.visit, medmask)[:, :100]
+    emp_outputs = {
+        "fc": calc_fc(emp_bold),
+        "fcd": calc_fcd_efficient(emp_bold, fnq=1/(2*dt_emp), band_freq=args.band_freq)
+    }
+
+    # Plot and save empirical BOLD time series (carpet plot)
+    fig_emp_bold, ax = plt.subplots(1, 1, figsize=(6, 4))
+    im = ax.imshow(emp_bold, aspect="auto", cmap="seismic")
+    ax.set_xlabel("Time (TRs)")
+    ax.set_ylabel("Vertices")
+    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    fig_emp_bold.savefig(subj_dir / f"empirical_bold.png", dpi=200, bbox_inches="tight")
+
+    # Plot and save empirical FC matrix
+    fig_emp_fc, ax = plt.subplots(1, 1, figsize=(6, 4))
+    im = ax.imshow(emp_outputs["fc"], cmap="seismic", vmin=-1, vmax=1)
+    ax.set_xlabel("Vertices")
+    ax.set_ylabel("Vertices")
+    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    fig_emp_fc.savefig(subj_dir / f"empirical_fc.png", dpi=200, bbox_inches="tight")
 
     search_space = build_search_space(free_params)
     sampler = _create_sampler(
@@ -613,13 +770,15 @@ def main() -> None:
                 dt_emp=dt_emp,
                 dt_model=dt_model,
                 tsteady=tsteady,
-            )
+            )[:, :100]
             metrics = evaluate_model(
-                {"fc": calc_fc(np.hstack([bold[:, :, i] for i in range(args.n_runs)]))}, 
+                {
+                    "fc": calc_fc(bold), 
+                    "fcd": calc_fcd_efficient(bold, fnq=1/(2*dt_emp), band_freq=args.band_freq)
+                }, 
                 emp_outputs, 
                 args.metrics
 			)
-            # TODO: save metrics as optuna attributes for each trial
             score = float(sum(metrics[name] for name in args.metrics))
             if not np.isfinite(score):
                 raise ValueError(f"Non-finite score: {score}")

@@ -30,6 +30,7 @@ examples/_cache/
 examples/data/
 examples/results/
 examples/scripts/*.sh
+examples/scripts/*.ipynb
 
 # PyBuilder
 .pybuilder/
