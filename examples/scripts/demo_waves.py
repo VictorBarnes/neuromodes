@@ -690,7 +690,7 @@ def main() -> None:
     # Load empirical BOLD data and calculate FC
     print("Loading empirical data and calculating outputs...")
     nt_emp, dt_emp, dt_model, tsteady = _fetch_empirical_constants()
-    emp_bold = _load_empirical_data(args.subj_id, args.visit, medmask)[:, :100]
+    emp_bold = _load_empirical_data(args.subj_id, args.visit, medmask)
     emp_outputs = {
         "fc": calc_fc(emp_bold),
         "fcd": calc_fcd_efficient(emp_bold, fnq=1/(2*dt_emp), band_freq=args.band_freq)
@@ -770,7 +770,7 @@ def main() -> None:
                 dt_emp=dt_emp,
                 dt_model=dt_model,
                 tsteady=tsteady,
-            )[:, :100]
+            )
             metrics = evaluate_model(
                 {
                     "fc": calc_fc(bold), 
