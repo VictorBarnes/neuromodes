@@ -28,7 +28,6 @@ cache = [
 demos = [
     "kaleido>=1.4.0",
     "optuna>=5.0.0",
-    "optunahub>=0.4.1",
     "seaborn>=0.13.2",
 ]
 
