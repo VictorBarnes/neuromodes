@@ -19,7 +19,6 @@ from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 import nibabel as nib
 import numpy as np
 import optuna
-import optunahub
 from scipy.stats import zscore, ks_2samp
 from scipy.signal import butter, filtfilt, hilbert
 import matplotlib.pyplot as plt
@@ -29,6 +28,7 @@ from nsbutils.plotting import plot_surf
 from neuromodes.eigen import EigenSolver
 from neuromodes.stats import sigmoid_rescale, zscorew
 from neuromodes.io import fetch_example_surf
+from neuromodes.mesh import unmask_data
 
 
 plt.rcParams["figure.dpi"] = 300
@@ -38,6 +38,7 @@ DEFAULT_ALPHA = None
 DEFAULT_R = 18.0
 DEFAULT_GAMMA = 116.0
 METRIC_CHOICES = ("edge_fc_corr", "node_fc_corr", "fcd_ks")
+SESSION_CHOICES = (1, 2)
 PARAM_ORDER = ("alpha", "r", "gamma")
 
 
@@ -171,9 +172,9 @@ def _setup_surface_and_masks(subj_id: str, visit: str) -> Tuple[str, np.ndarray]
     return surf, medmask
 
 
-def _load_empirical_data(subj_id: str, visit: str, medmask: np.ndarray) -> np.ndarray:
+def _load_empirical_data(subj_id: str, visit: str, sessions: list, medmask: np.ndarray) -> np.ndarray:
     bold_data = []
-    for session in ("1", "2"):
+    for session in sessions:
         for acquisition in ("LR", "RL"):
             bold_path = (
                 DEMO_DIR
@@ -183,6 +184,9 @@ def _load_empirical_data(subj_id: str, visit: str, medmask: np.ndarray) -> np.nd
                 / f"rfMRI_REST{session}_{acquisition}_Atlas_MSMAll_hp2000_clean_rclean_tclean_4k.L.func.gii"
             )
             bold = np.asarray(nib.load(str(bold_path)).agg_data(), dtype=np.float32)[:, medmask].T
+            # Perform GSR
+            # bold_gsr = bold - np.mean(bold, axis=0, keepdims=True)
+            # z-score
             bold_z = zscore(bold, axis=1).astype(np.float32)
             if np.isnan(bold_z).any():
                 raise ValueError(f"NaN values found in empirical BOLD data: {bold_path}")
@@ -219,10 +223,9 @@ def _simulate_bold(
         if alpha is None:
             raise ValueError("alpha must be numeric when a heterogeneity map is supplied")
         hetero = sigmoid_rescale(
-            zscorew(hetero_map[medmask], mass=solver.mass),
+            zscorew(hetero_map, mass=solver.mass),
             lower=0.0,
             upper=2.0,
-            center=1.0,
             steepness=float(alpha),
         )
 
@@ -300,42 +303,66 @@ def filter_bold(bold, fnq, band_freq=(0.01, 0.1), k=2):
     return bold_filtered
 
 
-def calc_fcd_efficient(bold, fnq, band_freq=(0.04, 0.07), n_avg=3, 
-                       chunk_size=50, metric="phase", verbose=False):
+def calc_fcd_efficient3(bold, fnq, band_freq=(0.04, 0.07), win_len=10, win_step=2,
+                        time_chunk_size=100, edge_chunk_size=100_000, metric="phase",
+                        verbose=False):
     """
-    Calculate FCD using memory-efficient chunked processing.
-    
-    This implementation processes time series in chunks to reduce memory usage
-    for large datasets.
-    
+    Calculate FCD using block-windowed synchrony with memory-efficient chunking.
+
+    This implementation replaces the per-timepoint sliding average (n_avg) used
+    in calc_fcd_efficient2 with discrete, overlapping windows of length win_len
+    and step win_step. Synchrony is averaged within each window rather than
+    smoothed at every timepoint, so the number of output windows is
+    approximately (nt_trunc - win_len) // win_step + 1 instead of nt_trunc.
+    This brings the method in line with the standard windowed-FCD construction
+    (cf. get_fcd, get_fcd2) while retaining the phase/amplitude synchrony
+    metric and chunked edge/time processing from calc_fcd_efficient2.
+
+    Both time and edges are processed in chunks and row normalization is
+    deferred until after accumulation, so the full (n_windows, n_edges)
+    synchrony matrix is never held in memory at once.
+
     Parameters
     ----------
     bold : np.ndarray
         BOLD time series with shape (n_regions, n_timepoints).
     fnq : float
         Nyquist frequency in Hz.
-    band_freq : tuple, default=(0.01, 0.1)
+    band_freq : tuple, default=(0.04, 0.07)
         Frequency band (low, high) in Hz for bandpass filtering.
-    n_avg : int, default=3
-        Number of timepoints to average for sliding window.
-    chunk_size : int, default=50
-        Number of timepoints to process per chunk.
+    win_len : int, default=10
+        Window length in samples over which synchrony is averaged.
+    win_step : int, default=5
+        Step size in samples between consecutive window starts. win_step
+        < win_len gives overlapping windows; win_step == win_len gives
+        non-overlapping windows.
+    time_chunk_size : int, default=50
+        Number of raw timepoints to process per chunk when computing
+        instantaneous synchrony prior to windowing.
+    edge_chunk_size : int, default=100_000
+        Number of edges to process per chunk. Controls peak memory
+        (n_windows * edge_chunk_size * 4 bytes for float32).
     metric : str, default="phase"
         Metric to use: "phase" or "amplitude".
-    
+    verbose : bool, default=False
+        Print timing information.
+
     Returns
     -------
     fcd_upper : np.ndarray
         Upper triangular FCD matrix values.
     """
     t1 = time.time()
-    if n_avg < 1:
-        raise ValueError("n_avg must be greater than 0")
+    if win_len < 1:
+        raise ValueError("win_len must be greater than 0")
+    if win_step < 1:
+        raise ValueError("win_step must be greater than 0")
+    if win_step > win_len:
+        raise ValueError("win_step should not exceed win_len (this would skip timepoints)")
 
     bold = bold.astype(np.float32, copy=False)
     n_regions, nt = bold.shape
-    
-    # Extract phase or amplitude from analytic signal
+
     bold_filtered = filter_bold(bold, fnq, band_freq=band_freq, k=2)
     analytic = hilbert(bold_filtered, axis=1)
     if metric == "amplitude":
@@ -345,50 +372,67 @@ def calc_fcd_efficient(bold, fnq, band_freq=(0.04, 0.07), n_avg=3,
     else:
         raise ValueError("Invalid metric. Choose 'amplitude' or 'phase'.")
 
-    # Remove edge artifacts
-    t_trunc = np.arange(9, nt - 9)
-    nt_trunc = len(t_trunc)
-    signal_trunc = signal[:, t_trunc]
+    signal_trunc = np.ascontiguousarray(signal[:, 9:nt - 9], dtype=np.float32)
+    nt_trunc = signal_trunc.shape[1]
+
+    if nt_trunc < win_len:
+        raise ValueError(
+            f"Truncated time series ({nt_trunc} samples) is shorter than win_len ({win_len})."
+        )
 
     triu_i, triu_j = np.triu_indices(n_regions, k=1)
     n_edges = len(triu_i)
 
-    # Pre-allocate normalized synchrony matrix
-    n_windows = nt_trunc - n_avg - 1
-    p_mat = np.empty((n_windows, n_edges), dtype=np.float32)
+    # Window start indices define the windowed timeline. Each window
+    # [w, w + win_len) is averaged into one synchrony vector.
+    window_starts = np.arange(0, nt_trunc - win_len + 1, win_step)
+    n_windows = len(window_starts)
 
-    # Process in chunks to reduce memory footprint
-    for chunk_start in range(0, nt_trunc, chunk_size):
-        chunk_end = min(chunk_start + chunk_size, nt_trunc)
-        chunk_size_actual = chunk_end - chunk_start
+    # Accumulators only, never the full (n_windows, n_edges) matrix
+    fcd_mat = np.zeros((n_windows, n_windows), dtype=np.float32)
+    norms_sq = np.zeros(n_windows, dtype=np.float32)
 
-        # Compute synchrony for current chunk
-        synchrony_chunk = np.empty((chunk_size_actual, n_edges), dtype=np.float32)
-        for i in range(chunk_size_actual):
-            signal_t = signal_trunc[:, chunk_start + i]
-            synchrony_mat = np.cos(signal_t[:, None] - signal_t[None, :])
-            synchrony_chunk[i, :] = synchrony_mat[triu_i, triu_j]
+    for e_start in range(0, n_edges, edge_chunk_size):
+        e_end = min(e_start + edge_chunk_size, n_edges)
+        ei = triu_i[e_start:e_end]
+        ej = triu_j[e_start:e_end]
+        n_edges_chunk = e_end - e_start
 
-        # Apply sliding window averaging within chunk
-        for i in range(chunk_size_actual):
-            global_t = chunk_start + i
-            if global_t < n_windows:
-                start_idx = max(0, global_t - chunk_start)
-                end_idx = min(chunk_size_actual, global_t + n_avg - chunk_start)
+        # Raw instantaneous synchrony for this edge chunk, all timepoints
+        synchrony_full = np.empty((nt_trunc, n_edges_chunk), dtype=np.float32)
 
-                if end_idx > start_idx:
-                    avg_sync = np.mean(synchrony_chunk[start_idx:end_idx, :], axis=0)
-                    norm_val = np.sqrt(np.sum(avg_sync ** 2))
-                    
-                    p_mat[global_t, :] = avg_sync / norm_val if norm_val > 1e-6 else 0.0
+        for t_start in range(0, nt_trunc, time_chunk_size):
+            t_end = min(t_start + time_chunk_size, nt_trunc)
+            n_time_chunk = t_end - t_start
 
-    # Compute temporal correlation of synchrony patterns
-    fcd_mat = p_mat @ p_mat.T
+            for i in range(n_time_chunk):
+                signal_t = signal_trunc[:, t_start + i]
+                diff = signal_t[ei] - signal_t[ej]
+                synchrony_full[t_start + i, :] = np.cos(diff, out=diff)
+
+        # Average instantaneous synchrony within each block window
+        phase_chunk = np.empty((n_windows, n_edges_chunk), dtype=np.float32)
+        for w_idx, w_start in enumerate(window_starts):
+            phase_chunk[w_idx, :] = synchrony_full[w_start:w_start + win_len, :].mean(axis=0)
+
+        # Accumulate this edge chunk's contribution to the Gram matrix
+        # and to each row's squared norm, deferring normalization until
+        # all edge chunks have been processed.
+        norms_sq += np.sum(phase_chunk ** 2, axis=1)
+        fcd_mat += phase_chunk @ phase_chunk.T
+
+    # (a / ||a||) . (b / ||b||) = (a . b) / (||a|| ||b||), applied after
+    # accumulating the dot products across all edge chunks.
+    norms = np.sqrt(norms_sq)
+    norms[norms < 1e-6] = 1.0
+    fcd_mat /= np.outer(norms, norms)
+
     triu_ind = np.triu_indices(fcd_mat.shape[0], k=1)
 
     t2 = time.time()
     if verbose:
-        print(f"FCD calculation completed in {(t2 - t1) / 60:.2f} minutes.")
+        print(f"FCD calculation completed in {(t2 - t1) / 60:.4f} minutes. "
+              f"n_windows={n_windows}")
     return fcd_mat[triu_ind]
 
 
@@ -427,40 +471,6 @@ def build_search_space(free_params: Mapping[str, GridSpec]) -> Dict[str, optuna.
     }
 
 
-def _load_desampler() -> type:
-    """Load Optuna Hub's differential-evolution sampler."""
-
-    module = optunahub.load_module("samplers/differential_evolution")
-    return module.DESampler
-
-
-def _create_sampler(
-    *,
-    search_space: Mapping[str, optuna.distributions.BaseDistribution],
-    population_size: int,
-    f: float,
-    cr: float,
-    seed: int,
-) -> optuna.samplers.BaseSampler:
-    """Instantiate DESampler with its documented DE controls."""
-
-    DESampler = _load_desampler()
-    try:
-        return DESampler(
-            search_space=dict(search_space),
-            population_size=population_size,
-            F=f,
-            CR=cr,
-            seed=seed,
-        )
-    except TypeError as exc:
-        raise TypeError(
-            "The installed Optuna Hub DESampler API does not accept the expected "
-            "search_space, population_size, F, CR, and seed arguments. Check the "
-            "installed sampler version and update _create_sampler accordingly."
-        ) from exc
-
-
 def _get_journal_storage(journal_path: Path) -> optuna.storages.JournalStorage:
     """Create a file-backed JournalStorage for one Optuna study."""
 
@@ -473,33 +483,65 @@ def _get_journal_storage(journal_path: Path) -> optuna.storages.JournalStorage:
 
 
 class ConvergenceCallback:
-    """Stop after a fixed number of trials without a meaningful best-value improvement."""
+    """Stop after a fixed number of completed trials without meaningful improvement."""
 
-    def __init__(self, patience_trials: int, tol: float) -> None:
+    def __init__(
+        self,
+        patience_trials: int = 80,
+        tol: float = 1e-5,
+        min_trials: int = 100,
+    ) -> None:
         if patience_trials < 1:
             raise ValueError("patience_trials must be >= 1")
         if tol < 0:
-            raise ValueError("conv_tol must be >= 0")
+            raise ValueError("tol must be >= 0")
+        if min_trials < 0:
+            raise ValueError("min_trials must be >= 0")
+
         self.patience_trials = int(patience_trials)
         self.tol = float(tol)
-        self.best_value = np.inf
-        self.last_improvement_trial: Optional[int] = None
+        self.min_trials = int(min_trials)
+        self.best_value: Optional[float] = None
+        self.last_improvement_completed: Optional[int] = None
 
-    def __call__(self, study: optuna.study.Study, trial: optuna.trial.FrozenTrial) -> None:
-        if trial.state != optuna.trial.TrialState.COMPLETE or trial.value is None:
+    def __call__(
+        self,
+        study: optuna.study.Study,
+        trial: optuna.trial.FrozenTrial,
+    ) -> None:
+        if (
+            trial.state != optuna.trial.TrialState.COMPLETE
+            or trial.value is None
+            or not np.isfinite(trial.value)
+        ):
             return
 
-        value = float(trial.value)
-        if value < self.best_value - self.tol:
-            self.best_value = value
-            self.last_improvement_trial = trial.number
+        completed_trials = [
+            t
+            for t in study.trials
+            if t.state == optuna.trial.TrialState.COMPLETE
+            and t.value is not None
+            and np.isfinite(t.value)
+        ]
+        n_completed = len(completed_trials)
+        current_best = float(study.best_value)
+
+        if self.best_value is None:
+            self.best_value = current_best
+            self.last_improvement_completed = n_completed
             return
 
-        if self.last_improvement_trial is None:
-            self.last_improvement_trial = trial.number
+        if current_best < self.best_value - self.tol:
+            self.best_value = current_best
+            self.last_improvement_completed = n_completed
             return
 
-        if trial.number - self.last_improvement_trial >= self.patience_trials:
+        if (
+            n_completed >= self.min_trials
+            and self.last_improvement_completed is not None
+            and n_completed - self.last_improvement_completed
+            >= self.patience_trials
+        ):
             print(
                 "Stopping after no best-objective improvement of at least "
                 f"{self.tol:g} for {self.patience_trials} completed trials."
@@ -522,6 +564,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--subj_id", type=str, required=True)
     parser.add_argument("--visit", type=str, required=True)
+    parser.add_argument(
+        "--session", 
+        type=int, 
+        nargs="+", 
+        choices=SESSION_CHOICES, 
+        default=[1, 2],
+        help=(
+            "Session numbers to include in the analysis. E.g., '--session 1 2' will include "
+            "both sessions 1 and 2 but '--session 1' will only include the first session. "
+            "Default is both sessions."
+        )
+    )
     parser.add_argument("--n_runs", type=int, default=4)    # 4 runs to match no. of empirical timeseries
     parser.add_argument("--n_modes", type=int, default=500)
     parser.add_argument(
@@ -531,38 +585,38 @@ def parse_args() -> argparse.Namespace:
         choices=METRIC_CHOICES,
         default=["edge_fc_corr", "node_fc_corr", "fcd_ks"],
     )
-    parser.add_argument("--band_freq", type=float, nargs=2, default=(0.04, 0.07), metavar=("LOW", "HIGH"))
+    parser.add_argument("--fcd_band_freq", type=float, nargs=2, default=(0.04, 0.07), metavar=("LOW", "HIGH"))
+    parser.add_argument("--fcd_win_len", type=int, default=10, help="FCD window length in samples.")
+    parser.add_argument("--fcd_win_step", type=int, default=2, help="FCD window step in samples.")
     parser.add_argument("--alpha", type=float, nargs=3, default=None, metavar=("MIN", "MAX", "STEP"))
     parser.add_argument("--r", type=float, nargs=3, default=None, metavar=("MIN", "MAX", "STEP"))
     parser.add_argument("--gamma", type=float, nargs=3, default=None, metavar=("MIN", "MAX", "STEP"))
     parser.add_argument("--noise_seed", type=int, default=365)
 
+    parser.add_argument("--n_jobs", type=int, default=1, help="Parallel Optuna workers.")
     parser.add_argument(
-        "--n_trials",
+        "--min_trials",
+        type=int,
+        default=150,
+        help="Minimum number of completed trials before convergence callback can stop the study.",
+    )
+    parser.add_argument(
+        "--max_trials",
         type=int,
         default=500,
         help="Maximum number of additional trials to run in this submission.",
     )
-    parser.add_argument("--n_jobs", type=int, default=1, help="Parallel Optuna workers.")
-    parser.add_argument(
-        "--popsize",
-        type=int,
-        default=16,
-        help="Population-size multiplier. Actual DE population is popsize times n_dim.",
-    )
-    parser.add_argument("--F", dest="f", type=float, default=0.8, help="DE mutation scaling factor.")
-    parser.add_argument("--CR", dest="cr", type=float, default=0.7, help="DE crossover probability.")
-    parser.add_argument("--de_seed", type=int, default=365, help="DE sampler random seed.")
+    parser.add_argument("--opt_seed", type=int, default=365, help="Optuna sampler random seed.")
     parser.add_argument(
         "--conv_patience",
         type=int,
-        default=10,
-        help="Patience in population-equivalent generations.",
+        default=50,
+        help="Patience in completed trials for convergence callback (stop if no improvement for this many trials).",
     )
     parser.add_argument(
         "--conv_tol",
         type=float,
-        default=1e-5,
+        default=1e-4,
         help="Minimum absolute best-objective improvement that resets convergence patience.",
     )
 
@@ -579,22 +633,12 @@ def main() -> None:
         raise ValueError("--id must be >= 0")
     if not args.metrics:
         raise ValueError("At least one metric must be supplied via --metrics")
-    if args.n_runs < 1 or args.n_modes < 1 or args.n_trials < 1 or args.n_jobs < 1:
-        raise ValueError("n_runs, n_modes, n_trials, and n_jobs must all be >= 1")
-    if args.popsize < 4:
-        raise ValueError("--popsize must be >= 4")
-    if not 0.0 <= args.f <= 2.0:
-        raise ValueError("--F must be in [0, 2]")
-    if not 0.0 <= args.cr <= 1.0:
-        raise ValueError("--CR must be in [0, 1]")
+    if args.n_runs < 1 or args.n_modes < 1 or args.max_trials < 1 or args.n_jobs < 1:
+        raise ValueError("n_runs, n_modes, max_trials, and n_jobs must all be >= 1")
 
     free_params, fixed_params, defaults = _build_param_specs(args)
     if not free_params:
         raise ValueError("Provide at least one free parameter, e.g. --alpha MIN MAX STEP")
-
-    n_dim = len(free_params)
-    population_size = int(args.popsize) * n_dim
-    patience_trials = int(args.conv_patience) * population_size
 
     results_dir = DEMO_DIR / "results" / "waves"
     if args.id == 0:
@@ -619,6 +663,8 @@ def main() -> None:
         run_dir.mkdir(parents=True, exist_ok=True)
 
     subj_dir = run_dir / args.subj_id / args.visit
+    if len(args.session) == 1:
+        subj_dir = subj_dir / f"ses-{args.session[0]}"
     subj_dir.mkdir(parents=True, exist_ok=True)
     study_name = f"waves-reproducibility_id-{run_id}"
     journal_path = subj_dir / "optuna.journal.log"
@@ -629,19 +675,18 @@ def main() -> None:
         "study_name": study_name,
         "subj_id": args.subj_id,
         "visit": args.visit,
+        "session": list(args.session),
         "metrics": list(args.metrics),
         "n_runs": int(args.n_runs),
         "n_modes": int(args.n_modes),
-        "band_freq": list(args.band_freq),
+        "fcd_win_len": int(args.fcd_win_len),
+        "fcd_win_step": int(args.fcd_win_step),
+        "fcd_band_freq": list(args.fcd_band_freq),
         "noise_seed": int(args.noise_seed),
         "defaults": defaults,
         "fixed_params": fixed_params,
         "free_parameters": list(free_params),
-        "popsize": int(args.popsize),
-        "population_size": population_size,
-        "F": float(args.f),
-        "CR": float(args.cr),
-        "de_seed": int(args.de_seed),
+        "opt_seed": int(args.opt_seed),
         "conv_patience": int(args.conv_patience),
         "conv_tol": float(args.conv_tol),
     }
@@ -660,7 +705,8 @@ def main() -> None:
     full_config = {
         **critical_config,
         "optimization_parameters": {name: asdict(spec) for name, spec in free_params.items()},
-        "n_trials": int(args.n_trials),
+        "min_trials": int(args.min_trials),
+        "max_trials": int(args.max_trials),
         "n_jobs": int(args.n_jobs),
         "journal_path": str(journal_path),
     }
@@ -671,38 +717,49 @@ def main() -> None:
     os.environ["CACHE_DIR"] = str(ext_input_cache_dir)
 
     surf, medmask = _setup_surface_and_masks(args.subj_id, args.visit)
-    hetero_map = nib.load(
-        str(
-            DEMO_DIR
-            / "data"
-            / args.subj_id
-            / args.visit
-            / f"{args.subj_id}.L.MyelinMap_BC_MSMAll.4k_fs_LR.func.gii"
-        )
-    ).darrays[0].data
+    hetero_map = np.asarray(
+        nib.load(
+            str(
+                DEMO_DIR
+                / "data"
+                / args.subj_id
+                / args.visit
+                / f"{args.subj_id}.L.MyelinMap_BC_MSMAll.4k_fs_LR.func.gii"
+            )
+        ).darrays[0].data
+    )[medmask]
 
 	# Plot heteromap and save
-    hetero_map[~medmask] = np.nan
     hetero_fig, ax = plt.subplots(1, 1, figsize=(6, 4))
-    plot_surf(surf, hetero_map, cmap="turbo", ax=ax)
+    plot_surf(surf, unmask_data(hetero_map, medmask), cmap="turbo", ax=ax, cbar=True)
     hetero_fig.savefig(subj_dir / f"myelinmap.png", dpi=200, bbox_inches="tight")
 
     # Load empirical BOLD data and calculate FC
     print("Loading empirical data and calculating outputs...")
     nt_emp, dt_emp, dt_model, tsteady = _fetch_empirical_constants()
-    emp_bold = _load_empirical_data(args.subj_id, args.visit, medmask)
-    emp_outputs = {
-        "fc": calc_fc(emp_bold),
-        "fcd": calc_fcd_efficient(emp_bold, fnq=1/(2*dt_emp), band_freq=args.band_freq)
-    }
+    emp_bold = _load_empirical_data(args.subj_id, args.visit, args.session, medmask)
 
     # Plot and save empirical BOLD time series (carpet plot)
     fig_emp_bold, ax = plt.subplots(1, 1, figsize=(6, 4))
-    im = ax.imshow(emp_bold, aspect="auto", cmap="seismic")
+    emp_bold_min = -np.max(np.abs(emp_bold))
+    emp_bold_max = np.max(np.abs(emp_bold))
+    im = ax.imshow(emp_bold, aspect="auto", cmap="seismic", vmin=emp_bold_min, vmax=emp_bold_max)
     ax.set_xlabel("Time (TRs)")
     ax.set_ylabel("Vertices")
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     fig_emp_bold.savefig(subj_dir / f"empirical_bold.png", dpi=200, bbox_inches="tight")
+
+    emp_outputs = {}
+    if "edge_fc_corr" in args.metrics or "node_fc_corr" in args.metrics:
+        emp_outputs["fc"] = calc_fc(emp_bold)
+    if "fcd_ks" in args.metrics:
+        emp_outputs["fcd"] = calc_fcd_efficient3(
+            emp_bold, 
+            fnq=1/(2*dt_emp), 
+            band_freq=args.fcd_band_freq, 
+            win_len=args.fcd_win_len, 
+            win_step=args.fcd_win_step
+        )
 
     # Plot and save empirical FC matrix
     fig_emp_fc, ax = plt.subplots(1, 1, figsize=(6, 4))
@@ -712,14 +769,7 @@ def main() -> None:
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     fig_emp_fc.savefig(subj_dir / f"empirical_fc.png", dpi=200, bbox_inches="tight")
 
-    search_space = build_search_space(free_params)
-    sampler = _create_sampler(
-        search_space=search_space,
-        population_size=population_size,
-        f=float(args.f),
-        cr=float(args.cr),
-        seed=int(args.de_seed),
-    )
+    sampler = optuna.samplers.TPESampler(args.opt_seed)
     storage = _get_journal_storage(journal_path)
 
     try:
@@ -749,6 +799,7 @@ def main() -> None:
         for name, spec in free_params.items():
             params[name] = trial.suggest_float(name, spec.min, spec.max, step=spec.step)
 
+        # TODO: rethink this since it still counts as a trial and will be included in the convergence callback
 		# Check for an existing completed trial with the same parameters
         for t in trial.study.trials:
             if t.state == optuna.trial.TrialState.COMPLETE and params_equal(t.params, params):
@@ -774,7 +825,13 @@ def main() -> None:
             metrics = evaluate_model(
                 {
                     "fc": calc_fc(bold), 
-                    "fcd": calc_fcd_efficient(bold, fnq=1/(2*dt_emp), band_freq=args.band_freq)
+                    "fcd": calc_fcd_efficient3(
+                        bold, 
+                        fnq=1/(2*dt_emp), 
+                        band_freq=args.fcd_band_freq, 
+                        win_len=args.fcd_win_len, 
+                        win_step=args.fcd_win_step
+                    )
                 }, 
                 emp_outputs, 
                 args.metrics
@@ -792,13 +849,13 @@ def main() -> None:
             raise
 
     callback = ConvergenceCallback(
-        patience_trials=patience_trials,
+        patience_trials=args.conv_patience + args.n_jobs - 1,  # account for parallel workers
         tol=float(args.conv_tol),
+        min_trials=args.min_trials
     )
 
     print(
-        f"Starting Optuna DE study {study_name!r}: {args.n_trials} maximum additional trials, "
-        f"{args.n_jobs} workers, population size {population_size}."
+        f"Starting Optuna study {study_name!r} with {args.n_jobs} workers"
     )
     # Compute number of unique parameter combinations
     n_unique = 1
@@ -807,14 +864,14 @@ def main() -> None:
         n_unique *= n_steps
 
 	# Limit the number of trials to the number of unique parameter combinations
-    if n_unique < args.n_trials:
+    if n_unique < args.max_trials:
         print(
 			f"Warning: The search space has only {n_unique} unique parameter combinations, "
-			f"but --n_trials={args.n_trials}. Maximum trials will be limited to {n_unique}."
+			f"but --max_trials={args.max_trials}. Maximum trials will be limited to {n_unique}."
 		)
         max_trials = n_unique
     else:
-        max_trials = args.n_trials
+        max_trials = args.max_trials
         
     study.optimize(
         objective,
@@ -827,6 +884,23 @@ def main() -> None:
     if not study.best_trials:
         raise RuntimeError("No completed Optuna trials are available.")
 
+    # Plot and save Optuna visualizations
+    fig_opt_history = optuna.visualization.plot_optimization_history(study)
+    fig_opt_history.write_image(str(subj_dir / "optimization_history.png"))
+    fig_param_contour = optuna.visualization.plot_contour(study, params=list(free_params))
+    fig_param_contour.write_image(str(subj_dir / "parameter_contour.png"))
+    fig_param_importance = optuna.visualization.plot_param_importances(study)
+    fig_param_importance.write_image(str(subj_dir / "parameter_importance.png"))
+    for metric in args.metrics:
+        fig = optuna.visualization.plot_contour(
+            study, params=list(free_params),
+            target=lambda t: t.user_attrs[metric],
+            target_name=metric,
+        )
+        fig.write_image(str(subj_dir / f"parameter_contour_{metric}.png"))
+
+    # Print optuna summary and best trial information
+    t1 = time.time()
     best_trial = study.best_trial
     print(f"Completed trials: {len(study.trials)}")
     print(f"Best trial: {best_trial.number}")
@@ -834,14 +908,21 @@ def main() -> None:
     print(f"Best score: {-best_trial.value:.8f}")
     print(f"Best parameters: {best_trial.params}")
     print(f"Results directory: {subj_dir}")
-    print(f"Total optimization time with {args.n_jobs} CPUs: {(time.time() - t0) / 3600:.3f} hrs")
+    print(f"Total optimization time with {args.n_jobs} CPUs: {(t1 - t0) / 3600:.3f} hrs")
 
-    fig_opt_history = optuna.visualization.plot_optimization_history(study)
-    fig_opt_history.write_image(str(subj_dir / "optimization_history.png"))
-    fig_param_contour = optuna.visualization.plot_contour(study, params=list(free_params))
-    fig_param_contour.write_image(str(subj_dir / "parameter_contour.png"))
-    fig_param_importance = optuna.visualization.plot_param_importances(study)
-    fig_param_importance.write_image(str(subj_dir / "parameter_importance.png"))
+    # Save optuna summary and best trial information
+    summary_path = subj_dir / "optuna_summary.json"
+    summary = {
+        "study_name": study_name,
+        "n_trials": len(study.trials),
+        "best_trial_number": best_trial.number,
+        "best_objective": float(best_trial.value),
+        "best_score": float(-best_trial.value),
+        "best_params": best_trial.params,
+        "metrics": {metric: best_trial.user_attrs.get(metric) for metric in args.metrics},
+        "total_time_hrs": np.round((t1 - t0) / 3600, 3),
+    }
+    atomic_write_json(summary_path, summary)
 
 if __name__ == "__main__":
     main()
