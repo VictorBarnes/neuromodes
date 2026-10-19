@@ -1,8 +1,5 @@
-"""Optimize resting-state model parameters with Optuna differential evolution.
-
-Each non-test run is identified by --id and stored in results/waves/id-{id}.
-The Optuna journal is the complete trial record for that study. Re-running the
-same ID appends trials, provided configuration-critical arguments are unchanged.
+"""
+Optimize resting-state model parameters with Optuna TPE sampling.
 """
 
 from __future__ import annotations
@@ -593,7 +590,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gamma", type=float, nargs=3, default=None, metavar=("MIN", "MAX", "STEP"))
     parser.add_argument("--noise_seed", type=int, default=365)
 
-    parser.add_argument("--n_jobs", type=int, default=1, help="Parallel Optuna workers.")
+    parser.add_argument(
+        "--n_jobs", 
+        type=int, 
+        default=1, 
+        help="Parallel Optuna workers. Note that reproducible optimization results are only "
+             "obtainable if `n_jobs` is set to 1, since parallel workers can cause "
+             "non-deterministic trial ordering and convergence behavior."
+    )
     parser.add_argument(
         "--min_trials",
         type=int,
@@ -769,7 +773,13 @@ def main() -> None:
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     fig_emp_fc.savefig(subj_dir / f"empirical_fc.png", dpi=200, bbox_inches="tight")
 
-    sampler = optuna.samplers.TPESampler(args.opt_seed)
+    # Plot and save empirical node FC map
+    emp_node_fc = calc_node_fc(emp_outputs["fc"])
+    fig_emp_node_fc, ax = plt.subplots(1, 1, figsize=(6, 4))
+    plot_surf(surf, unmask_data(emp_node_fc, medmask), cmap="turbo", ax=ax, cbar=True)
+    fig_emp_node_fc.savefig(subj_dir / f"empirical_node_fc.png", dpi=200, bbox_inches="tight")
+
+    sampler = optuna.samplers.TPESampler(seed=args.opt_seed)
     storage = _get_journal_storage(journal_path)
 
     try:
