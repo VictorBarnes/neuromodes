@@ -320,3 +320,125 @@ def check_surf(
     if not surf.is_manifold():
         raise ValueError('Surface mesh is not manifold: contains edges belonging to more than two '
                          'cells.')
+
+def compute_gradient_aniso(
+    geometry: TriaMesh,
+    aniso_map: NDArray[np.floating],
+    beta: float = 1.0,
+    smoothit: int = 10,
+) -> NDArray[np.floating]:
+    """
+    Compute vertex-level directional anisotropy from the gradient of a scalar map.
+
+    Positive ``beta`` enhances diffusion parallel to the gradient of ``aniso_map`` and
+    reduces diffusion perpendicular to it. Negative ``beta`` has the opposite effect.
+
+    Parameters
+    ----------
+    geometry : lapy.TriaMesh
+        Surface mesh on which ``aniso_map`` is defined.
+    aniso_map : array-like
+        Scalar map of shape ``(n_verts,)`` used to define the direction of anisotropy.
+    beta : float, optional
+        Strength of directional anisotropy. Default is ``1.0``.
+    smoothit : int, optional
+        Number of smoothing iterations used when computing principal curvature
+        directions. Default is ``10``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Directional anisotropy factors of shape ``(n_verts, 2)``. The two columns
+        correspond to the local principal tangent directions returned by
+        ``TriaMesh.curvature_tria()``.
+    """
+    from lapy.diffgeo import tria_compute_gradient
+
+    aniso_map = np.asarray_chkfinite(aniso_map)
+    if aniso_map.shape != (geometry.v.shape[0],):
+        raise ValueError(
+            f"aniso_map must have shape (n_verts,) = ({geometry.v.shape[0]},)."
+        )
+
+    # Standardize the scalar map
+    aniso_map = (aniso_map - aniso_map.mean()) / aniso_map.std()
+
+    # Compute 3D gradient at each triangle
+    u1, u2, _, _ = geometry.curvature_tria(smoothit=smoothit)
+
+    # Compute and project the surface gradient onto the local tangent basis
+    grad = tria_compute_gradient(geometry, aniso_map)
+    grad_u1 = np.sum(grad * u1, axis=1) # component in u1 direction
+    grad_u2 = np.sum(grad * u2, axis=1) # component in u2 direction
+
+    # Compute gradient magnitude and normalize to [0, 1] range
+    grad_mag = np.sqrt(grad_u1**2 + grad_u2**2)
+    grad_mag_norm = grad_mag / np.maximum(grad_mag.max(), 1e-10)
+
+    # Compute unit gradient directions (avoid division by zero)
+    grad_u1_unit = grad_u1 / np.maximum(grad_mag, 1e-10)
+    grad_u2_unit = grad_u2 / np.maximum(grad_mag, 1e-10)
+
+    # Symmetric exponential anisotropy: preserves determinant (aniso_u1 * aniso_u2 = 1)
+    # FEM cross-coupling: grad_u2 component scales u1 diffusion (R^T D R, R=[0,-1;1,0])
+    aniso_u1 = np.exp(
+        beta * grad_mag_norm * (grad_u2_unit**2 - grad_u1_unit**2) / 2
+    )
+    aniso_u2 = np.exp(
+        beta * grad_mag_norm * (grad_u1_unit**2 - grad_u2_unit**2) / 2
+    )
+
+    aniso_tria = np.column_stack((aniso_u1, aniso_u2))
+
+    return geometry.map_tfunc_to_vfunc(aniso_tria)
+
+def compute_curvature_aniso(
+    geometry: TriaMesh,
+    aniso_curv: float | tuple[float, float],
+    smoothit: int = 10,
+) -> NDArray[np.floating]:
+    """
+    Compute vertex-level directional anisotropy from principal curvatures.
+
+    Parameters
+    ----------
+    geometry : lapy.TriaMesh
+        Surface mesh from which to compute curvature-based anisotropy.
+    aniso_curv : float or tuple of shape (2,)
+        Curvature-based anisotropy strength(s). If scalar, the same strength is used
+        along both principal tangent directions. If ``(a1, a2)``, ``a1`` modifies
+        diffusion along ``u1`` and ``a2`` modifies diffusion along ``u2``.
+    smoothit : int, optional
+        Number of smoothing iterations used when computing principal curvatures.
+        Default is ``10``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Directional anisotropy factors of shape ``(n_verts, 2)``.
+    """
+    if np.isscalar(aniso_curv):
+        a1 = a2 = float(aniso_curv)
+    else:
+        aniso_curv = np.asarray(aniso_curv)
+        if aniso_curv.shape != (2,):
+            raise ValueError(
+                "aniso_curv must be a scalar or an array of shape (2,)."
+            )
+        a1, a2 = map(float, aniso_curv)
+
+    _, _, c1, c2 = geometry.curvature_tria(smoothit=smoothit)
+
+    # Cross-index curvature strengths with tangent directions, following the FEM
+    # convention used by _fem_tria_aniso
+    log_u1 = -a1 * np.abs(c2) # column 0
+    log_u2 = -a2 * np.abs(c1) # column 1
+
+    # Normalize to preserve the geometric mean of the two directional factors
+    mean_log = (log_u1 + log_u2) / 2
+    aniso_u1 = np.exp(log_u1 - mean_log)
+    aniso_u2 = np.exp(log_u2 - mean_log)
+
+    aniso_tria = np.column_stack((aniso_u1, aniso_u2))
+
+    return geometry.map_tfunc_to_vfunc(aniso_tria)

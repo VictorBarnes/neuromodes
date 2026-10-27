@@ -113,6 +113,112 @@ def test_real_heteromaps():
     for i in range(len(map_names)):
         solver.compute_lbo(hetero=heteros_zsig[:, i])
 
+
+def test_gradient_aniso(surf_medmask):
+    surf, medmask = surf_medmask
+    aniso_solver = EigenSolver(surf, mask=medmask)
+
+    aniso_map = np.random.default_rng(0).standard_normal(aniso_solver.n_verts)
+
+    aniso = aniso_solver.compute_gradient_aniso(aniso_map, beta=1.0)
+
+    assert aniso.shape == (aniso_solver.n_verts, 2), \
+        'Gradient-based anisotropy does not have shape (n_verts, 2).'
+    assert np.all(np.isfinite(aniso)), \
+        'Gradient-based anisotropy contains non-finite values.'
+    assert np.all(aniso > 0), \
+        'Gradient-based anisotropy contains non-positive directional factors.'
+
+def test_invalid_gradient_aniso_shape(surf_medmask):
+    surf, medmask = surf_medmask
+    aniso_solver = EigenSolver(surf, mask=medmask)
+    bad_map = np.ones(10)
+
+    with pytest.raises(
+        ValueError,
+        match=r"aniso_map must have shape \(n_verts,\) = \(3619,\)."
+    ):
+        aniso_solver.compute_gradient_aniso(bad_map, beta=1.0)
+
+def test_gradient_aniso_beta_zero(surf_medmask):
+    surf, medmask = surf_medmask
+    aniso_solver = EigenSolver(surf, mask=medmask)
+    aniso_map = np.random.default_rng(0).standard_normal(aniso_solver.n_verts)
+
+    aniso = aniso_solver.compute_gradient_aniso(aniso_map, beta=0.0)
+
+    homo_iso_solver = EigenSolver(aniso_solver.geometry).solve(10, seed=0)
+    homo_aniso_solver = EigenSolver(aniso_solver.geometry).solve(
+        10, aniso=aniso, seed=0
+    )
+    np.testing.assert_allclose(
+        homo_aniso_solver.stiffness.toarray(), homo_iso_solver.stiffness.toarray(),
+        err_msg='Stiffness with beta=0 gradient anisotropy does not match '
+                'isotropic stiffness.'
+    )
+    np.testing.assert_allclose(
+        homo_aniso_solver.evals, homo_iso_solver.evals,
+        err_msg='Eigenvalues with beta=0 gradient anisotropy do not match '
+                'isotropic eigenvalues.'
+    )
+
+def test_curvature_aniso_zero(surf_medmask):
+    surf, medmask = surf_medmask
+    aniso_solver = EigenSolver(surf, mask=medmask)
+    iso_solver = EigenSolver(aniso_solver.geometry).solve(10, seed=0)
+
+    for aniso_curv in [0, (0, 0)]:
+        aniso = aniso_solver.compute_curvature_aniso(aniso_curv)
+
+        aniso_solver = EigenSolver(aniso_solver.geometry).solve(
+            10, aniso=aniso, seed=0
+        )
+        np.testing.assert_allclose(
+            aniso_solver.stiffness.toarray(), iso_solver.stiffness.toarray(),
+            err_msg=f'Stiffness with aniso_curv={aniso_curv} does not match '
+                    'isotropic stiffness.'
+        )
+        np.testing.assert_allclose(
+            aniso_solver.evals, iso_solver.evals,
+            err_msg=f'Eigenvalues with aniso_curv={aniso_curv} do not match '
+                    'isotropic eigenvalues.'
+        )
+
+def test_invalid_aniso_shape(surf_medmask):
+    surf, medmask = surf_medmask
+    aniso_solver = EigenSolver(surf, mask=medmask)
+    bad_aniso = np.ones((10, 2))
+
+    with pytest.raises(
+        ValueError,
+        match=r"aniso must have shape \(n_verts, 2\) = \(3619, 2\)."
+    ):
+        aniso_solver.compute_lbo(aniso=bad_aniso)
+
+def test_invalid_aniso_values(surf_medmask):
+    surf, medmask = surf_medmask
+    aniso_solver = EigenSolver(surf, mask=medmask)
+    bad_aniso = np.ones((aniso_solver.n_verts, 2))
+    bad_aniso[0, 0] = np.nan
+
+    with pytest.raises(ValueError, match="array must not contain infs or NaNs"):
+        aniso_solver.compute_lbo(aniso=bad_aniso)
+
+def test_aniso_modes(surf_medmask):
+    surf, medmask = surf_medmask
+    aniso_solver = EigenSolver(surf, mask=medmask)
+    aniso_map = np.random.default_rng(0).standard_normal(aniso_solver.n_verts)
+    aniso = aniso_solver.compute_gradient_aniso(aniso_map, beta=1.0)
+
+    aniso_solver = EigenSolver(aniso_solver.geometry).solve(
+        10, aniso=aniso, seed=0
+    )
+
+    assert np.all(np.diff(aniso_solver.evals) > 0), \
+        'Anisotropic eigenvalues are not sorted in ascending order.'
+    assert is_orthonormal_basis(aniso_solver.emodes, mass=aniso_solver.mass), \
+        'Anisotropic eigenmodes are not mass-orthonormal.'
+
 def test_symmetric_mass(solver):
     diff = solver.mass - solver.mass.transpose()
     assert abs(diff).max() == 0, 'Mass matrix is not symmetric.'

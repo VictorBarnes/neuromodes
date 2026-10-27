@@ -15,7 +15,14 @@ from scipy.sparse import csc_matrix, isspmatrix_csc
 import h5py
 
 from neuromodes.io import read_surf, read_vol
-from neuromodes.mesh import check_surf, check_vol, is_vol, mask_mesh
+from neuromodes.mesh import (
+    check_surf,
+    check_vol,
+    compute_curvature_aniso,
+    compute_gradient_aniso,
+    is_vol,
+    mask_mesh,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -100,6 +107,7 @@ class EigenSolver(Solver):
         # Configuration states
         self._lump = False
         self._hetero = None
+        self._aniso = None
 
         # Internal caches
         self._mass = None
@@ -121,6 +129,14 @@ class EigenSolver(Solver):
         The spatial heterogeneity map used to modify the stiffness matrix, or ``None`` if not used.
         """
         return self._hetero
+
+    @property
+    def aniso(self) -> NDArray[np.floating] | None:
+        """
+        The vertex-level directional anisotropy map used to modify the stiffness matrix,
+        or ``None`` if not used.
+        """
+        return self._aniso
     
     @property
     def mass(self) -> csc_matrix:
@@ -202,14 +218,54 @@ class EigenSolver(Solver):
 
         return str_out
 
+    def compute_gradient_aniso(
+        self,
+        aniso_map: NDArray[np.floating],
+        beta: float = 1.0,
+        smoothit: int = 10,
+    ) -> NDArray[np.floating]:
+        """
+        Compute vertex-level directional anisotropy from the gradient of a scalar map.
+
+        This is a wrapper for
+        :func:`~neuromodes.mesh.compute_gradient_aniso`. Note that ``geometry`` is
+        passed automatically by the ``EigenSolver`` instance.
+        """
+        return compute_gradient_aniso(
+            geometry=self.geometry,
+            aniso_map=aniso_map,
+            beta=beta,
+            smoothit=smoothit,
+        )
+
+
+    def compute_curvature_aniso(
+        self,
+        aniso_curv: float | tuple[float, float],
+        smoothit: int = 10,
+    ) -> NDArray[np.floating]:
+        """
+        Compute vertex-level directional anisotropy from principal curvatures.
+
+        This is a wrapper for
+        :func:`~neuromodes.mesh.compute_curvature_aniso`. Note that ``geometry`` is
+        passed automatically by the ``EigenSolver`` instance.
+        """
+        return compute_curvature_aniso(
+            geometry=self.geometry,
+            aniso_curv=aniso_curv,
+            smoothit=smoothit,
+        )
+
     def compute_lbo(
-        self, 
+        self,
         lump: bool = False,
-        hetero: NDArray[np.floating] | None = None
+        hetero: NDArray[np.floating] | None = None,
+        aniso: NDArray[np.floating] | None = None,
     ) -> EigenSolver:
         """
         This method computes the Laplace-Beltrami operator via the LaPy package [1]_ [2]_,
-        optionally incorporating spatial heterogeneity [3]_ [4]_. The resulting ``mass`` and
+        optionally incorporating spatial heterogeneity [3]_ [4]_ and anisotropy. The resulting ``mass`` and
         ``stiffness`` matrices are cached as attributes. Note that changing ``lump`` or ``hetero``
         will invalidate any existing ``emodes`` and ``evals`` attributes, and these will be reset to
         ``None``.
@@ -226,6 +282,12 @@ class EigenSolver(Solver):
             computed. In line with prior work [3]_, it is recommended that ``hetero`` is in the
             range [0, 2] (see rescaling functions :func:`~neuromodes.stats.zscorew` and
             :func:`~neuromodes.stats.sigmoid_rescale`). Default is ``None``. 
+        aniso : array-like, optional
+            Vertex-level directional anisotropy factors of shape ``(n_verts, 2)``. The two
+            columns correspond to the local principal tangent directions used by the
+            anisotropic finite element formulation. If ``None``, diffusion is isotropic.
+            Use :meth:`compute_gradient_aniso` or :meth:`compute_curvature_aniso` to
+            construct this array. Default is ``None``.
 
         Returns
         -------
@@ -245,10 +307,13 @@ class EigenSolver(Solver):
             Analysis, Computer Vision. https://doi.org/10.1007/978-3-319-16220-1_21
         """
         # For the LBO to be SPSD, hetero must be non-negative
-        if hetero is not None and np.any(hetero < 0):
-            warn("hetero contains negative values, which may result in negative Laplace-Beltrami "
-                 "eigenvalues. It is recommended that heterogeneity maps are first rescaled (e.g., via " \
-                 "neuromodes.stats.sigmoid_rescale) to be non-negative.")
+        for name, map_ in (("hetero", hetero), ("aniso", aniso)):
+            if map_ is not None and np.any(map_ < 0):
+                warn(
+                    f"{name} contains negative values, which may result in negative "
+                    "Laplace-Beltrami eigenvalues. It is recommended that anisotropy and "
+                    "heterogeneity maps are non-negative."
+                )
 
         # Cache validation
         if not np.array_equal(hetero, self._hetero):
@@ -259,8 +324,23 @@ class EigenSolver(Solver):
             if hetero is not None:
                 hetero = np.asarray_chkfinite(hetero)
                 if hetero.shape != (self.n_verts,):
-                    raise ValueError(f"hetero must have shape (n_verts,) = ({self.n_verts},).")
+                    raise ValueError(
+                        f"hetero must have shape (n_verts,) = ({self.n_verts},)."
+                    )
             self._hetero = hetero
+
+        if not np.array_equal(aniso, self._aniso):
+            self._stiffness = None
+            self._emodes = None
+            self._evals = None
+            self._n_modes = None
+            if aniso is not None:
+                aniso = np.asarray_chkfinite(aniso)
+                if aniso.shape != (self.n_verts, 2):
+                    raise ValueError(
+                        f"aniso must have shape (n_verts, 2) = ({self.n_verts}, 2)."
+                    )
+            self._aniso = aniso
         
         if lump != self._lump:
             self._mass = None  # lump affects mass only
@@ -290,15 +370,22 @@ class EigenSolver(Solver):
                     # diffusion tensor, but _fem_tria_aniso performs it
                     u1, u2, _, _ = self.geometry.curvature_tria()
 
-                    # Map hetero from vertices to triangles by averaging
-                    hetero_tria = self.geometry.map_vfunc_to_tfunc(self.hetero)
+                    # Map hetero vertices to triangles
+                    if self.hetero is None:
+                        hetero_tria = np.ones(self.geometry.t.shape[0])
+                    else:
+                        hetero_tria = self.geometry.map_vfunc_to_tfunc(self.hetero)
 
-                    # Construct isotropic diffusion tensor by using hetero for both u1 and u2
-                    hetero_mat = np.stack((hetero_tria, hetero_tria), axis=1)
+                    # Construct diffusion tensor
+                    if self.aniso is None:
+                        aniso_mat = np.stack((hetero_tria, hetero_tria), axis=1)
+                    else:
+                        aniso_tria = self.geometry.map_vfunc_to_tfunc(self.aniso)
+                        aniso_mat = hetero_tria[:, np.newaxis] * aniso_tria
 
                     # Compute FEM matrices under heterogeneous LBO
                     self._stiffness, self._mass = self._fem_tria_aniso(
-                        self.geometry, u1, u2, hetero_mat, lump
+                        self.geometry, u1, u2, aniso_mat, lump
                     )
         return self
 
@@ -306,6 +393,7 @@ class EigenSolver(Solver):
         self,
         n_modes: int,
         hetero: NDArray[np.floating] | None = None,
+        aniso: NDArray[np.floating] | None = None,
         lump: bool = False,
         set_emode1: bool = True,
         align_emodes: bool = True,
@@ -329,6 +417,12 @@ class EigenSolver(Solver):
             computed. In line with prior work [1]_, it is recommended that ``hetero`` is in the
             range [0, 2] (see rescaling functions :func:`~neuromodes.stats.zscorew` and
             :func:`~neuromodes.stats.sigmoid_rescale`). Default is ``None``.
+        aniso : array-like, optional
+            Vertex-level directional anisotropy factors of shape ``(n_verts, 2)``. The two
+            columns correspond to the local principal tangent directions used by the
+            anisotropic finite element formulation. If ``None``, diffusion is isotropic.
+            Use :meth:`compute_gradient_aniso` or :meth:`compute_curvature_aniso` to
+            construct this array. Default is ``None``.
         lump: bool, optional
             Whether to use the lumped (i.e., diagonal) mass matrix. Note that the lumped mass can be
             obtained from the consistent mass by simply summing either rows or columns onto the
@@ -382,7 +476,7 @@ class EigenSolver(Solver):
                 raise ValueError(f"v0 must have shape (n_verts,) = {(self.n_verts,)}.")
             
         # Ensure LBO is consistent with lump/hetero config
-        self.compute_lbo(lump, hetero)
+        self.compute_lbo(lump, hetero, aniso)
 
         # Solve the eigenvalue problem
         evals, emodes = self.eigs(k=n_modes, sigma=sigma, v0=v0, rng=seed)
@@ -436,6 +530,8 @@ class EigenSolver(Solver):
                 f.create_dataset('mask', data=self.mask)
             if self.hetero is not None:
                 f.create_dataset('hetero', data=self.hetero)
+            if self.aniso is not None:
+                f.create_dataset('aniso', data=self.aniso)
             f.create_dataset('emodes', data=self.emodes[:, :n_modes])
             f.create_dataset('evals', data=self.evals[:n_modes])
 
@@ -487,6 +583,7 @@ class EigenSolver(Solver):
             mask = f['mask'][()] if 'mask' in f else None
             lump = bool(f.attrs['lump'])
             hetero = f['hetero'][()] if 'hetero' in f else None
+            aniso = f["aniso"][()] if "aniso" in f else None
             use_cholmod = bool(f.attrs['use_cholmod'])
             n_verts = int(f.attrs['n_verts'])
 
@@ -521,6 +618,7 @@ class EigenSolver(Solver):
         solver._stiffness = stiffness
         solver._lump = lump
         solver._hetero = hetero
+        solver._aniso = aniso
         solver._emodes = emodes
         solver._evals = evals
         solver.use_cholmod = use_cholmod
