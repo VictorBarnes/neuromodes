@@ -13,6 +13,7 @@ import numpy as np
 from lapy import Solver
 from scipy.sparse import csc_matrix, isspmatrix_csc
 import h5py
+from numpy.typing import DTypeLike
 
 from neuromodes.io import read_surf, read_vol
 from neuromodes.mesh import (
@@ -35,6 +36,17 @@ if TYPE_CHECKING:
 
     from neuromodes.basis import _IntSequenceKind, _SeqSequenceKind
     _CheckKind: TypeAlias = bool | Literal['maps', 'ortho', 'shape', 'evals']
+
+
+def _validate_dtype(dtype: DTypeLike) -> np.dtype:
+    try:
+        dtype = np.dtype(dtype)
+    except (TypeError, ValueError) as exc:
+        raise TypeError("dtype must be np.float32 or np.float64.") from exc
+    if dtype not in (np.dtype(np.float32), np.dtype(np.float64)):
+        raise ValueError("dtype must be np.float32 or np.float64.")
+    return dtype
+
 
 class EigenSolver(Solver):
     """
@@ -62,6 +74,10 @@ class EigenSolver(Solver):
         A boolean mask to exclude certain vertices (e.g., medial wall) from the mesh. Note that some
         masks may be invalid, if they lead to multiple connected components or faceless vertices.
         Default is ``None``.
+    dtype : dtype-like, optional
+        Floating-point dtype requested for FEM stiffness/mass matrices, stored eigenmodes and
+        eigenvalues, and wave simulations. Must be ``np.float32`` or ``np.float64``. Numerical
+        internals may use a different precision. Default is ``np.float64``.
 
     Notes
     -----
@@ -82,7 +98,8 @@ class EigenSolver(Solver):
     def __init__(
         self,
         geometry: str | Path | GiftiImage | TriaMesh | TetMesh | dict,
-        mask: NDArray[np.bool_] | None = None
+        mask: NDArray[np.bool_] | None = None,
+        dtype: DTypeLike = np.float64
     ):
         # Read in surface or volume mesh
         geometry = read_vol(geometry) if is_vol(geometry) else read_surf(geometry)
@@ -102,6 +119,7 @@ class EigenSolver(Solver):
         self.geometry = geometry
         self.n_verts = geometry.v.shape[0]  # Nicety
         self.mask = mask
+        self._dtype = _validate_dtype(dtype)
         self.use_cholmod = False  # Permit lapy.eigs()
 
         # Configuration states
@@ -115,6 +133,13 @@ class EigenSolver(Solver):
         self._emodes = None
         self._evals = None
         self._n_modes = None
+
+    @property
+    def dtype(self) -> np.dtype:
+        """
+        Floating-point dtype for FEM matrices, stored eigenmodes/eigenvalues, and wave simulations.
+        """
+        return self._dtype
 
     @property
     def lump(self) -> bool:
@@ -146,8 +171,9 @@ class EigenSolver(Solver):
         if self._mass is None:
             # Compute mass (consistent or lumped) for surface or volume mesh
             self._mass = (
-                self._fem_tetra(self.geometry, self._lump)[1] if is_vol(self.geometry)
-                else self.fem_tria_mass(self.geometry, self._lump)
+                self._fem_tetra(self.geometry, self._lump, dtype=self.dtype)[1]
+                if is_vol(self.geometry)
+                else self.fem_tria_mass(self.geometry, self._lump, dtype=self.dtype)
                 )
         return self._mass
 
@@ -355,15 +381,19 @@ class EigenSolver(Solver):
             if is_vol(self.geometry):
                 if self.hetero is None:
                     # Compute FEM matrices under homogeneous LBO
-                    self._stiffness, self._mass = self._fem_tetra(self.geometry, lump)
+                    self._stiffness, self._mass = self._fem_tetra(
+                        self.geometry, lump, dtype=self.dtype
+                    )
                 else:
                     # Isotropic volumetric FEM (LaPy has no Solver._fem_tetra_aniso, so use our own)
                     self._stiffness, self._mass = _fem_tetra_hetero(
-                        self.geometry, self.hetero, lump
+                        self.geometry, self.hetero, lump, dtype=self.dtype
                     )
             else:  # surface
                 if self.hetero is None:
-                    self._stiffness, self._mass = self._fem_tria(self.geometry, lump)
+                    self._stiffness, self._mass = self._fem_tria(
+                        self.geometry, lump, dtype=self.dtype
+                    )
                 else:
                     # Get principal curvatures to define direction of anisotropy
                     # Note: change of basis into (u1, u2) is not strictly needed for our isotropic
@@ -385,7 +415,7 @@ class EigenSolver(Solver):
 
                     # Compute FEM matrices under heterogeneous LBO
                     self._stiffness, self._mass = self._fem_tria_aniso(
-                        self.geometry, u1, u2, aniso_mat, lump
+                        self.geometry, u1, u2, aniso_mat, lump, dtype=self.dtype
                     )
         return self
 
@@ -609,7 +639,7 @@ class EigenSolver(Solver):
                 stiffness = None
 
         # init
-        solver = cls(geometry)
+        solver = cls(geometry, dtype=emodes.dtype)
         # manually set other things
         solver.mask = mask
         solver.n_verts = n_verts
@@ -746,6 +776,7 @@ class EigenSolver(Solver):
             mass=self.mass,
             hetero=self.hetero,
             stiffness=self.stiffness,
+            dtype=self.dtype,
             checks='maps',
             **kwargs
         )
@@ -767,6 +798,7 @@ class EigenSolver(Solver):
             dt=dt,
             emodes=self.emodes,
             mass=self.mass,
+            dtype=self.dtype,
             checks='maps',
             **kwargs
         )
@@ -918,13 +950,16 @@ def get_eigengroup_inds(
 def _fem_tetra_hetero(
     geometry: TetMesh,
     hetero: NDArray[np.floating],
-    lump: bool = False
+    lump: bool = False,
+    dtype: DTypeLike = np.float64
 ) -> tuple[csc_matrix, csc_matrix]:
     """
     This function is a copy of ``lapy.solver.Solver._fem_tetra``, modified to incorporate
     heterogeneity. For a ``hetero`` of ones, output is identical to LaPy's ``_fem_tetra`` method.
     """        
-    # Compute vertex coordinates and a difference vector for each triangle:
+    dtype = _validate_dtype(dtype)
+
+    # Compute vertex coordinates and a difference vector for each tetrahedron:
     t1 = geometry.t[:, 0]
     t2 = geometry.t[:, 1]
     t3 = geometry.t[:, 2]
@@ -939,7 +974,7 @@ def _fem_tetra_hetero(
     e4 = v4 - v1
     e5 = v4 - v2
     e6 = v4 - v3
-    # Compute cross product and 6 * vol for each triangle:
+    # Compute cross product and 6 * vol for each tetrahedron:
     cr = np.cross(e1, e3)
     vol = np.abs(np.sum(e4 * cr, axis=1))
     # zero vol will cause division by zero below, so set to small value:
@@ -1020,8 +1055,8 @@ def _fem_tetra_hetero(
     j = np.column_stack(
         (t2, t1, t3, t2, t1, t3, t4, t1, t4, t2, t4, t3, t1, t2, t3, t4)
     ).reshape(-1)
-    local_a = local_a / 6.0
-    a = csc_matrix((local_a, (i, j)))
+    local_a = (local_a / 6.0).astype(dtype, copy=False)
+    a = csc_matrix((local_a, (i, j)), dtype=dtype)
     if not lump:
         # create b matrix data (account for that vol is 6 times tet volume)
         bii = vol / 60.0
@@ -1045,14 +1080,14 @@ def _fem_tetra_hetero(
                 bii,
                 bii,
             )
-        ).reshape(-1)
-        b = csc_matrix((local_b, (i, j)))
+        ).reshape(-1).astype(dtype, copy=False)
+        b = csc_matrix((local_b, (i, j)), dtype=dtype)
     else:
         # when lumping put all onto diagonal (volume/4 for each vertex)
         bii = vol / 24.0
-        local_b = np.column_stack((bii, bii, bii, bii)).reshape(-1)
+        local_b = np.column_stack((bii, bii, bii, bii)).reshape(-1).astype(dtype, copy=False)
         i = np.column_stack((t1, t2, t3, t4)).reshape(-1)
-        b = csc_matrix((local_b, (i, i)))
+        b = csc_matrix((local_b, (i, i)), dtype=dtype)
     return a, b
 
 _MISSING = object()  

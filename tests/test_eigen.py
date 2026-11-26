@@ -2,6 +2,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from lapy import TetMesh
 from lapy.shapedna import normalize_ev
 
 from neuromodes.eigen import EigenSolver, align_basis, get_eigengroup_inds, is_orthonormal_basis
@@ -315,6 +316,8 @@ def test_reading_writing_h5_all_features(solver, tmp_path):
     solver.write_h5(h5_path, mode='w')
     solver2 = EigenSolver.read_h5(h5_path)
 
+    assert solver2.dtype == solver.dtype
+
     attrs = ['lump', 'use_cholmod', 'n_verts', 'n_modes']
     for attr in attrs:
         assert getattr(solver2, attr) == getattr(solver, attr), f"Attribute '{attr}' read from HDF5 does not match."
@@ -326,6 +329,47 @@ def test_reading_writing_h5_all_features(solver, tmp_path):
     sparse = ['mass', 'stiffness']
     for s in sparse:
         assert np.allclose(getattr(solver2, s).toarray(), getattr(solver, s).toarray()), f"Sparse dataset '{s}' read from HDF5 does not match."
+
+def test_float32_dtype_roundtrip(solver, tmp_path):
+    solver32 = EigenSolver(solver.geometry, dtype=np.float32).solve(
+        10, hetero=solver.hetero
+    )
+    assert solver32.emodes.dtype == np.float32
+    assert solver32.evals.dtype == np.float32
+    assert solver32.stiffness.dtype == np.float32
+    assert solver32.mass.dtype == np.float32
+    assert solver32.dtype == np.dtype(np.float32)
+
+    surface_solver = EigenSolver(solver.geometry, dtype=np.float32).compute_lbo()
+    assert surface_solver.stiffness.dtype == np.float32
+    assert surface_solver.mass.dtype == np.float32
+    assert EigenSolver(solver.geometry, dtype=np.float32).mass.dtype == np.float32
+
+    vertices = np.array([
+        [0., 0., 0.],
+        [1., 0., 0.],
+        [0., 1., 0.],
+        [0., 0., 1.]
+    ])
+    tetra = TetMesh(vertices, np.array([[0, 1, 2, 3]]))
+    volume_solver = EigenSolver(tetra, dtype=np.float32).compute_lbo()
+    volume_hetero_solver = EigenSolver(tetra, dtype=np.float32).compute_lbo(
+        hetero=np.ones(4)
+    )
+    assert volume_solver.stiffness.dtype == np.float32
+    assert volume_solver.mass.dtype == np.float32
+    assert volume_hetero_solver.stiffness.dtype == np.float32
+    assert volume_hetero_solver.mass.dtype == np.float32
+
+    h5_path = tmp_path / "solver_float32.h5"
+    solver32.write_h5(h5_path, mode='w')
+    loaded = EigenSolver.read_h5(h5_path)
+    assert loaded.dtype == np.dtype(np.float32)
+    assert loaded.emodes.dtype == np.float32
+    assert loaded.evals.dtype == np.float32
+
+    with pytest.raises(ValueError, match="dtype must be np.float32 or np.float64"):
+        EigenSolver(solver.geometry, dtype=np.int32)
 
 def test_reading_writing_h5_some_modes(solver, tmp_path):
     alln = solver.n_modes

@@ -11,6 +11,7 @@ from neuromodes.io import fetch_example_map, fetch_example_surf
 from neuromodes.stats import cdistw, gramw, sigmoid_rescale, zscorew
 from neuromodes.waves import (
     _gen_noise,
+    balloon_model,
     calc_nft_fc,
     calc_nft_mode_freqs,
     calc_nft_wave_speed,
@@ -25,6 +26,103 @@ def solver():
     solver = EigenSolver(mesh, mask=medmask)
     hetero = sigmoid_rescale(zscorew(myelinmap, solver.mass), steepness=1.0, upper=2.0)
     return solver.solve(n_modes=100, hetero=hetero)
+
+@pytest.fixture(scope="module")
+def float32_solver():
+    geometry = {
+        'vertices': np.array([
+            [0., 0., 0.],
+            [1., 0., 0.],
+            [0., 1., 0.],
+            [0., 0., 1.]
+        ]),
+        'cells': np.array([
+            [0, 2, 1],
+            [0, 1, 3],
+            [0, 3, 2],
+            [1, 2, 3]
+        ])
+    }
+    return EigenSolver(geometry, dtype=np.float32).solve(2)
+
+def test_float32_wave_dtype(float32_solver):
+    kwargs = {
+        'ext_input': np.random.default_rng(0).standard_normal((4, 8)),
+        'dt': 0.01,
+        'r': 0.1,
+        'gamma': 1.0,
+        'speed_limits': None,
+        'fft_pad_tol': 'nt'
+    }
+    inputs = {
+        'emodes': float32_solver.emodes,
+        'evals': float32_solver.evals,
+        'mass': float32_solver.mass,
+        'stiffness': float32_solver.stiffness,
+        'hetero': float32_solver.hetero,
+        'checks': 'maps'
+    }
+    for method in ('fourier', 'ode', 'fem'):
+        activity = float32_solver.sim_nft_waves(method=method, **kwargs)
+        assert activity.dtype == np.float32
+
+        standalone_activity = sim_nft_waves(
+            **inputs,
+            dtype=np.float32,
+            method=method,
+            **kwargs
+        )
+        np.testing.assert_array_equal(activity, standalone_activity)
+
+        reference_activity = sim_nft_waves(
+            **inputs,
+            dtype=np.float64,
+            method=method,
+            **kwargs
+        )
+        np.testing.assert_allclose(activity, reference_activity, rtol=1e-4, atol=1e-6)
+
+        generated_activity = float32_solver.sim_nft_waves(
+            nt=8,
+            dt=kwargs['dt'],
+            r=kwargs['r'],
+            gamma=kwargs['gamma'],
+            speed_limits=None,
+            seed=0,
+            fft_pad_tol=kwargs['fft_pad_tol'],
+            method=method
+        )
+        assert generated_activity.dtype == np.float32
+
+    activity = np.random.default_rng(0).standard_normal((4, 8))
+    for method in ('fourier', 'ode'):
+        bold = float32_solver.balloon_model(
+            activity, dt=0.01, method=method, fft_pad_tol='nt'
+        )
+        assert bold.dtype == np.float32
+
+        standalone_bold = balloon_model(
+            activity=activity,
+            emodes=float32_solver.emodes,
+            dt=0.01,
+            method=method,
+            fft_pad_tol='nt',
+            mass=float32_solver.mass,
+            checks='maps',
+            dtype=np.float32
+        )
+        np.testing.assert_array_equal(bold, standalone_bold)
+        reference_bold = balloon_model(
+            activity=activity,
+            emodes=float32_solver.emodes,
+            dt=0.01,
+            method=method,
+            fft_pad_tol='nt',
+            mass=float32_solver.mass,
+            checks='maps',
+            dtype=np.float64
+        )
+        np.testing.assert_allclose(bold, reference_bold, rtol=1e-4, atol=1e-6)
 
 def test_unusual_wave_speed(solver):
     with pytest.warns(UserWarning, match=r'range of 0-150 m/s \(calculated 47.1-162.6 m/s\).'):
@@ -119,6 +217,11 @@ def test_gen_noise_reproducibility():
     noise2 = _gen_noise(5, 20, seed=seed)
     assert (noise1 == noise2[:, :10]).all(), \
         "Noise generated with the same seed does not match across different nt."
+    noise32 = _gen_noise(5, 10, seed=seed, dtype=np.float32)
+    noise32_long = _gen_noise(5, 20, seed=seed, dtype=np.float32)
+    assert noise32.dtype == np.float32
+    assert (noise32 == noise32_long[:, :10]).all(), \
+        "Float32 noise does not match across different nt for the same seed."
 
 def test_gen_noise_gram(solver):
     seed = 0

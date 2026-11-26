@@ -10,14 +10,14 @@ from typing import TYPE_CHECKING, Literal, cast
 from warnings import warn
 
 import numpy as np
-from numpy.typing import NDArray
+from numpy.typing import DTypeLike, NDArray
 from scipy.fft import irfft, rfft, rfftfreq
 from scipy.integrate import solve_ivp
 from scipy.interpolate import PchipInterpolator
 from scipy.sparse.linalg import eigsh, splu
 
 from neuromodes.basis import decompose
-from neuromodes.eigen import EigenData
+from neuromodes.eigen import EigenData, _validate_dtype
 from neuromodes.stats import _mult_by_cholesky
 
 if TYPE_CHECKING:
@@ -46,7 +46,8 @@ def sim_nft_waves(
     seed: int | None = None,
     cache_input: bool = False,
     n_jobs: int = 1,
-    verbose: int = 0
+    verbose: int = 0,
+    dtype: DTypeLike = np.float64
 ) -> NDArray[np.floating]:
     """
     Simulate neural activity using a Neural Field Theory wave model [1]_ [2]_ [3]_.
@@ -117,6 +118,11 @@ def sim_nft_waves(
     verbose : int, optional
         ``joblib`` verbosity level for parallel execution when ``method`` is ``'fem'`` and ``n_jobs
         > 1``. Default is ``0``.
+    dtype : dtype-like, optional
+        Floating-point dtype used for simulation inputs, intermediate arrays, and results. Must be
+        ``np.float32`` or ``np.float64``. Some numerical backends may use ``float64`` internally.
+        If input arrays (``emodes``, ``evals``, ``ext_input``, etc.) are provided, they 
+        are cast to this dtype. Default is ``np.float64``.
 
     Returns
     -------
@@ -190,6 +196,20 @@ def sim_nft_waves(
             )
         emodes, evals, mass, stiffness, ext_input, hetero = \
             ved.emodes, ved.evals, ved.mass, ved.stiffness, ved.data, ved.hetero
+
+    dtype = _validate_dtype(dtype)
+    if emodes is not None:
+        emodes = np.asarray(emodes, dtype=dtype)
+    if evals is not None:
+        evals = np.asarray(evals, dtype=dtype)
+    if ext_input is not None:
+        ext_input = np.asarray(ext_input, dtype=dtype)
+    if hetero is not None:
+        hetero = np.asarray(hetero, dtype=dtype)
+    if mass is not None:
+        mass = mass.astype(dtype, copy=False)
+    if stiffness is not None:
+        stiffness = stiffness.astype(dtype, copy=False)
         
     if emodes is not None: 
         n_verts, n_modes = emodes.shape
@@ -278,10 +298,10 @@ def sim_nft_waves(
         if method == 'fem':
             n_verts = stiffness.shape[0]
             # White noise in vertex space, pre-weighted by mass for wave PDE
-            input_w = np.asarray(gen_noise(n_verts, nt, seed=seed, mass=mass))
+            input_w = np.asarray(gen_noise(n_verts, nt, seed=seed, mass=mass, dtype=dtype))
         else:
             # Generate white noise in modal space for computational efficiency
-            input_coeffs = np.asarray(gen_noise(n_modes, nt, seed=seed))
+            input_coeffs = np.asarray(gen_noise(n_modes, nt, seed=seed, dtype=dtype))
     else: # not the nicest, but it makes pyright the happiest
         raise ValueError("Either nt or ext_input must be provided.")
 
@@ -289,7 +309,9 @@ def sim_nft_waves(
     if method == 'fem':
         if mass is None or stiffness is None:
             raise ValueError("Mass and stiffness matrices must be provided when method is 'fem'.")
-        return _model_wave_fem(input_w, mass, stiffness, dt, r, gamma, fft_pad_tol, n_jobs, verbose)
+        return _model_wave_fem(
+            input_w, mass, stiffness, dt, r, gamma, fft_pad_tol, n_jobs, verbose
+        ).astype(dtype, copy=False)
     
     # Standard modal implementation: pass decomposed input, then output reconstruction
     if method == 'fourier':
@@ -298,7 +320,7 @@ def sim_nft_waves(
     else:
         activity_coeffs = _model_wave_ode(input_coeffs, dt, r, gamma, evals)
 
-    return emodes @ activity_coeffs
+    return (emodes @ activity_coeffs).astype(dtype, copy=False)
 
 def calc_nft_wave_speed(
     r: float,
@@ -501,7 +523,8 @@ def balloon_model(
     fft_pad_tol: np.floating | Literal['nt'] = 1e-4,
     mass: csc_matrix | None = None,
     checks: _CheckKind = True,
-    n_jobs: int = 1
+    n_jobs: int = 1,
+    dtype: DTypeLike = np.float64
 ) -> NDArray[np.floating]:
     """
     Transform simulated activity to blood oxygen level-dependent (BOLD) signal using the
@@ -558,6 +581,11 @@ def balloon_model(
     n_jobs : int, optional
         Number of threads to use for speeding up computation when ``method`` is ``'fourier'``.
         Default is ``1``.
+    dtype : dtype-like, optional
+        Floating-point dtype used for simulation inputs, intermediate arrays, and results. Must be
+        ``np.float32`` or ``np.float64``. The ODE integrator may use ``float64`` internally.
+        If input arrays (``emodes``, ``activity``, etc.) are provided, they are cast to this dtype.
+        Default is ``np.float64``.
 
     Returns
     -------
@@ -597,6 +625,12 @@ def balloon_model(
         ved = EigenData(emodes=emodes, mass=mass, data=activity, checks=checks)
         emodes, mass, activity = ved.emodes, ved.mass, ved.data
 
+    dtype = _validate_dtype(dtype)
+    emodes = np.asarray(emodes, dtype=dtype)
+    activity = np.asarray(activity, dtype=dtype)
+    if mass is not None:
+        mass = mass.astype(dtype, copy=False)
+
     if np.isnan(activity).any():
         raise ValueError("activity contains NaN values, which are not allowed.")
     if dt <= 0:
@@ -633,13 +667,14 @@ def balloon_model(
         )
 
     # Transform timeseries from modal coefficients back to vertex space
-    return emodes @ bold_coeffs
+    return (emodes @ bold_coeffs).astype(dtype, copy=False)
 
 def _gen_noise(
     n_samples: int,
     nt: int,
     mass: csc_matrix | None = None,
-    seed: int | None = None
+    seed: int | None = None,
+    dtype: DTypeLike = np.float64
 ) -> NDArray[np.floating]:
     """
     Generate reproducible white noise of shape ``(n_samples, nt)`` for a given ``seed``, derived
@@ -660,6 +695,8 @@ def _gen_noise(
         noise). Default is ``None``.
     seed : int
         Random seed for reproducibility.
+    dtype : dtype-like, optional
+        Floating-point dtype of the generated noise. Default is ``np.float64``.
 
     Returns
     -------
@@ -705,7 +742,7 @@ def _gen_noise(
     # Draw samples from N(0, 1) in column-major order to ensure reproducibility across nt, then
     # transpose to desired shape (n_samples, nt)
     rng = np.random.default_rng(seed)
-    noise = rng.standard_normal((nt, n_samples)).T
+    noise = rng.standard_normal((nt, n_samples), dtype=dtype).T
 
     if mass is None:  # e.g., modes along rows
         return noise
@@ -771,7 +808,7 @@ def _model_wave_fourier(
 
     # Get frequencies (rad/s)
     # Negative sign in front of omega matches the physics convention of e^(iwt)
-    omega = -2 * np.pi * rfftfreq(n_pad + nt, d=dt)
+    omega = np.asarray(-2 * np.pi * rfftfreq(n_pad + nt, d=dt), dtype=input_coeffs.dtype)
 
     # Compute NFT transfer function
     tfunc = gamma**2 / (-omega**2 - 2j * omega * gamma + gamma**2 * (1 + r**2 * evals[:, None]))
@@ -826,7 +863,7 @@ def _model_wave_ode(
         d(x₂)/dt = -2γ x₂ - γ²(1 + r²λⱼ) x₁ + γ²qⱼ
     """
     n_modes, nt = input_coeffs.shape
-    t_vec = np.linspace(0, dt * (nt - 1), nt)
+    t_vec = np.linspace(0, dt * (nt - 1), nt, dtype=input_coeffs.dtype)
     
     # Create interpolator for input, as solver may need intermediate timepoints
     input_interp = PchipInterpolator(t_vec, input_coeffs, axis=1, extrapolate=False)
@@ -848,7 +885,7 @@ def _model_wave_ode(
         return np.concatenate([dx1dt, dx2dt])
         
     # Set initial conditions: all modes begin at rest
-    y0 = np.zeros(2 * n_modes)
+    y0 = np.zeros(2 * n_modes, dtype=input_coeffs.dtype)
 
     # Solve ODE system
     sol = solve_ivp(
@@ -862,7 +899,7 @@ def _model_wave_ode(
     )
     
     # Return activity without derivatives
-    return sol.y[:n_modes, :]
+    return sol.y[:n_modes, :].astype(input_coeffs.dtype, copy=False)
 
 def _model_wave_fem(
     input_w: NDArray[np.floating],
@@ -934,7 +971,7 @@ def _model_wave_fem(
 
     # Get frequencies
     # Negative sign in front of omega matches the physics convention of e^(iwt)
-    omega = -2 * np.pi * rfftfreq(nt+n_pad, dt)
+    omega = np.asarray(-2 * np.pi * rfftfreq(nt+n_pad, dt), dtype=input_w.dtype)
 
     # Compute components of NFT operator
     spatial = r**2 * stiffness
@@ -969,7 +1006,7 @@ def _model_wave_fem(
     else:
         phi_freqs = [_solve_fem_freq(op, inp) for op, inp in eqns]
     
-    phi_freqs = np.stack(cast(list[NDArray[np.complex128]], phi_freqs), axis=1)
+    phi_freqs = np.stack(cast(list[NDArray[np.complexfloating]], phi_freqs), axis=1)
 
     # Inverse transform to time domain
     phi = irfft(phi_freqs, axis=1, n=nt+n_pad, overwrite_x=True, workers=n_jobs)
@@ -1053,10 +1090,11 @@ def _model_balloon_fourier(
     activity_coeffs_padded = np.pad(activity_coeffs, ((0, 0), (n_pad, 0)), constant_values=0)
 
     # Get frequencies
-    omega = -2 * np.pi * rfftfreq(nt+n_pad, d=dt)
+    omega = np.asarray(-2 * np.pi * rfftfreq(nt+n_pad, d=dt), dtype=activity_coeffs.dtype)
 
     # Calculate balloon model frequency response (Pang et al. 2016)
     # Negative sign in front of omega matches the physics convention of e^(iwt)
+    # Instead of casting every expression, we cast the final result to the desired dtype
     beta = (rho + (1 - rho) * np.log(1 - rho)) / rho
     phi_hat_Fz = 1 / (-(omega + 1j * 0.5 * kappa) ** 2 + w_f ** 2)
     phi_hat_yF = V_0 * (
@@ -1064,6 +1102,9 @@ def _model_balloon_fourier(
         - (k1 + k2) * (alpha + beta - 1 - 1j * tau * alpha * beta * omega)
         ) / ((1 - 1j * tau * omega) * (1 - 1j * tau * alpha * omega))
     balloon_freq_response = phi_hat_yF * phi_hat_Fz
+    balloon_freq_response = np.asarray(
+        balloon_freq_response, dtype=np.result_type(activity_coeffs.dtype, np.complex64)
+    )
 
     # Fourier transform, apply transfer function, and inverse transform back to time domain
     activity_coeffs_f = rfft(
@@ -1133,7 +1174,7 @@ def _model_balloon_ode(
         If the ODE solver fails.
     """
     n_modes, nt = activity_coeffs.shape
-    t_vec = np.linspace(0, dt * (nt - 1), nt)
+    t_vec = np.linspace(0, dt * (nt - 1), nt, dtype=activity_coeffs.dtype)
 
     # Create interpolator for activity, as solver may need intermediate timepoints
     activity_interp = PchipInterpolator(t_vec, activity_coeffs, axis=1, extrapolate=False)
@@ -1157,7 +1198,7 @@ def _model_balloon_ode(
         return np.concatenate([dzdt, dfdt, dvdt, dqdt])
         
     # Set initial conditions
-    y0 = np.zeros(4 * n_modes)
+    y0 = np.zeros(4 * n_modes, dtype=activity_coeffs.dtype)
     y0[n_modes:] = 1.0  # f, v, q start at 1
 
     # Solve ODE system
@@ -1178,4 +1219,6 @@ def _model_balloon_ode(
 
     # Compute BOLD
     _, _, v, q = np.split(sol.y, 4)
-    return V_0 * (k1 * (1 - q) + k2 * (1 - q / v) + k3 * (1 - v))
+    return (V_0 * (k1 * (1 - q) + k2 * (1 - q / v) + k3 * (1 - v))).astype(
+        activity_coeffs.dtype, copy=False
+    )
