@@ -766,7 +766,8 @@ class EigenSolver(Solver):
         """
         This is a wrapper for :func:`~neuromodes.waves.sim_nft_waves`. Note that ``emodes``,
         ``evals``, ``mass``, ``hetero``, and ``checks`` are passed automatically by the
-        ``EigenSolver`` instance.
+        ``EigenSolver`` instance. ``ext_input`` may be in vertex or modal space, and ``output_space``
+        selects the output space.
         """
         from neuromodes.waves import sim_nft_waves as _sim_nft_waves
 
@@ -790,6 +791,7 @@ class EigenSolver(Solver):
         """
         This is a wrapper for :func:`~neuromodes.waves.balloon_model`. Note that ``emodes``,
         ``mass``, and ``checks`` are passed automatically by the ``EigenSolver`` instance.
+        ``activity`` may be in vertex or modal space, and ``output_space`` selects the output space.
         """
         from neuromodes.waves import balloon_model as _balloon_model
 

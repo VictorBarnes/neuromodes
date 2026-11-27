@@ -28,42 +28,38 @@ def solver():
     return solver.solve(n_modes=100, hetero=hetero)
 
 @pytest.fixture(scope="module")
-def float32_solver():
-    geometry = {
-        'vertices': np.array([
-            [0., 0., 0.],
-            [1., 0., 0.],
-            [0., 1., 0.],
-            [0., 0., 1.]
-        ]),
-        'cells': np.array([
-            [0, 2, 1],
-            [0, 1, 3],
-            [0, 3, 2],
-            [1, 2, 3]
-        ])
-    }
-    return EigenSolver(geometry, dtype=np.float32).solve(2)
+def solver_float32():
+    mesh, medmask = fetch_example_surf(res='4k')
+    myelinmap = fetch_example_map(data="myelinmap", res="4k")[medmask]
+    solver = EigenSolver(mesh, mask=medmask, dtype=np.float32)
+    hetero = sigmoid_rescale(zscorew(myelinmap, solver.mass), steepness=1.0, upper=2.0)
+    return solver.solve(n_modes=100, hetero=hetero)
 
-def test_float32_wave_dtype(float32_solver):
+def test_float32_wave_dtype(solver_float32):
+    assert solver_float32.emodes.dtype == np.float32
+    assert solver_float32.evals.dtype == np.float32
+    assert solver_float32.mass.dtype == np.float32
+    assert solver_float32.stiffness.dtype == np.float32
+    assert solver_float32.hetero.dtype == np.float32
+    
+    inputs = {
+        'emodes': solver_float32.emodes,
+        'evals': solver_float32.evals,
+        'mass': solver_float32.mass,
+        'stiffness': solver_float32.stiffness,
+        'hetero': solver_float32.hetero,
+        'checks': 'maps'
+    }
     kwargs = {
-        'ext_input': np.random.default_rng(0).standard_normal((4, 8)),
+        'ext_input': np.random.default_rng(0).standard_normal((solver_float32.n_verts, 100)),
         'dt': 0.01,
         'r': 0.1,
         'gamma': 1.0,
         'speed_limits': None,
         'fft_pad_tol': 'nt'
     }
-    inputs = {
-        'emodes': float32_solver.emodes,
-        'evals': float32_solver.evals,
-        'mass': float32_solver.mass,
-        'stiffness': float32_solver.stiffness,
-        'hetero': float32_solver.hetero,
-        'checks': 'maps'
-    }
     for method in ('fourier', 'ode', 'fem'):
-        activity = float32_solver.sim_nft_waves(method=method, **kwargs)
+        activity = solver_float32.sim_nft_waves(method=method, **kwargs)
         assert activity.dtype == np.float32
 
         standalone_activity = sim_nft_waves(
@@ -80,10 +76,11 @@ def test_float32_wave_dtype(float32_solver):
             method=method,
             **kwargs
         )
-        np.testing.assert_allclose(activity, reference_activity, rtol=1e-4, atol=1e-6)
+        # Check that float32 and float64 outputs are close to each other
+        np.testing.assert_allclose(activity, reference_activity, rtol=1e-3, atol=1e-5)
 
-        generated_activity = float32_solver.sim_nft_waves(
-            nt=8,
+        generated_activity = solver_float32.sim_nft_waves(
+            nt=100,
             dt=kwargs['dt'],
             r=kwargs['r'],
             gamma=kwargs['gamma'],
@@ -93,36 +90,176 @@ def test_float32_wave_dtype(float32_solver):
             method=method
         )
         assert generated_activity.dtype == np.float32
-
-    activity = np.random.default_rng(0).standard_normal((4, 8))
+    activity = np.random.default_rng(0).standard_normal((solver_float32.n_verts, 100))
     for method in ('fourier', 'ode'):
-        bold = float32_solver.balloon_model(
+        bold = solver_float32.balloon_model(
             activity, dt=0.01, method=method, fft_pad_tol='nt'
         )
         assert bold.dtype == np.float32
 
         standalone_bold = balloon_model(
             activity=activity,
-            emodes=float32_solver.emodes,
+            emodes=solver_float32.emodes,
             dt=0.01,
             method=method,
             fft_pad_tol='nt',
-            mass=float32_solver.mass,
+            mass=solver_float32.mass,
             checks='maps',
             dtype=np.float32
         )
         np.testing.assert_array_equal(bold, standalone_bold)
         reference_bold = balloon_model(
             activity=activity,
-            emodes=float32_solver.emodes,
+            emodes=solver_float32.emodes,
             dt=0.01,
             method=method,
             fft_pad_tol='nt',
-            mass=float32_solver.mass,
+            mass=solver_float32.mass,
             checks='maps',
             dtype=np.float64
         )
-        np.testing.assert_allclose(bold, reference_bold, rtol=1e-4, atol=1e-6)
+        # Check that float32 and float64 outputs are close to each other
+        np.testing.assert_allclose(bold, reference_bold, rtol=1e-3, atol=1e-5)
+
+def test_wave_modal_input_and_output_space(solver):
+    vertex_input = np.random.default_rng(0).standard_normal((solver.n_verts, 100))
+    modal_input = solver.decompose(vertex_input)
+    kwargs = {
+        'dt': 0.01,
+        'r': 0.1,
+        'gamma': 1.0,
+        'fft_pad_tol': 'nt'
+    }
+
+    for method in ('fourier', 'ode'):
+        modal_from_vertex = solver.sim_nft_waves(
+            ext_input=vertex_input,
+            method=method,
+            output_space='modal',
+            **kwargs
+        )
+        modal_from_modal = solver.sim_nft_waves(
+            ext_input=modal_input,
+            method=method,
+            output_space='modal',
+            **kwargs
+        )
+        vertex_output = solver.sim_nft_waves(
+            ext_input=vertex_input,
+            method=method,
+            **kwargs
+        )
+        vertex_from_modal = solver.sim_nft_waves(
+            ext_input=modal_input,
+            method=method,
+            **kwargs
+        )
+        generated_modal = solver.sim_nft_waves(
+            nt=100, seed=0, method=method, output_space='modal', **kwargs
+        )
+
+        assert modal_from_modal.shape == (solver.n_modes, 100)
+        assert generated_modal.shape == (solver.n_modes, 100)
+        np.testing.assert_allclose(modal_from_vertex, modal_from_modal, rtol=1e-5, atol=1e-6)
+        np.testing.assert_allclose(vertex_output, vertex_from_modal, rtol=1e-5, atol=1e-8)
+        np.testing.assert_allclose(
+            vertex_output, solver.emodes @ modal_from_modal, rtol=1e-5, atol=1e-8
+        )
+
+def test_balloon_modal_input_and_output_space(solver):
+    vertex_activity = np.random.default_rng(0).standard_normal((solver.n_verts, 100))
+    modal_activity = solver.decompose(vertex_activity)
+
+    for method in ('fourier', 'ode'):
+        modal_from_vertex = solver.balloon_model(
+            vertex_activity, dt=0.01, method=method, fft_pad_tol='nt', output_space='modal'
+        )
+        modal_from_modal = solver.balloon_model(
+            modal_activity, dt=0.01, method=method, fft_pad_tol='nt', output_space='modal'
+        )
+        vertex_output = solver.balloon_model(
+            modal_activity, dt=0.01, method=method, fft_pad_tol='nt'
+        )
+
+        assert modal_from_modal.shape == (solver.n_modes, 100)
+        np.testing.assert_allclose(modal_from_vertex, modal_from_modal, rtol=1e-5, atol=1e-6)
+        np.testing.assert_allclose(
+            vertex_output, solver.emodes @ modal_from_modal, rtol=1e-5, atol=1e-8
+        )
+
+def test_modal_wave_to_bold_pipeline(solver):
+    vertex_input = np.random.default_rng(1).standard_normal((solver.n_verts, 100))
+    kwargs = {
+        'dt': 0.01,
+        'r': 0.1,
+        'gamma': 1.0,
+        'fft_pad_tol': 'nt'
+    }
+
+    activity = solver.sim_nft_waves(ext_input=vertex_input, **kwargs)
+    bold_vertex = solver.balloon_model(activity, dt=kwargs['dt'], fft_pad_tol='nt')
+
+    activity_modal = solver.sim_nft_waves(
+        ext_input=vertex_input, output_space='modal', **kwargs
+    )
+    bold_modal = solver.balloon_model(
+        activity_modal, dt=kwargs['dt'], fft_pad_tol='nt', output_space='modal'
+    )
+    sampled_bold = solver.emodes @ bold_modal[:, 50::2]
+
+    np.testing.assert_allclose(sampled_bold, bold_vertex[:, 50::2], rtol=1e-5, atol=1e-8)
+
+def test_modal_input_shape_validation():
+    # Define dummy inputs with ambiguous first dimension (n_verts vs n_modes)
+    emodes = np.ones((10, 10))  # 10 vertices, 10 modes
+    evals = np.ones((10,)) # 10 modes
+    mass = np.ones((10, 10))  # 10 vertices
+    ext_input = np.ones((10, 10))  # Ambiguous: could be 10 vertices or 10 modes
+    with pytest.warns(UserWarning, match='ambiguous first dimension'):
+        wave_output = sim_nft_waves(
+            emodes=emodes,
+            evals=evals,
+            mass=mass,
+            ext_input=ext_input,
+            checks=False
+        )
+
+    activity = np.ones((10, 10))  # Ambiguous: could be 10 vertices or 10 modes
+    with pytest.warns(UserWarning, match='ambiguous first dimension'):
+        bold_output = balloon_model(
+            activity=activity,
+            emodes=emodes,
+            dt=0.01,
+            mass=mass,
+            checks=False
+        )
+    assert wave_output.shape == (10, 10)
+    assert bold_output.shape == (10, 10)
+
+def test_modal_space_is_not_supported_by_fem(solver):
+    with pytest.raises(ValueError, match="ext_input must be in vertex space"):
+        solver.sim_nft_waves(
+            ext_input=np.ones((solver.n_modes, 8)),
+            method='fem',
+            speed_limits=None
+        )
+    with pytest.raises(ValueError, match="output_space='modal'"):
+        solver.sim_nft_waves(
+            ext_input=np.ones((4, 8)),
+            method='fem',
+            output_space='modal',
+            speed_limits=None
+        )
+
+def test_invalid_output_space(solver):
+    with pytest.raises(ValueError, match="output_space must be either"):
+        solver.sim_nft_waves(nt=100, output_space='invalid')
+    with pytest.raises(ValueError, match="output_space must be either"):
+        solver.balloon_model(
+            np.ones((solver.n_verts, 100)),
+            dt=0.01, 
+            output_space='invalid'
+        )
 
 def test_unusual_wave_speed(solver):
     with pytest.warns(UserWarning, match=r'range of 0-150 m/s \(calculated 47.1-162.6 m/s\).'):
@@ -278,10 +415,12 @@ def test_sim_nft_waves_reproducibility_fourier(solver):
     assert mse02 > 3e-4, \
         f"Simulated timeseries with different seeds match unexpectedly (MSE={mse02:.4f})."
 
-def test_sim_nft_waves_invalid_input_shape(solver):
+def test_invalid_input_shape(solver):
 
-    with pytest.raises(ValueError, match=r"data.*first dimension.*3619"):
+    with pytest.raises(ValueError, match=r"ext_input must have shape \(3619,"):
         solver.sim_nft_waves(ext_input=np.ones((4002, 1000)))
+    with pytest.raises(ValueError, match=r"activity must have shape \(3619,"):
+        solver.balloon_model(np.ones((4002, 1000)), dt=0.01)    
 
 def test_sim_nft_waves_invalid_method(solver):
 

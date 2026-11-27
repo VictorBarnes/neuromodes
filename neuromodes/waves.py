@@ -47,7 +47,8 @@ def sim_nft_waves(
     cache_input: bool = False,
     n_jobs: int = 1,
     verbose: int = 0,
-    dtype: DTypeLike = np.float64
+    dtype: DTypeLike = np.float64,
+    output_space: Literal['vertex', 'modal'] = 'vertex'
 ) -> NDArray[np.floating]:
     """
     Simulate neural activity using a Neural Field Theory wave model [1]_ [2]_ [3]_.
@@ -63,7 +64,9 @@ def sim_nft_waves(
         Number of time points to simulate under white noise input. Note that either ``nt`` or
         ``ext_input`` must be provided. Default is ``None``.
     ext_input : array-like, optional
-        External input array of shape ``(n_verts, n_timepoints)``. If ``None``, white noise input is
+        External input array of shape ``(n_verts, n_timepoints)`` or
+        ``(n_modes, n_timepoints)``. The space is inferred from the first dimension. Modal input is
+        supported only for ``method='fourier'`` or ``'ode'``. If ``None``, white noise input is
         generated to simulate ``nt`` time points. Default is ``None``.
     dt : float, optional
         Time step for simulation in seconds. A warning is issued if ``dt`` is too large to 
@@ -78,8 +81,10 @@ def sim_nft_waves(
         (no modal approximation), ``mass`` and ``stiffness`` must be provided while ``emodes`` and
         ``evals`` can be ``None``. Default is ``'fourier'``.
     mass : array-like, optional
-        The mass matrix of shape ``(n_verts, n_verts)`` used for decomposition of ``ext_input`` if
-        provided and ``method`` is not ``'fem'``. Default is ``None``.
+        The mass matrix of shape ``(n_verts, n_verts)``. When ``method='fem'``, this is used to
+        compute the FEM solution. When ``method='fourier'`` or ``'ode'``, this is used to
+        decompose ``ext_input`` if it is in vertex space. Default is ``None`` which uses the identity 
+        matrix.
     speed_limits : tuple, optional
         If any wave speeds are outside this range (in meters per second), a warning is raised. If
         ``None``, no warning is raised. Default is ``(0, 150)``.
@@ -123,11 +128,15 @@ def sim_nft_waves(
         ``np.float32`` or ``np.float64``. Some numerical backends may use ``float64`` internally.
         If input arrays (``emodes``, ``evals``, ``ext_input``, etc.) are provided, they 
         are cast to this dtype. Default is ``np.float64``.
+    output_space : {'vertex', 'modal'}, optional
+        Space of the returned activity. ``'vertex'`` returns shape ``(n_verts, nt)``;
+        ``'modal'`` returns shape ``(n_modes, nt)`` and is available only for Fourier and ODE
+        methods. Default is ``'vertex'``.
 
     Returns
     -------
     np.ndarray
-        Simulated neural activity of shape ``(n_verts, nt)``.
+        Simulated neural activity in the space specified by ``output_space``.
 
     Raises
     ------
@@ -144,6 +153,10 @@ def sim_nft_waves(
         If ``method`` is not ``'fourier'``, ``'ode'``, nor ``'fem'``.
     ValueError
         If ``method='fem'`` and either of ``mass`` or ``stiffness`` is not provided.
+    ValueError
+        If ``method='fem'`` is used with modal input or ``output_space='modal'``.
+    ValueError
+        If ``ext_input`` does not have a valid vertex/modal shape.
     ValueError
         If ``method`` is ``'fourier'`` or ``'ode'`` and either of ``emodes`` or ``evals`` is not
         provided.
@@ -178,6 +191,9 @@ def sim_nft_waves(
              inputs.
           c. Another option is sinc interpolation, which bandlimits and thus matches the Fourier
              method, but this is demanding on time/memory and not implemented by numpy/scipy.
+    5. For Fourier and ODE methods, ``output_space='modal'`` avoids constructing the full vertex-space
+       activity. Modal output can be passed directly as ``activity`` to :func:`~neuromodes.waves.balloon_model`.
+
 
     References
     ----------
@@ -192,10 +208,10 @@ def sim_nft_waves(
     if checks is not False:
         ved = EigenData(
             emodes=emodes, evals=evals, mass=mass, stiffness=stiffness, 
-            hetero=hetero, data=ext_input, checks=checks
+            hetero=hetero, checks=checks
             )
         emodes, evals, mass, stiffness, ext_input, hetero = \
-            ved.emodes, ved.evals, ved.mass, ved.stiffness, ved.data, ved.hetero
+            ved.emodes, ved.evals, ved.mass, ved.stiffness, ext_input, ved.hetero
 
     dtype = _validate_dtype(dtype)
     if emodes is not None:
@@ -211,6 +227,7 @@ def sim_nft_waves(
     if stiffness is not None:
         stiffness = stiffness.astype(dtype, copy=False)
         
+    n_modes = None
     if emodes is not None: 
         n_verts, n_modes = emodes.shape
     elif stiffness is not None:
@@ -219,6 +236,19 @@ def sim_nft_waves(
         raise ValueError(f"mass and stiffness matrices must be provided for {method} method.")
     else: 
         raise ValueError(f"emodes must be provided for {method} method.")
+
+    if output_space not in ('vertex', 'modal'):
+        raise ValueError("output_space must be either 'vertex' or 'modal'.")
+    if method == 'fem' and output_space == 'modal':
+        raise ValueError("output_space='modal' is not supported with method='fem'.")
+
+    input_space = None
+    if ext_input is not None:
+        input_space = _infer_input_space(
+            np.asarray(ext_input), n_verts, n_modes if emodes is not None else None, 'ext_input'
+        )
+        if method == 'fem' and input_space == 'modal':
+            raise ValueError("ext_input must be in vertex space when method='fem'.")
         
     r = float(r)
     gamma = float(gamma)
@@ -285,6 +315,8 @@ def sim_nft_waves(
         nt = ext_input.shape[1]
         if method == 'fem':
             input_w = mass @ ext_input
+        elif input_space == 'modal':
+            input_coeffs = ext_input
         else:
             input_coeffs = decompose(ext_input, emodes, mass=mass, checks=False)
     elif nt is not None:
@@ -320,6 +352,8 @@ def sim_nft_waves(
     else:
         activity_coeffs = _model_wave_ode(input_coeffs, dt, r, gamma, evals)
 
+    if output_space == 'modal':
+        return activity_coeffs.astype(dtype, copy=False)
     return (emodes @ activity_coeffs).astype(dtype, copy=False)
 
 def calc_nft_wave_speed(
@@ -524,7 +558,8 @@ def balloon_model(
     mass: csc_matrix | None = None,
     checks: _CheckKind = True,
     n_jobs: int = 1,
-    dtype: DTypeLike = np.float64
+    dtype: DTypeLike = np.float64,
+    output_space: Literal['vertex', 'modal'] = 'vertex'
 ) -> NDArray[np.floating]:
     """
     Transform simulated activity to blood oxygen level-dependent (BOLD) signal using the
@@ -533,7 +568,8 @@ def balloon_model(
     Parameters
     ----------
     activity : array-like
-        Simulated neural activity in vertex space of shape ``(n_verts, n_timepoints)``.
+        Simulated neural activity in vertex space of shape ``(n_verts, n_timepoints)`` or modal
+        space of shape ``(n_modes, n_timepoints)``. The space is inferred from the first dimension.
     emodes : array-like
         The eigenmodes array of shape ``(n_verts, n_modes)``, where ``n_verts`` is the number of
         vertices and ``n_modes`` is the number of eigenmodes.
@@ -574,8 +610,8 @@ def balloon_model(
           Default is ``1e-4``. For more details, see
           https://github.com/NSBLab/neuromodes/blob/main/docs/validation/waves_fourier_padding.ipynb.
     mass : array-like, optional
-        The mass matrix of shape (n_verts, n_verts), used for the decomposition of activity. Default
-        is ``None``, which uses the identity matrix.
+        The mass matrix of shape (n_verts, n_verts), used for the decomposition of ``activity`` if
+         it is in vertex-space. Default is ``None``, which uses the identity matrix.
     checks : bool, optional
         Whether to perform checks on the input arrays. Default is ``True``.
     n_jobs : int, optional
@@ -586,11 +622,15 @@ def balloon_model(
         ``np.float32`` or ``np.float64``. The ODE integrator may use ``float64`` internally.
         If input arrays (``emodes``, ``activity``, etc.) are provided, they are cast to this dtype.
         Default is ``np.float64``.
+    output_space : {'vertex', 'modal'}, optional
+        Space of the returned BOLD signal. ``'vertex'`` returns shape
+        ``(n_verts, n_timepoints)``; ``'modal'`` returns shape ``(n_modes, n_timepoints)``.
+        Default is ``'vertex'``.
 
     Returns
     -------
     ndarray
-        Simulated BOLD signal in vertex space of shape ``(n_verts, n_timepoints)``.
+        Simulated BOLD signal in the space specified by ``output_space``.
 
     Raises
     ------
@@ -598,19 +638,33 @@ def balloon_model(
         If ``dt`` is not positive.
     ValueError
         If ``method`` is not ``'fourier'`` or ``'ode'``.
+    ValueError
+        If ``activity`` does not have a valid vertex/modal shape.
+    ValueError
+        If ``output_space`` is neither ``'vertex'`` nor ``'modal'``.
 
     Notes
     -----
-    When ``method`` is ``'fourier'``, the model's transfer function is applied in the frequency
-    domain, which can lead to wrap-around artifacts in the time domain. To mitigate these, input
-    time series are padded with zeros at the start/end, creating a temporary buffer for the
-    artifacts to contaminate. The ``fft_pad_tol`` parameter controls the amount of zero-padding,
-    where lower values lead to more padding at the cost of increased simulation time and memory
-    usage. The number of padding timepoints is given by -ln(``fft_pad_tol``)/(``dt`` *
-    min(``kappa``/2, 1/``tau``, 1/(``tau`` * ``alpha``))), meaning that a value of ``1`` at t=0
-    wraps around to a value of ``fft_pad_tol`` at t=nt-1. See
-    https://github.com/NSBLab/neuromodes/blob/main/docs/validation/waves_fourier_padding.ipynb for
-    more details.
+    1. When ``method`` is ``'fourier'``, the model's transfer function is applied in the frequency
+       domain, which can lead to wrap-around artifacts in the time domain. To mitigate these, input
+       time series are padded with zeros at the start/end, creating a temporary buffer for the
+       artifacts to contaminate. The ``fft_pad_tol`` parameter controls the amount of zero-padding,
+       where lower values lead to more padding at the cost of increased simulation time and memory
+       usage. The number of padding timepoints is given by -ln(``fft_pad_tol``)/(``dt`` *
+       min(``kappa``/2, 1/``tau``, 1/(``tau`` * ``alpha``))), meaning that a value of ``1`` at t=0
+       wraps around to a value of ``fft_pad_tol`` at t=nt-1. See
+       https://github.com/NSBLab/neuromodes/blob/main/docs/validation/waves_fourier_padding.ipynb for
+       more details.
+
+    2. Modal activity can be passed directly from :func:`~neuromodes.waves.sim_nft_waves` by setting its
+       ``output_space='modal'``. Pass the full-rate modal history into this function, request modal
+       BOLD output, then slice before reconstructing only the desired vertex-space samples:
+   
+       .. code-block:: python
+   
+          neural_modal = solver.sim_nft_waves(output_space='modal', ...)
+          bold_modal = solver.balloon_model(neural_modal, dt=dt, output_space='modal')
+          bold_vertex = solver.emodes @ bold_modal
 
     References
     ----------
@@ -622,17 +676,18 @@ def balloon_model(
     """
     # Format / validate arguments
     if checks is not False:
-        ved = EigenData(emodes=emodes, mass=mass, data=activity, checks=checks)
-        emodes, mass, activity = ved.emodes, ved.mass, ved.data
+        ved = EigenData(emodes=emodes, mass=mass, checks=checks)
+        emodes, mass = ved.emodes, ved.mass
 
     dtype = _validate_dtype(dtype)
     emodes = np.asarray(emodes, dtype=dtype)
-    activity = np.asarray(activity, dtype=dtype)
+    activity = np.asarray_chkfinite(activity, dtype=dtype)
     if mass is not None:
         mass = mass.astype(dtype, copy=False)
 
-    if np.isnan(activity).any():
-        raise ValueError("activity contains NaN values, which are not allowed.")
+    input_space = _infer_input_space(activity, emodes.shape[0], emodes.shape[1], 'activity')
+    if output_space not in ('vertex', 'modal'):
+        raise ValueError("output_space must be either 'vertex' or 'modal'.")
     if dt <= 0:
         raise ValueError("dt must be positive.")
     if method not in ['fourier', 'ode']:
@@ -651,10 +706,10 @@ def balloon_model(
              f"({w_f:.4f} Hz), per the Nyquist-Shannon sampling theorem. To reduce aliasing, "
              f"consider reducing dt to below {dt_nyquist:.4f}.")
 
-    # Eigendecompose activity to get modal coefficients over time
-    # TODO: consider re-adding sim_nft_waves(..., return_bold=False) to avoid redundant
-    # decomposition/padding/fft/ifft/slicing/reconstruction
-    activity_coeffs = decompose(activity, emodes, mass=mass, checks=False)
+    if input_space == 'modal':
+        activity_coeffs = activity
+    else:
+        activity_coeffs = decompose(activity, emodes, mass=mass, checks=False)
 
     # Apply model to each mode's activity timeseries
     if method == 'fourier':
@@ -665,6 +720,9 @@ def balloon_model(
         bold_coeffs = _model_balloon_ode(
             activity_coeffs, dt, kappa, tau, alpha, rho, V_0, gamma_h, k1, k2, k3
         )
+
+    if output_space == 'modal':
+        return bold_coeffs.astype(dtype, copy=False)
 
     # Transform timeseries from modal coefficients back to vertex space
     return (emodes @ bold_coeffs).astype(dtype, copy=False)
@@ -1222,3 +1280,30 @@ def _model_balloon_ode(
     return (V_0 * (k1 * (1 - q) + k2 * (1 - q / v) + k3 * (1 - v))).astype(
         activity_coeffs.dtype, copy=False
     )
+
+def _infer_input_space(
+    data: NDArray[np.floating],
+    n_verts: int,
+    n_modes: int | None,
+    name: str
+) -> Literal['vertex', 'modal']:
+    if data.ndim != 2:
+        raise ValueError(f"{name} must be a 2D array.")
+
+    is_vertex = data.shape[0] == n_verts
+    is_modal = n_modes is not None and data.shape[0] == n_modes
+    if is_vertex and is_modal:
+        warn(
+            f"{name} has an ambiguous first dimension ({data.shape[0]}); "
+            "it matches both n_verts and n_modes. Ensure it has the intended shape."
+        )
+    if not is_vertex and not is_modal:
+        if n_modes is None:
+            expected = f"({n_verts}, n_timepoints)"
+        else:
+            expected = (
+                f"({n_verts}, n_timepoints) or ({n_modes}, n_timepoints)"
+            )
+        raise ValueError(f"{name} must have shape {expected}.")
+
+    return 'vertex' if is_vertex else 'modal'
